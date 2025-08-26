@@ -1,0 +1,784 @@
+#body-content {
+    color: var(--wp--preset--color--white);
+    font-family: var(--wp--preset--font-family--lato);
+    padding: 2rem;
+  }
+
+  .page-filters {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+  .page-title {
+    color: #fff;
+    letter-spacing: .2rem;
+    text-align: left;
+    text-shadow: 3px 3px 0 rgba(0, 0, 0, .5);
+  }  
+  .page-title span {
+    font-family: var(--wp--preset--font-family--bangers);
+    text-shadow: 2px 2px var(--wp--preset--color--deep-red);
+    letter-spacing: 1px;
+  }
+    
+  .book-wrapper {
+    display: flex;
+    gap: 1.5rem;
+    flex-direction: column;
+    width: 100%;
+    margin: .25rem auto 2rem 0;
+  }
+ 
+  /* Dropdown Styling */
+  select#publisher-select {
+    font-family: var(--wp--preset--font-family--bebas-neue);
+    font-size: var(--wp--preset--font-size--medium);
+    padding: 0.5rem 1rem;
+    border-radius: 12px;
+    border: 2px solid var(--wp--preset--color--royal-blue);
+    background: var(--wp--preset--color--cream);
+    color: var(--wp--preset--color--black);
+    margin-bottom: 1.5rem;
+    max-width: 30rem;
+    width: 100%;
+  }
+  
+  /* Letter Filter Buttons */
+  .letter-filter button {
+    font-family: var(--wp--preset--font-family--bangers);
+    font-size: var(--wp--preset--font-size--medium);
+    background: var(--wp--preset--color--accent-orange);
+    color: var(--wp--preset--color--white);
+    border: none;
+    border-radius: 8px;
+    padding: 0.5rem 1rem;
+    margin: 0.25rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+  
+  .letter-filter button:hover {
+    background: var(--wp--preset--color--deep-red);
+    transform: scale(1.05);
+  }
+  
+  /* Filters Container */
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: left;
+    gap: .3rem;
+    margin: 1.5rem 0;
+  }
+  
+  /* Comic Title - Full Row */
+  .comic-title {
+    font-family: var(--wp--preset--font-family--bangers);
+    font-size: var(--wp--preset--font-size--medium);
+    text-transform: uppercase;
+    background: var(--wp--preset--color--cream);
+    color: var(--wp--preset--color--black);
+    border: 2px solid var(--wp--preset--color--royal-blue);
+    border-radius: 12px;
+    padding: 1rem;
+    cursor: pointer;
+    transition: background-color 0.2s ease, transform 0.2s ease;
+    box-shadow: 2px 2px 0 var(--wp--preset--color--deep-red);
+    width: 100%;
+    text-align: left;
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  .comic-title > div:not(.comic-image) {
+    flex-grow: 1;
+  }
+  
+  .comic-title:hover {
+    background: var(--wp--preset--color--golden-yellow);
+    transform: translateX(5px);
+  }
+
+  .comic-title-meta {
+    font-size: medium;
+    line-height: 1.4;
+  }
+  .comic-title-meta p {
+    margin: .1rem 0 .25rem 0;
+    letter-spacing: 1px;
+  }
+
+  .comic-info {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .comic-image img {
+    width: 100px;
+    height: auto;
+    border-radius: 4px;
+    object-fit: cover;
+  }
+  
+  /* Generic Buttons */
+  a.page-btn,
+  button,
+  input[type="submit"] {
+    font-family: var(--wp--preset--font-family--bangers);
+    background-color: var(--wp--preset--color--royal-blue);
+    color: var(--wp--preset--color--white);
+    border: none;
+    border-radius: 12px;
+    padding: 0.75rem 1.5rem;
+    font-size: var(--wp--preset--font-size--medium);
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    text-decoration: none;
+  }
+  
+  a.page-btn:hover,
+  button:hover,
+  input[type="submit"]:hover {
+    background-color: var(--wp--preset--color--deep-red);
+  }
+
+  /* Pagination Buttons Container */
+.pagination-wrapper {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 2rem;
+}
+
+.pagination-wrapper p {
+  width: 100%;
+  margin: .5rem auto;
+}
+
+/* Pagination Buttons (inherits button base styles) */
+.pagination-wrapper a.page-btn,
+.pagination-wrapper button {
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-size: var(--wp--preset--font-size--small);
+  box-shadow: 2px 2px 0 var(--wp--preset--color--deep-red);
+}
+  
+/* search */
+.search-wrapper {
+  margin-bottom: 1rem;
+}
+
+#comic-search {
+  width: 100%;
+  max-width: 400px;
+  padding: 0.5rem;
+  font-size: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+.publisher-results {
+  margin-top: 1rem;
+  text-align: left;
+}
+
+.publisher-results ul {
+  list-style: none;
+  padding: 0;
+}
+
+.publisher-results li {
+  margin-bottom: 0.5rem;
+}
+
+.publisher-results a {
+  color: #0073aa;
+  text-decoration: none;
+}
+.publisher-results li a {
+  color: var(--wp--preset--color--white);
+  font-weight: 500;
+}
+
+.publisher-results a:hover {
+  text-decoration: underline;
+}
+
+/* publisher information */
+.publisher-image {
+  max-width: 150px;
+  max-height: 100%;
+  height: auto;
+  border-radius: 4px;
+  flex: 0 0 120px;
+  margin-right: 20px;
+}
+
+.publisher-image img {
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+.publisher-info {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: #f9f9f9;
+  color: var(--wp--preset--color--black);
+  border: 1px solid #ddd;
+  text-align: left;
+  flex: 1;
+}
+.publisher-info .publisher-image {
+  max-height: 180px;
+}
+.publisher-info h2 {
+  margin-bottom: 1rem;
+}
+.publisher-info h3 {
+  margin: 0 0 10px;
+  font-size: 1.5rem;
+  text-align: left;
+  font-weight: 600;
+}
+.publisher-info p {
+  margin: 5px 0;
+  font-size: 1rem;
+  text-align: left;
+  line-height: 1.5;
+}
+.publisher-details{
+  display: flex;
+  align-items: flex-start;
+  gap: 1.25rem;
+}
+.publisher-description {
+  flex: 1;
+  font-size: 1rem;
+  line-height: 1.5;
+  margin: 0;
+  text-align: left;
+  color: var(--wp--preset--color--black);
+}
+.publisher-description p {
+  margin-bottom: 0.5rem;
+}
+
+/* publisher list */
+.publishers-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin: 20px 0;
+  padding: 0 15px;
+}
+.publisher-item {
+  display: flex;
+  align-items: center;
+  background: var(--wp--preset--color--white);
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 15px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+.publisher-item:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+/* Comic Series Container */
+.comic-series-container {
+  margin: 20px 0;
+  padding: 15px;
+  background: var(--wp--preset--color--white);
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.comic-series-container ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.comic-series-container li {
+  margin-bottom: 10px;
+  font-size: 1rem;
+  color: #333;
+}
+
+.comic-series-container li strong {
+  color: #333;
+  margin-right: 5px;
+}
+
+.comic-series-container a {
+  color: #007bff;
+  text-decoration: none;
+}
+
+.comic-series-container a:hover {
+  text-decoration: underline;
+}
+
+/* Comic Issues Container */
+.comic-issues-container {
+  margin: 0;
+  padding: 15px;
+}
+
+.comic-issues-container h2 {
+  font-size: 1.8rem;
+  color: var(--wp--preset--color--white);
+  margin-bottom: 15px;
+  text-align: left;
+}
+
+/* Issues List */
+.issues-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.issue-item {
+  display: flex;
+  align-items: center;
+  background: var(--wp--preset--color--white);
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  transition: box-shadow 0.2s ease;
+  cursor: pointer; /* Indicate clickability */
+}
+
+.issue-item a {
+  text-decoration: none;
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.issue-item h6 {
+  font-family: var(--wp--preset--font-family--lato);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.issue-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  transition: background-color 0.2s;
+}
+
+.issue-link:hover {
+  background-color: #f5f5f5; /* Light hover effect */
+}
+
+.issue-item:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.issue-image {
+  width: 50px;
+  height: auto;
+  object-fit: cover;
+  float: left;
+  border-radius: 4px;
+  margin-right: 15px;
+}
+
+.issue-info {
+  flex: 1;
+  font-size: 1rem;
+  color: #333;
+  text-align: left;
+}
+
+.issue-info strong {
+  color: #333;
+  font-weight: 600;
+}
+.cv-highlights {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+}
+.cv-note {
+  background: #f4f4f4;
+  color: #333;
+  padding: 3px 6px;
+  border-left: 3px solid #0073aa;
+  margin: 2px 0;
+  display: inline-block;
+}
+
+.no-results {
+  text-align: center;
+  margin-top: 20px;
+}
+
+/* spinner css */
+#loading-spinner {
+  display: block;
+  text-align: center;
+  padding: 50px;
+}
+
+#loading-spinner.hidden {
+  display: none;
+}
+
+.spinner {
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #005bbb;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+  margin: 0 auto;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+  .publisher-item {
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+  }
+
+  .publisher-image {
+      margin-right: 0;
+      margin-bottom: 15px;
+      flex: 0 0 auto;
+      max-width: 100px;
+  }
+
+  .publisher-info h3 {
+      font-size: 1.3rem;
+  }
+
+  .publisher-info p {
+      font-size: 0.95rem;
+  }
+  .comic-series-container,
+  .comic-issues-container {
+      padding: 10px;
+  }
+
+  .comic-series-container li {
+      font-size: 0.95rem;
+  }
+
+  .comic-issues-container h2 {
+      font-size: 1.6rem;
+  }
+
+  .issue-item {
+      flex-direction: column;
+      align-items: flex-start;
+      text-align: left;
+  }
+
+  .issue-image {
+      margin-bottom: 10px;
+      margin-right: 0;
+  }
+  .pagination-wrapper {
+      gap: 5px;
+  }
+
+  .page-btn {
+      padding: 6px 12px;
+      font-size: 0.95rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .publishers-wrapper {
+      padding: 0 10px;
+  }
+
+  .publisher-item {
+      padding: 10px;
+  }
+
+  .publisher-image img {
+      max-height: 100px;
+  }
+
+  .publisher-info h3 {
+      font-size: 1.2rem;
+  }
+
+  .publisher-info p {
+      font-size: 0.9rem;
+  }
+  .comic-series-container ul {
+    padding: 0 5px;
+}
+
+.comic-series-container li {
+    font-size: 0.9rem;
+}
+
+.comic-issues-container h2 {
+    font-size: 1.4rem;
+}
+
+.issue-info {
+    font-size: 0.95rem;
+}
+
+  .page-btn {
+      padding: 5px 10px;
+      font-size: 0.9rem;
+  }
+}
+
+/* Ensure consistency with existing styles */
+.page-filters,
+.search-wrapper,
+#letter-buttons {
+  margin-bottom: 20px;
+}
+
+#book-container {
+  min-height: 200px; /* Prevent layout jump during loading */
+}
+
+#book-container p {
+  font-size: 1rem;
+}
+
+/* Placeholder Image Fallback */
+.publisher-image img[src$="placeholder.png"] {
+  opacity: 0.7;
+}
+
+/* issue details */
+
+.issue-details-header p {
+  text-align:  left;
+}
+
+.comic-issue-details-container {
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 0 0 1rem 0;
+}
+
+.issue-details-content {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.issue-details-content img {
+    height: 100%;
+    max-width: 350px;
+    width: 100%;
+}
+
+.issue-notes-box {
+  flex: 1;
+  min-width: 300px;
+  background: #f9f9f9;
+  padding: 20px;
+  border-radius: 8px;
+  color: #000;
+  text-align: left;
+}
+
+.issue-section {
+  margin-bottom: 20px;
+  text-align: left;
+}
+
+.issue-section h4 {
+  margin-bottom: 10px;
+  font-size: 1.2em;
+  color: #333;
+}
+
+.issue-section ul {
+  list-style: none;
+  padding: 0;
+}
+
+.issue-section li {
+  margin-bottom: 5px;
+  font-size: 0.95em;
+    display: inline;
+}
+.issue-section.creators li {
+  display: block;
+}
+
+.issue-section p {
+  margin: 0;
+  font-size: 0.95em;
+  line-height: 1.5;
+}
+
+.description-block p {
+  margin-top: 1rem;
+  margin-bottom: 1em;
+  line-height: 1.6;
+  font-style: italic;
+}
+.issue-section.description-block h4 {
+  margin: 1.5em 0 0.5em;
+  font-size: 1.2em;
+  font-weight: 600;
+}
+.description-block ol {
+  margin-bottom: 1rem;
+  padding-left: 0;
+}
+.description-block li {
+  margin-bottom: 0.5em;
+  line-height: 1.6;
+  display: block;
+}
+.description-block strong {
+  display: block;
+  margin-top: 1em;
+}
+
+/*  description table */
+.issue-section.description-block table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5em 0;
+  font-size: 0.95em;
+  line-height: 1.5;
+}
+
+.issue-section.description-block table thead {
+  background-color: #f4f4f4;
+  color: #333;
+  text-align: left;
+}
+
+.issue-section.description-block table th,
+.issue-section.description-block table td {
+  padding: 0.75em 1em;
+  border: 1px solid #ddd;
+  vertical-align: top;
+}
+
+.issue-section.description-block table th {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.issue-section.description-block table tbody tr:nth-child(even) {
+  background-color: #fafafa;
+}
+
+.issue-section.description-block table tbody tr:hover {
+  background-color: #f0f0f0;
+}
+
+/* Responsive styles */
+@media (max-width: 768px) {
+  .issue-section.description-block table {
+      font-size: 0.85em;
+  }
+
+  .issue-section.description-block table th,
+  .issue-section.description-block table td {
+      padding: 0.5em;
+  }
+
+  /* Stack table for very small screens */
+  .issue-section.description-block table {
+      display: block;
+      overflow-x: auto;
+      white-space: nowrap;
+  }
+}
+
+@media (max-width: 480px) {
+  .issue-section.description-block table thead {
+      display: none;
+  }
+
+  .issue-section.description-block table tbody,
+  .issue-section.description-block table tr {
+      display: block;
+  }
+
+  .issue-section.description-block table td {
+      display: block;
+      text-align: left;
+      border: none;
+      border-bottom: 1px solid #eee;
+      position: relative;
+      padding-left: 50%;
+  }
+
+  .issue-section.description-block table td:before {
+      content: attr(data-label);
+      position: absolute;
+      left: 0;
+      width: 45%;
+      padding-left: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+  }
+
+  .issue-section.description-block table td:last-child {
+      border-bottom: 0;
+  }
+}
+
+
+.add-to-collection {
+    border-radius: 6px;
+    text-decoration: none;
+    cursor: pointer;
+    border: none;
+    transition: background-color 0.3s ease;
+    font-family: Bangers, cursive;
+    font-weight: 500;
+    letter-spacing: .05rem;
+    margin: 0 .75rem 0 0;
+    outline: 1px solid #000;
+    padding: .5rem 1rem;
+    text-transform: uppercase;
+    font-size: 1.25rem;
+    line-height: 1.5rem;
+}
+add-to-collection {
+    background-color: #007bff;
+    color: #fff;
+}  
+.add-to-collection:hover {
+    background-color: #0056b3;
+}
+.add-to-collection.in-collection {
+  background-color: #c82333; /* Bootstrap red */
+  color: #fff;
+  border: none;
+  cursor: pointer;
+}
+.remove-collection-form .btn-link.text-danger {
+  font-size: 0.9rem;
+  color: #c82333;
+  text-decoration: underline;
+}
