@@ -22,6 +22,10 @@ class Comicbooks extends MetronAPI {
         add_action('wp_ajax_nopriv_load_issues', [$this, 'ajax_load_issues']);
         add_action('wp_ajax_load_series_image', [$this, 'ajax_load_series_image']);
         add_action('wp_ajax_nopriv_load_series_image', [$this, 'ajax_load_series_image']);
+        add_action('wp_ajax_load_series_images_batch', [$this, 'ajax_load_series_images_batch']);
+        add_action('wp_ajax_nopriv_load_series_images_batch', [$this, 'ajax_load_series_images_batch']);
+        add_action('wp_ajax_load_publisher_images_batch', [$this, 'ajax_load_publisher_images_batch']);
+        add_action('wp_ajax_nopriv_load_series_images_batch', [$this, 'ajax_load_publisher_images_batch']);
         add_action('wp_ajax_load_publisher_info', [$this, 'ajax_load_publisher_info']);
         add_action('wp_ajax_nopriv_load_publisher_info', [$this, 'ajax_load_publisher_info']);
     }
@@ -30,9 +34,12 @@ class Comicbooks extends MetronAPI {
             return '';
         }
     
-        // Step 1: Remove <em> tags if they wrap the entire description
+        // Step 1: Remove <em> tags if they wrap the entire first <p> tag's content
+        $desc = preg_replace('/<p>\s*<em>(.*?)<\/em>\s*<\/p>/is', '<p>$1</p>', $desc);
+
+        // Step 1a: Remove <em> tags if they wrap the entire description
         $desc = preg_replace('/^<em>(.*?)<\/em>$/is', '$1', $desc);
-    
+        
         // Step 2: Remove all <a> tags, keeping their inner text
         $desc = preg_replace('/<a\s+[^>]*>(.*?)<\/a>/is', '$1', $desc);
     
@@ -58,13 +65,7 @@ class Comicbooks extends MetronAPI {
         // Step 5: Remove any stray quotes at the start/end of the description
         $desc = preg_replace('/^["\']\s*|\s*["\']$/i', '', $desc);
     
-        // Step 6: Format with paragraph tags for non-<li> content
-        $desc = wpautop($desc);
-    
-        // Step 7: Ensure no double <p> tags around <li> or <ol>
-        $desc = preg_replace('/<p>(<(ol|ul|li)>.*?<\/\2>)<\/p>/is', '$1', $desc);
-    
-        // Step 8: Remove "Sidebar Location" column from tables
+        // Step 6: Remove "Sidebar Location" column from tables
         $desc = preg_replace_callback('/<table.*?>.*?<\/table>/is', function ($table_match) {
             $table_html = $table_match[0];
     
@@ -112,10 +113,8 @@ class Comicbooks extends MetronAPI {
     }
 
     public function ajax_load_publishers() {
-        error_log('[ajax_load_publishers] Called');
     
         if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'comicbooks_fetchers_data')) {
-            error_log('[ajax_load_publishers] ERROR: Invalid or missing nonce');
             wp_send_json_error(['message' => 'Invalid security token'], 400);
             wp_die();
         }
@@ -123,14 +122,11 @@ class Comicbooks extends MetronAPI {
         $name = isset($_POST['name']) ? sanitize_text_field($_POST['name']) : '';
         $page = isset($_POST['page']) ? max(1, intval($_POST['page'])) : 1;
         $letter = isset($_POST['letter']) && $_POST['letter'] !== '' ? sanitize_text_field($_POST['letter']) : 'all';
-        $per_page = 10;
-    
-        error_log("[ajax_load_publishers] Fetching publishers: name='$name', page=$page, letter='$letter'");
-    
+        $per_page = 10;    
+
         $publisher_data = $this->get_publishers($name, $page, $per_page, false, $letter);
     
-        if (empty($publisher_data['items'])) {
-            error_log("[ajax_load_publishers] WARNING: No publishers returned for page $page");
+        if (empty($publisher_data['items'])) {     
             wp_send_json_success([
                 'publishers' => [],
                 'total' => $publisher_data['total'],
@@ -150,12 +146,11 @@ class Comicbooks extends MetronAPI {
                     'desc' => $detailed_info['desc'] ?? '',
                     'founded' => $detailed_info['founded'] ?? ''
                 ];
-                usleep(100000); // 100ms delay to respect rate limits
+                usleep(300000); // 300ms delay to respect rate limits
             }
         }
-        unset($item);
-    
-        error_log("[ajax_load_publishers] SUCCESS: Returning " . count($publisher_data['items']) . " publishers, total=" . $publisher_data['total']);
+        unset($item);   
+  
     
         wp_send_json_success([
             'publishers' => $publisher_data['items'],
@@ -166,222 +161,93 @@ class Comicbooks extends MetronAPI {
         wp_die();
     }
     public function ajax_load_publisher_info() {
-        error_log('[ajax_load_publisher_info] Called with POST data: ' . json_encode($_POST));
     
         // Validate nonce
         if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'comicbooks_fetchers_data')) {
-            error_log('[ajax_load_publisher_info] ERROR: Invalid or missing nonce: ' . ($_POST['nonce'] ?? 'none'));
+      
             wp_send_json_error(['message' => 'Invalid security token'], 400);
             wp_die();
         }
     
         // Validate publisher_id
         $publisher_id = isset($_POST['publisher_id']) ? intval($_POST['publisher_id']) : 0;
-        if ($publisher_id <= 0) {
-            error_log('[ajax_load_publisher_info] ERROR: Invalid or missing publisher_id: ' . ($_POST['publisher_id'] ?? 'none'));
+        if ($publisher_id <= 0) {      
             wp_send_json_error(['message' => 'Invalid publisher ID'], 400);
             wp_die();
         }
     
         // Fetch publisher info
         $publisher_info = $this->get_publisher_info($publisher_id);
-        if (empty($publisher_info) || !isset($publisher_info['name'])) {
-            error_log("[ajax_load_publisher_info] ERROR: No publisher info found for publisher_id=$publisher_id");
+        if (empty($publisher_info) || !isset($publisher_info['name'])) {    
             wp_send_json_error(['message' => 'Publisher not found'], 404);
             wp_die();
-        }
-    
-        error_log("[ajax_load_publisher_info] SUCCESS: Publisher info retrieved for publisher_id=$publisher_id");
+        }    
+
         wp_send_json_success($publisher_info);
     } 
+
     public function ajax_load_issues() {
         check_ajax_referer('comicbooks_fetchers_data', 'nonce');
-
         $title_id = isset($_POST['title_id']) ? intval($_POST['title_id']) : 0;
         $page = isset($_POST['page']) ? max(1, intval($_POST['page'])) : 1;
         $search = isset($_POST['search']) ? strtolower(trim($_POST['search'])) : '';
-        error_log(date('c') . " ajax_load_issues: title_id=$title_id, page=$page, search='$search'");
+        $cache_key = "metron:ajax_issues:{$title_id}:{$page}:{$search}";
     
-        if (!$title_id) {
-            error_log(date('c') . " ajax_load_issues: Invalid title_id");
-            wp_send_json_error(['message' => 'Invalid series ID']);
+        error_log("ajax_load_issues: title_id=$title_id, page=$page, search=$search");    
+    
+        $cached = get_transient($cache_key);
+        if ($cached !== false) {
+            error_log("ajax_load_issues: Returning cached data for $cache_key");
+            wp_send_json_success($cached);
             return;
         }
     
-        set_time_limit(60);
-    
-        $data = $this->get_series_issues($title_id, $page, $search); // Pass search to get_series_issues
-        if (!$data || !$data['issue_list'] || empty($data['issue_list']['results'])) {
-            error_log(date('c') . " ajax_load_issues: No issues found for title_id=$title_id, page=$page");
-            wp_send_json_error(['message' => 'No issues found for this series']);
+        $data = $this->get_series_issues($title_id, $page, $search);
+        if (is_array($data) && isset($data['error'])) {
+            error_log("ajax_load_issues: Failed for title_id=$title_id: " . $data['error']);
+            wp_send_json_error(['message' => 'Failed to load issues: ' . $data['error']]);
             return;
         }
     
-        $all_issues = $data['issue_list']['results'];
-        $series = $data['series'];
-        $total_issues = $data['issue_list']['count']; // Use full count from get_series_issues
-        error_log(date('c') . " ajax_load_issues: total_issues=$total_issues, results_count=" . count($all_issues));
+        $series = $data['series'] ?? [];
+        $issue_list_data = $data['issue_list'] ?? [];
+        $all_issues = $issue_list_data['results'] ?? [];
+        $total_issues = $issue_list_data['count'] ?? 0;
+        $per_page = 10;
+        $total_pages = ceil($total_issues / $per_page);
     
-        // Batch fetch images
-        $series_ids = array_column($all_issues, 'series_id');
-        $images = $this->get_series_images($series_ids);
-
-        // Check execution time to avoid timeout
-        $start_time = microtime(true);
+        error_log("ajax_load_issues: all_issues=" . print_r($all_issues, true));
+        error_log("ajax_load_issues: total_issues=$total_issues, total_pages=$total_pages");
     
         ob_start();
-        ?>
-        <ul class="issues-list">
-        <?php foreach ($all_issues as $issue): ?>
-            <?php       
-            if (microtime(true) - $start_time > 50) {
-                wp_send_json_error(['message' => 'Request timed out due to API rate limits']);
-                return;
-            }        
-            ?>
-            <li class="issue-item">
-                <a href="<?php echo esc_url(add_query_arg(['issue_id' => $issue['id'], 'title_id' => $title_id], home_url('/comic-books/issue/'))); ?>" class="issue-link">
-                    <?php if (!empty($issue['image'])): ?>
-                        <img src="<?php echo esc_url($issue['image']); ?>" alt="<?php echo esc_attr($issue['issue'] ?? 'Issue Cover'); ?>" class="issue-image" loading="lazy">
-                    <?php else: ?>
-                        <img src="<?php echo esc_url(PUBLISHER_PLACEHOLDER_IMAGE_URL); ?>" alt="Placeholder" class="issue-image" loading="lazy">
-                    <?php endif; ?>
-                    <div class="issue-info">
-                        <h5>#<?php echo esc_html($issue['number'] ?? 'N/A') . ' &mdash; ' . esc_html($issue['series']['name'] ?? 'Unknown'); ?></h5>
-                        <?php
-                        $date = $issue['cover_date'];
-                        $formatted = (!empty($date) && strtotime($date)) ? date('F Y', strtotime($date)) : 'N/A';
-                        ?>
-                        <h6><?php echo esc_html($formatted); ?></h6>
-                        <?php
-                        $metron_id = $issue['id'];
-                        $cv_info = null;
-                        $issue_url = "{$this->api_base}issue/{$metron_id}/";
-                        $issue_info= $this->api_get($issue_url);
-                        $metron_cv_id = $this->get_metron_cv_id($metron_id);             
-
-                        if (!empty($metron_cv_id)) {
-                            $cv_info = $this->get_comicvine_issue_info($metron_cv_id);
-                        }
-
-                        $description = '';
-                        if (!empty($cv_info['description'])) {
-                            $description = $this->clean_cv_description($cv_info['description']);
-                        } elseif (!empty($issue['desc'])) {
-                            $description = $this->clean_cv_description($issue['desc']);
-                        }
-                        if (!empty($description)) {
-                            $description = wpautop($description);
-                        }
-
-                        $creators = !empty($cv_info['person_credits']) ? $cv_info['person_credits'] : ($issue['credits'] ?? []);
-                        $creator_infos = [];
-                        foreach ($creators as $person) {
-                            $name = $person['name'] ?? $person['creator'] ?? 'Unknown';
-                            $role = is_array($person['role']) ? implode(', ', array_column($person['role'], 'name')) : ($person['role'] ?? 'N/A');
-                            $creator_infos[] = $name . ' – ' . $role;
-                        }
-                        $creator_info_string = implode('; ', $creator_infos);
-
-                        $genre_sources = [];
-                        $genres_origin = 'metron';
-                        if (!empty($series['genres']) && is_array($series['genres'])) {
-                            $genre_sources = array_column($series['genres'], 'name');
-                        } elseif (!empty($cv_info['concept_credits']) && is_array($cv_info['concept_credits'])) {
-                            $genre_sources = array_column($cv_info['concept_credits'], 'name');
-                            $genres_origin = 'cv';
-                        }
-                        $genre_string = implode(', ', $genre_sources);
-
-                        if (!empty($cv_info['_highlights'])) {
-                            echo '<div class="cv-highlights">';
-                            foreach ($cv_info['_highlights'] as $note) {
-                                echo '<p class="cv-note">' . esc_html($note) . '</p>';
-                            }
-                            echo '</div>';
-                        }
-                        ?>
-                        </div>
-                    </a>
-                    <?php            
-
-                    $in_collection = false;
-                    $collection_post_id = 0;
-                    $issue_id = $metron_id;
-                    $issue_title = $issue_info ? $issue_info['series']['name'] . ' #' . $issue_info['number'] : ($cv_info['metron']['issue'] ?? 'Unknown');
-                    $date_raw = $cv_info['cover_date'] ?? $issue_info['cover_date'] ?? '';
+        $comic_renderer = $this;
     
-                    if (is_user_logged_in()) {
-                        $existing_posts = get_posts([
-                            'post_type' => 'post',
-                            'author' => get_current_user_id(),
-                            'posts_per_page' => 1,
-                            'meta_query' => [
-                                [
-                                    'key' => 'issue_id',
-                                    'value' => $issue_id,
-                                    'compare' => '='
-                                ]
-                            ],
-                            'fields' => 'ids',
-                        ]);
-                        if (!empty($existing_posts)) {
-                            $in_collection = true;
-                            $collection_post_id = $existing_posts[0];
-                        }
-                    }    
-                    if (is_user_logged_in()): ?>
-                        <div class="d-flex flex-nowrap align-items-end gap-3">
-                            <div class="text-center">
-                                <button 
-                                    class="add-to-collection <?php echo $in_collection ? 'in-collection' : ''; ?>" 
-                                    style="<?php echo $in_collection ? 'background-color: red; color: white;' : ''; ?>"
-                                    data-title="<?php echo esc_attr($issue_title); ?>"
-                                    data-genres="<?php echo esc_attr($genre_string); ?>"
-                                    data-genre-origin="<?php echo esc_attr($genres_origin); ?>"
-                                    data-description="<?php echo esc_html($description ?? $cleaned_description); ?>"
-                                    data-issue-id="<?php echo esc_attr($issue_id); ?>"
-                                    data-title-id="<?php echo esc_attr($title_id); ?>"
-                                    data-publisher="<?php echo esc_attr($series['publisher']['name'] ?? 'Unknown'); ?>"
-                                    data-creators="<?php echo esc_attr($creator_info_string); ?>"
-                                    data-date="<?php echo esc_attr($date_raw); ?>"
-                                    data-volume="<?php echo esc_attr($series['volume'] ?? ''); ?>"
-                                    data-issue-number="<?php echo esc_attr($issue['number']); ?>"
-                                    data-image-url="<?php echo esc_url($issue['image']); ?>"
-                                    <?php if ($in_collection): ?>
-                                        data-post-id="<?php echo esc_attr($collection_post_id); ?>"
-                                        data-action="remove"
-                                    <?php else: ?>
-                                        data-action="add"
-                                    <?php endif; ?>>
-                                    <?php echo $in_collection ? 'Remove from Collection' : 'Add to My Collection'; ?>
-                                </button>
-                            </div>
-                            <button 
-                                class="add-to-wishlist"
-                                data-type="post"
-                                data-item-id="<?php echo esc_attr($metron_cv_id); ?>"
-                                data-title="<?php echo esc_attr($issue_title); ?>"
-                                data-volume="<?php echo esc_attr($series['volume'] ?? ''); ?>"
-                                data-item-url="<?php echo esc_url(add_query_arg(['issue_id' => $issue_id, 'title_id' => $title_id], site_url('/comic-books/issue/'))); ?>"
-                                data-image-url="<?php echo esc_url($issue['image']); ?>">
-                                Add to Wishlist
-                            </button>
-                        </div>
-                    <?php endif; ?>
-                    </li>
-        <?php endforeach; ?>
-    </ul>
-    <?php
+        if (empty($all_issues) || !is_array($all_issues)) {
+            error_log("ajax_load_issues: No issues found or invalid issue data");
+            echo '<p>No issues found.</p>';
+        } else {
+            echo '<ul class="issues-list">';
+            foreach ($all_issues as $issue) {
+                error_log("ajax_load_issues: Processing issue ID=" . ($issue['id'] ?? 'N/A'));
+                include plugin_dir_path(__FILE__) . 'templates/issue-item-template.php';
+            }
+            echo '</ul>';
+        }
+    
         $issues_html = ob_get_clean();
-
-        error_log(date('c') . " ajax_load_issues: Sending response - total_issues=$total_issues, current_page=$page");
-
-        wp_send_json_success([
+        error_log("ajax_load_issues: issues_html=" . (empty($issues_html) ? 'empty' : substr($issues_html, 0, 100) . '...'));
+    
+        $response = [
             'issues' => $issues_html,
             'total_issues' => $total_issues,
             'current_page' => $page,
-        ]);
+            'total_pages' => $total_pages,
+            'per_page' => $per_page
+        ];
+    
+        error_log("ajax_load_issues: Response=" . print_r($response, true));
+        set_transient($cache_key, $response, 2 * WEEK_IN_SECONDS);
+        wp_send_json_success($response);
     }
     public function ajax_load_series_image() {
         $series_id = intval($_POST['series_id'] ?? 0);
@@ -392,8 +258,7 @@ class Comicbooks extends MetronAPI {
         $issue_cache_key = "metron:issue_list:$series_id";
         $issue_data = get_transient($issue_cache_key);
     
-        if ($issue_data === false) {
-            error_log("Cache miss for key: $issue_cache_key. Making API call...");
+        if ($issue_data === false) {   
             $issue_data = $this->api_get($this->api_base . "series/$series_id/issue_list/?per_page=1");       
 
             if ($issue_data && !empty($issue_data['results'])) {
@@ -412,6 +277,44 @@ class Comicbooks extends MetronAPI {
         }    
         wp_send_json_success(['image' => $image]);
     }
+
+    public function ajax_load_series_images_batch() {
+        check_ajax_referer('comicbooks_fetchers_data', 'nonce');
+        $series_ids = isset($_POST['series_ids']) ? array_map('intval', (array)$_POST['series_ids']) : [];
+        if (empty($series_ids)) {
+            wp_send_json_error(['message' => 'No series IDs provided']);
+            return;
+        }
+        $images = [];
+        foreach ($series_ids as $series_id) {
+            $issue_cache_key = "metron:issue_list:$series_id";
+            $issue_data = get_transient($issue_cache_key);
+            if ($issue_data === false) {
+                $issue_data = $this->api_get($this->api_base . "series/$series_id/issue_list/?per_page=1");
+                if ($issue_data && !empty($issue_data['results'])) {
+                    set_transient($issue_cache_key, $issue_data, $this->dataset_ttl * 4);
+                }
+            }
+            $images[$series_id] = $issue_data['results'][0]['image'] ?? '';
+        }
+        wp_send_json_success(['images' => $images]);
+    }
+
+    public function ajax_load_publisher_images_batch() {
+        check_ajax_referer('comicbooks_fetchers_data', 'nonce');
+        
+        $publisher_ids = isset($_POST['publisher_ids']) ? array_map('intval', (array)$_POST['publisher_ids']) : [];
+        $images = [];
+        
+        foreach ($publisher_ids as $publisher_id) {
+            $publisher_info = $this->get_publisher_info($publisher_id);
+            if ($publisher_info && !empty($publisher_info['image'])) {
+                $images[$publisher_id] = $publisher_info['image'];
+            }
+        }
+        
+        wp_send_json_success(['images' => $images]);
+    }
     
     public function ajax_load_book() {
         check_ajax_referer('comicbooks_fetchers_data', 'nonce');
@@ -421,8 +324,7 @@ class Comicbooks extends MetronAPI {
         $per_page = isset($_POST['per_page']) ? intval($_POST['per_page']) : 10;
         $name = isset($_POST['name']) ? sanitize_text_field($_POST['name']) : '';
         $letter = isset($_POST['letter']) && $_POST['letter'] !== '' ? sanitize_text_field($_POST['letter']) : 'all';
-    
-        error_log("load_book params: publisher_id=$publisher_id, page=$page, per_page=$per_page, name=$name, letter=$letter");    
+
         $series_data = $this->get_series($publisher_id, $page, $per_page, $name, $letter);
     
         wp_send_json_success([

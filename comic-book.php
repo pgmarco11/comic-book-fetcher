@@ -116,16 +116,15 @@ function comic_book_api_settings_page() {
 add_action('admin_menu', 'comic_book_api_settings_page');
 
 function render_api_settings_page() {
-    error_log(date('c') . ' DEBUG: API settings page accessed');
+
     if (isset($_POST['submit']) && check_admin_referer('save_api_settings')) {
-        error_log(date('c') . ' DEBUG: Saving API settings');
+  
         update_option('metron_api_username', sanitize_text_field($_POST['metron_api_username']));
         update_option('metron_api_password', sanitize_text_field($_POST['metron_api_password']));
         update_option('comic_vine_api_key', sanitize_text_field($_POST['comic_vine_api_key']));
         delete_transient('metron_publishers');
         global $wpdb;
-        $wpdb->query("DELETE FROM $wpdb->options WHERE option_name LIKE '_transient_metron_%'");
-        error_log(date('c') . ' DEBUG: Cleared metron_publishers and metron_book transients after saving API settings');
+        $wpdb->query("DELETE FROM $wpdb->options WHERE option_name LIKE '_transient_metron_%'"); 
         echo '<div class="updated"><p>Settings saved and caches cleared.</p></div>';
     }
     ?>
@@ -156,8 +155,6 @@ function render_api_settings_page() {
 //toggle add/remove
 add_action('wp_ajax_add_comic_to_collection', 'handle_add_comic_to_collection');
 function handle_add_comic_to_collection() {
-    // Enable debug logging
-    error_log('Starting handle_add_comic_to_collection');
 
     // Verify nonce
     if (!check_ajax_referer('comicbooks_fetchers_data', 'security', false)) {
@@ -187,8 +184,6 @@ function handle_add_comic_to_collection() {
     $genres = sanitize_text_field($data['genres'] ?? '');
     $g_origin = sanitize_text_field($data['genre-origin'] ?? '');
 
-    error_log('Received image URL: ' . $image_url);
-
     // Create the post
     $post_id = wp_insert_post([
         'post_type'    => 'post',
@@ -199,18 +194,14 @@ function handle_add_comic_to_collection() {
     ]);
 
     if (is_wp_error($post_id)) {
-        error_log('Failed to create post: ' . $post_id->get_error_message());
         wp_send_json_error('Failed to create post: ' . $post_id->get_error_message());
     }
-
-    error_log('Post created successfully: ID ' . $post_id);
 
     // Ensure the "Collection" category exists
     $collection_term = get_term_by('name', 'Collection', 'category');
     if (!$collection_term) {
         $collection_term = wp_insert_term('Collection', 'category');
-        if (is_wp_error($collection_term)) {
-            error_log('Failed to create Collection category: ' . $collection_term->get_error_message());
+        if (is_wp_error($collection_term)) {    
             wp_send_json_error('Failed to create "Collection" category: ' . $collection_term->get_error_message());
         }
         $collection_term_id = $collection_term['term_id'];
@@ -256,11 +247,9 @@ function handle_add_comic_to_collection() {
 
     // Function to sideload an image and return its attachment ID
     function sideload_image($image_url, $post_id, $description = '') {
-        error_log('Attempting to sideload image: ' . $image_url);
         
         // Validate URL
-        if (!filter_var($image_url, FILTER_VALIDATE_URL)) {
-            error_log('Invalid image URL: ' . $image_url);
+        if (!filter_var($image_url, FILTER_VALIDATE_URL)) {    
             return false;
         }
     
@@ -301,7 +290,6 @@ function handle_add_comic_to_collection() {
         ]);
     
         if (is_wp_error($tmp)) {
-            error_log('download_url failed for URL: ' . $image_url . ' - ' . $tmp->get_error_message());
             // Fallback: Try direct file_get_contents if cURL fails
             $image_data = @file_get_contents($image_url);
             if ($image_data === false) {
@@ -347,7 +335,7 @@ function handle_add_comic_to_collection() {
     if (!$image_id) {
         $placeholder_url = defined('PUBLISHER_PLACEHOLDER_IMAGE_URL') ? PUBLISHER_PLACEHOLDER_IMAGE_URL : '';
         if (!empty($placeholder_url)) {
-            error_log('Falling back to placeholder image: ' . $placeholder_url);
+     
             // Check if placeholder is already in media library
             $placeholder_id = get_option('publisher_placeholder_image_id');
             if (!$placeholder_id) {
@@ -358,11 +346,9 @@ function handle_add_comic_to_collection() {
                     'sslverify' => (strpos($placeholder_url, home_url()) !== false) ? false : true, // Disable SSL for local URLs
                 ];
                 $placeholder_id = sideload_image($placeholder_url, $post_id, 'Placeholder Image');
-                if ($placeholder_id) {
-                    error_log('Placeholder image sideloaded: Attachment ID ' . $placeholder_id);
+                if ($placeholder_id) {                 
                     update_option('publisher_placeholder_image_id', $placeholder_id);
-                } else {
-                    error_log('Failed to sideload placeholder image: ' . $placeholder_url);
+                } else {               
                     // Fallback: Use file_get_contents for local placeholder
                     if (strpos($placeholder_url, home_url()) !== false) {
                         $local_path = str_replace(home_url(), ABSPATH, $placeholder_url);
@@ -372,8 +358,7 @@ function handle_add_comic_to_collection() {
                                 'tmp_name' => $local_path,
                             ];
                             $placeholder_id = media_handle_sideload($file_array, $post_id, 'Placeholder Image');
-                            if (!is_wp_error($placeholder_id)) {
-                                error_log('Local placeholder image sideloaded: Attachment ID ' . $placeholder_id);
+                            if (!is_wp_error($placeholder_id)) {                           
                                 update_option('publisher_placeholder_image_id', $placeholder_id);
                             } else {
                                 error_log('Local placeholder sideload failed: ' . $placeholder_id->get_error_message());
