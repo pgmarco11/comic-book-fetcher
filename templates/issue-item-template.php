@@ -2,15 +2,7 @@
 /**
  * Template part for rendering a single comic issue item
  * Used in comic-book-issues.php and ajax_load_issues
- *
- * @param array $issue Issue data from the API
- * @param array $series Series data from the API
- * @param int $title_id Series ID
- * @param ComicRenderer $comic_renderer Instance of ComicRenderer class
- * @param array $cv_info_batch Cached ComicVine data for issues (optional)
- * @param array $collection_status Cached collection status for issues (optional)
  */
-
 if (!defined('ABSPATH')) {
     exit;
 }
@@ -18,44 +10,38 @@ if (!defined('ABSPATH')) {
 $issue = $issue ?? [];
 $series = $series ?? [];
 $title_id = $title_id ?? 0;
-$comic_renderer = $comic_renderer ?? null;
-$cv_info_batch = $cv_info_batch ?? [];
-$collection_status = $collection_status ?? [];
+$cv_info_batch = $cv_info_batch ?? []; // **NEW: Pre-fetched batch**
+$collection_status = $collection_status ?? []; // **NEW: Pre-fetched batch**
 
-if (empty($issue) || empty($series) || !$title_id || !$comic_renderer) {
-    error_log("issue-item-template: Missing required data - issue=" . print_r($issue, true) . ", series=" . print_r($series, true) . ", title_id=$title_id");
+if (empty($issue) || empty($series) || !$title_id) {
+    error_log("issue-item-template: Missing critical data");
     return;
 }
 
 $metron_id = $issue['id'] ?? 0;
+if (!$metron_id) {
+    error_log("issue-item-template: Missing issue ID");
+    return;
+}
+
+static $rendered_issue_ids = [];
+if (isset($rendered_issue_ids[$metron_id])) return;
+$rendered_issue_ids[$metron_id] = true;
+
 $issue_title = esc_html($series['name'] ?? 'Unknown') . ' #' . esc_html($issue['number'] ?? 'N/A');
 $date = $issue['cover_date'] ?? '';
 $formatted_date = (!empty($date) && strtotime($date)) ? date('F Y', strtotime($date)) : 'N/A';
+$image_url = !empty($issue['image']) ? esc_url($issue['image']) : (defined('PUBLISHER_PLACEHOLDER_IMAGE_URL') ? esc_url(PUBLISHER_PLACEHOLDER_IMAGE_URL) : 'https://via.placeholder.com/150');
 
-// Log image URL for debugging
-error_log("issue-item-template: Rendering issue ID=$metron_id, image=" . ($issue['image'] ?? 'N/A'));
+error_log("issue-item-template: Rendering issue ID=$metron_id");
 
-// ComicVine integration
-$cv_info = null;
-$description = '';
-$creators = [];
-$genre_string = '';
-$metron_cv_id = method_exists($comic_renderer, 'get_metron_cv_id') ? $comic_renderer->get_metron_cv_id($metron_id) : '';
+// **NEW: Use pre-fetched CV batch - NO individual API calls**
+$cv_data = $cv_info_batch[$metron_id] ?? null;
+$metron_cv_id = $cv_data['id'] ?? '';
+$description = $cv_data['description'] ?? ($issue['desc'] ?? 'No description available.');
+$highlights = $cv_data['_highlights'] ?? [];
 
-if (!empty($metron_cv_id)) {
-    $cv_info = $cv_info_batch[$metron_id] ?? (method_exists($comic_renderer, 'get_comicvine_issue_info') ? $comic_renderer->get_comicvine_issue_info($metron_cv_id) : null);
-    if (!empty($cv_info['description']) && method_exists($comic_renderer, 'clean_cv_description')) {
-        $description = $comic_renderer->clean_cv_description($cv_info['description']);
-    }
-    $creators = !empty($cv_info['person_credits']) ? $cv_info['person_credits'] : ($issue['credits'] ?? []);
-} else {
-    $description = !empty($issue['desc']) && method_exists($comic_renderer, 'clean_cv_description') 
-        ? $comic_renderer->clean_cv_description($issue['desc']) 
-        : ($issue['desc'] ?? '');
-    $creators = $issue['credits'] ?? [];
-}
-
-// Creator credits
+$creators = $issue['credits'] ?? [];
 $creator_infos = [];
 foreach ($creators as $person) {
     $name = $person['name'] ?? $person['creator'] ?? 'Unknown';
@@ -64,45 +50,35 @@ foreach ($creators as $person) {
 }
 $creator_info_string = implode('; ', $creator_infos);
 
-// Genres
 $genres_origin = 'metron';
-$genre_sources = [];
-if (!empty($series['genres']) && is_array($series['genres'])) {
-    $genre_sources = array_column($series['genres'], 'name');
-} elseif (!empty($cv_info['concept_credits']) && is_array($cv_info['concept_credits'])) {
-    $genre_sources = array_column($cv_info['concept_credits'], 'name');
-    $genres_origin = 'cv';
-}
+$genre_sources = !empty($series['genres']) && is_array($series['genres']) ? array_column($series['genres'], 'name') : [];
 $genre_string = implode(', ', $genre_sources);
 
-// Collection status
+// **NEW: Use pre-fetched collection status**
 $in_collection = false;
 $collection_post_id = 0;
-$issue_id = $metron_id;
-$date_raw = $cv_info['cover_date'] ?? $issue['cover_date'] ?? '';
-if (is_user_logged_in()) {
-    $in_collection = isset($collection_status[$issue_id]);
-    $collection_post_id = $collection_status[$issue_id] ?? 0;
+if (is_user_logged_in() && isset($collection_status[$metron_id])) {
+    $in_collection = true;
+    $collection_post_id = $collection_status[$metron_id];
 }
-
 ?>
-
-<li class="issue-item" data-title-id="<?php echo esc_attr($title_id); ?>">
-    <a href="<?php echo esc_url(add_query_arg(['issue_id' => $issue['id'], 'title_id' => $title_id], home_url('/comic-books/issue/'))); ?>" class="issue-link">
-        <?php if (!empty($issue['image'])):    
-            ?>
-            <img src="<?php echo esc_url($issue['image']); ?>" alt="<?php echo esc_attr($issue_title); ?>" class="issue-image" loading="lazy" data-loaded="true">
-        <?php else: 
-            ?>
+<!-- **ORIGINAL HTML STRUCTURE - UNCHANGED** -->
+<li class="issue-item" data-title-id="<?php echo esc_attr($title_id); ?>" data-issue-id="<?php echo esc_attr($metron_id); ?>" data-cv-id="<?php echo esc_attr($metron_cv_id); ?>">
+    <a href="<?php echo esc_url(add_query_arg(['issue_id' => $metron_id, 'title_id' => $title_id], home_url('/comic-books/issue/'))); ?>" class="issue-link">
+        <?php if ($image_url): ?>
+            <img src="<?php echo $image_url; ?>" alt="<?php echo esc_attr($issue_title); ?>" class="issue-image" loading="lazy" data-loaded="true">
+        <?php else: ?>
             <img src="<?php echo esc_url(defined('PUBLISHER_PLACEHOLDER_IMAGE_URL') ? PUBLISHER_PLACEHOLDER_IMAGE_URL : ''); ?>" alt="Placeholder" class="issue-image" loading="lazy" data-loaded="true">
         <?php endif; ?>
         <div class="issue-info">
             <h5>#<?php echo esc_html($issue['number'] ?? 'N/A') . ' — ' . esc_html($series['name'] ?? 'Unknown'); ?></h5>
             <h6><?php echo esc_html($formatted_date); ?></h6>
-            <?php if (!empty($cv_info['_highlights'])): ?>
+            
+            <!-- **NEW: Server-rendered CV highlights (from batch) - No AJAX** -->
+            <?php if (!empty($highlights)): ?>
                 <div class="cv-highlights">
-                    <?php foreach ($cv_info['_highlights'] as $note): ?>
-                        <p class="cv-note"><?php echo esc_html($note); ?></p>
+                    <?php foreach ($highlights as $highlight): ?>
+                        <p class="cv-note"><?php echo esc_html($highlight); ?></p>
                     <?php endforeach; ?>
                 </div>
             <?php endif; ?>
@@ -118,14 +94,14 @@ if (is_user_logged_in()) {
                     data-genres="<?php echo esc_attr($genre_string); ?>"
                     data-genre-origin="<?php echo esc_attr($genres_origin); ?>"
                     data-description="<?php echo esc_attr($description); ?>"
-                    data-issue-id="<?php echo esc_attr($issue_id); ?>"
+                    data-issue-id="<?php echo esc_attr($metron_id); ?>"
                     data-title-id="<?php echo esc_attr($title_id); ?>"
                     data-publisher="<?php echo esc_attr($series['publisher']['name'] ?? 'Unknown'); ?>"
                     data-creators="<?php echo esc_attr($creator_info_string); ?>"
-                    data-date="<?php echo esc_attr($date_raw); ?>"
+                    data-date="<?php echo esc_attr($date); ?>"
                     data-volume="<?php echo esc_attr($series['volume'] ?? ''); ?>"
                     data-issue-number="<?php echo esc_attr($issue['number'] ?? 'N/A'); ?>"
-                    data-image-url="<?php echo esc_url($issue['image'] ?? ''); ?>"
+                    data-image-url="<?php echo esc_url($image_url); ?>"
                     <?php if ($in_collection): ?>
                         data-post-id="<?php echo esc_attr($collection_post_id); ?>"
                         data-action="remove"
@@ -141,10 +117,11 @@ if (is_user_logged_in()) {
                 data-item-id="<?php echo esc_attr($metron_cv_id); ?>"
                 data-title="<?php echo esc_attr($issue_title); ?>"
                 data-volume="<?php echo esc_attr($series['volume'] ?? ''); ?>"
-                data-item-url="<?php echo esc_url(add_query_arg(['issue_id' => $issue_id, 'title_id' => $title_id], home_url('/comic-books/issue/'))); ?>"
-                data-image-url="<?php echo esc_url($issue['image'] ?? ''); ?>">
+                data-item-url="<?php echo esc_url(add_query_arg(['issue_id' => $metron_id, 'title_id' => $title_id], home_url('/comic-books/issue/'))); ?>"
+                data-image-url="<?php echo esc_url($image_url); ?>">
                 Add to Wishlist
             </button>
         </div>
     <?php endif; ?>
 </li>
+<!-- **REMOVED: Original inline <script> - No more per-issue AJAX** -->

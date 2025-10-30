@@ -12,14 +12,15 @@
  * @author Peter Giammarco
  */
 class MetronAPI {
+
     protected $api_base = COMICBOOKS_API_BASE; // Ensure this is 'https://metron.cloud/api/'
-    public $dataset_ttl = 7 * WEEK_IN_SECONDS; // 1 week
-    public $cache_ttl = 24 * 3600; // 24 hours
+    public $dataset_ttl = 2 * WEEK_IN_SECONDS; // Increased to 2 weeks for stable data
+    public $cache_ttl = 24 * 3600; // 24 hours for other data
+
 
     protected function api_get($url, $retries = 3, $backoff = 1) {
         $cache_key = 'metron:api:' . md5($url);
         $cached = get_transient($cache_key);
-    
         if ($cached !== false) {
             error_log("api_get: Cache hit for $url");
             return $cached;
@@ -33,6 +34,9 @@ class MetronAPI {
             return ['error' => 'Missing API credentials'];
         }
     
+        // Ensure retries is an integer
+        $retries = is_array($retries) ? 3 : (int)$retries;
+    
         for ($attempt = 1; $attempt <= $retries; $attempt++) {
             error_log("api_get: Attempt $attempt/$retries for $url");
             $response = wp_remote_get($url, [
@@ -41,11 +45,18 @@ class MetronAPI {
                     'Accept' => 'application/json',
                     'Authorization' => 'Basic ' . base64_encode("$username:$password")
                 ],
-                'timeout' => 30,
+                'timeout' => 45,
+                'redirection' => 5,
+                'httpversion' => '1.1',
             ]);
     
             if (is_wp_error($response)) {
                 error_log("api_get: ERROR: WP_Error - " . $response->get_error_message() . " for $url");
+                if ($attempt < $retries && strpos($response->get_error_message(), 'timeout') !== false) {
+                    sleep($backoff);
+                    $backoff *= 2;
+                    continue;
+                }
                 return ['error' => 'WP_Error: ' . $response->get_error_message()];
             }
     
@@ -55,31 +66,44 @@ class MetronAPI {
                 error_log("api_get: WARN: Rate limit hit (429) for $url, attempt $attempt/$retries, sleeping $retry_after seconds");
                 if ($attempt < $retries) {
                     sleep($retry_after);
-                    $backoff *= 2; // Exponential backoff
+                    $backoff *= 2;
                     continue;
                 }
                 return ['error' => 'Rate limit exceeded'];
             }
     
             if ($status_code != 200) {
-                error_log("api_get: ERROR: HTTP $status_code for $url");
+                $body = wp_remote_retrieve_body($response);
+                error_log("api_get: ERROR: HTTP $status_code for $url, body preview: " . substr($body, 0, 200));
                 return ['error' => "HTTP $status_code"];
             }
     
             $body = wp_remote_retrieve_body($response);
             if (empty($body)) {
                 error_log("api_get: ERROR: Empty response body for $url");
+                if ($attempt < $retries) {
+                    sleep($backoff);
+                    $backoff *= 2;
+                    continue;
+                }
                 return ['error' => 'Empty response'];
             }
     
             $data = json_decode($body, true);
             if (json_last_error() !== JSON_ERROR_NONE) {
-                error_log("api_get: ERROR: Invalid JSON response from $url: " . json_last_error_msg());
+                error_log("api_get: ERROR: Invalid JSON response from $url: " . json_last_error_msg() . ". Raw body preview: " . substr($body, 0, 500));
+                if ($attempt < $retries) {
+                    sleep($backoff);
+                    $backoff *= 2;
+                    continue;
+                }
                 return ['error' => 'Invalid JSON: ' . json_last_error_msg()];
             }
     
-            set_transient($cache_key, $data, 2 * WEEK_IN_SECONDS); // Cache for 2 weeks
-            error_log("api_get: Data cached for $url");
+            // Adjust cache duration based on response size
+            $cache_duration = count($data['results'] ?? []) > 100 ? WEEK_IN_SECONDS : 2 * WEEK_IN_SECONDS;
+            set_transient($cache_key, $data, $cache_duration);
+            error_log("api_get: Data cached for $url, duration=$cache_duration seconds");
             return $data;
         }
     
@@ -211,96 +235,113 @@ class MetronAPI {
     }
 
     public function get_series($publisher_id, $page = 1, $per_page = 10, $search = '', $letter = 'all') {
-        $cache_key = "metron:series:$publisher_id:s$search:l$letter";
-        $cached_data = get_transient($cache_key);
-        
-        if ($cached_data !== false && empty($search) && $letter === 'all') {
-            $total = count($cached_data['items']);
-            $offset = ($page - 1) * $per_page;
-            $paged_series = array_slice($cached_data['items'], $offset, $per_page);
-            return [
-                'items' => $paged_series,
-                'total' => $total,
-                'page' => $page,
-                'per_page' => $per_page
-            ];
+        $publisher_id = (int)$publisher_id;
+        $page         = max(1, (int)$page);
+        $per_page     = max(1, (int)$per_page);
+    
+        // === 1. FULL LIST CACHE KEY ===
+        $cache_key_full = "metron:series_full:$publisher_id";
+        $full_series    = get_transient($cache_key_full);
+    
+        // === 2. FILTERED RESULT CACHE KEY ===
+        $search_key = $search ? strtolower(trim($search)) : '';
+        $letter_key = $letter !== 'all' ? strtolower($letter) : '';
+        $cache_key  = "metron:series:$publisher_id:s$search_key:l$letter_key:p$page";
+        $cached_result = get_transient($cache_key);
+    
+        // === 3. RETURN CACHED FILTERED RESULT IF AVAILABLE ===
+        if ($cached_result !== false) {
+            return $cached_result;
         }
     
-        $series = [];
-        $api_page = 1;
-        $api_per_page = 100;
+        // === 4. FETCH FULL LIST IF NOT CACHED ===
+        if ($full_series === false) {
+            $full_series = [];
+            $api_page = 1;
+            $max_pages = 100;
     
-        do {
-            $url = $this->api_base . "publisher/$publisher_id/series_list/?page=$api_page";
-            $response = $this->api_get($url);
-            
-            if (!$response || empty($response['results'])) {               
-                break;
-            }
+            error_log("CACHING FULL SERIES LIST FOR PUBLISHER $publisher_id");
     
-            foreach ($response['results'] as $item) {
-                if (!is_array($item) || !isset($item['id'], $item['series'])) {
-                    continue;
+            do {
+                $url = $this->api_base . "publisher/$publisher_id/series_list/?page=$api_page";
+                $response = $this->api_get($url);
+    
+                if (!$response || empty($response['results'])) break;
+    
+                foreach ($response['results'] as $item) {
+                    if (!isset($item['id'], $item['series'])) continue;
+    
+                    $full_series[] = [
+                        'series_id'    => (int)$item['id'],
+                        'name'         => $item['series'],
+                        'volume'       => $item['volume'] ?? '1',
+                        'issue_count'  => $item['issue_count'] ?? 0,
+                        'year_began'   => $item['year_began'] ?? 'N/A',
+                    ];
                 }
     
-                $series[] = [
-                    'series_id' => (int)$item['id'],
-                    'name' => $item['series'],
-                    'volume' => $item['volume'] ?? 'N/A',
-                    'issue_count' => $item['issue_count'] ?? 0,
-                    'year_began' => $item['year_began'] ?? 'N/A',
-                    'first_issue_image' => '' // Defer to lazy loading
-                ];
-            }
+                $api_page++;
+                if ($api_page > $max_pages) break;
     
-            $api_page++;
-        } while (!empty($response['next']));
+            } while (!empty($response['next']));
     
-        // Apply search and letter filters
-        $filtered_series = $series;
-        if ($search) {
-            $filtered_series = array_filter($filtered_series, function($item) use ($search) {
-                return stripos($item['name'], $search) !== false;
+            // Cache full list for 30 days
+            set_transient($cache_key_full, $full_series, 30 * DAY_IN_SECONDS);
+            error_log("CACHED " . count($full_series) . " series for publisher $publisher_id");
+        }
+    
+        // === 5. FILTER IN MEMORY ===
+        $filtered = $full_series;
+    
+        if ($search_key) {
+            $filtered = array_filter($filtered, function($s) use ($search_key) {
+                return strpos(strtolower($s['name']), $search_key) !== false;
             });
-            $filtered_series = array_values($filtered_series);
         }
     
-        if ($letter !== 'all') {
-            $filtered_series = array_filter($filtered_series, function($item) use ($letter) {
-                $firstChar = strtoupper(substr($item['name'], 0, 1));
-                if ($letter === '#') {
-                    return !preg_match('/^[A-Za-z]/', $firstChar);
-                }
-                return $firstChar === strtoupper($letter);
+        if ($letter_key) {
+            $filtered = array_filter($filtered, function($s) use ($letter_key) {
+                $first = strtoupper(substr($s['name'], 0, 1));
+                return $letter_key === '#' ? !ctype_alpha($first) : $first === strtoupper($letter_key);
             });
-            $filtered_series = array_values($filtered_series);
         }
     
-        if (!empty($series) && empty($search) && $letter === 'all') {
-            set_transient($cache_key, ['items' => $series], $this->dataset_ttl * 4);
-        }
-    
-        $total = count($filtered_series);
+        $filtered = array_values($filtered);
+        $total = count($filtered);
         $offset = ($page - 1) * $per_page;
-        $paged_series = array_slice($filtered_series, $offset, $per_page);
+        $paged = array_slice($filtered, $offset, $per_page);
     
-        return [
-            'items' => $paged_series,
-            'total' => $total,
-            'page' => $page,
-            'per_page' => $per_page
+        // === 6. BUILD RESULT ===
+        $result = [
+            'items'     => $paged,
+            'total'     => $total,
+            'page'      => $page,
+            'per_page'  => $per_page
         ];
+    
+        // === 7. CACHE FILTERED RESULT (short TTL) ===
+        $filtered_ttl = HOUR_IN_SECONDS; // 1 hour — adjust as needed
+        if ($search_key || $letter_key !== 'all') {
+            $filtered_ttl = 6 * HOUR_IN_SECONDS; // longer for search/letter
+        }
+        set_transient($cache_key, $result, $filtered_ttl);
+    
+        return $result;
     }
 
     public function get_series_issues($title_id, $current_page, $search = '') {
+        $start_time = microtime(true);
+        error_log("get_series_issues: Start for title_id=$title_id, page=$current_page, search=$search");
+    
+        // Fetch series data
         $series_cache_key = "metron:series:{$title_id}";
         $series = get_transient($series_cache_key);
         if ($series === false) {
             $series_url = "{$this->api_base}series/$title_id/";
-            $series = $this->api_get($series_url);
+            $series = $this->api_get($series_url, 3);
             if (is_array($series) && isset($series['error'])) {
                 error_log("get_series_issues: Series fetch error for title_id=$title_id: " . $series['error']);
-                return ['error' => $series['error']];
+                return ['error' => 'Failed to fetch series data: ' . $series['error']];
             }
             if ($series && !empty($series['name'])) {
                 set_transient($series_cache_key, $series, 2 * WEEK_IN_SECONDS);
@@ -310,65 +351,59 @@ class MetronAPI {
             }
         }
     
-        $issue_cache_key = "metron:issues:{$title_id}:page:{$current_page}:search:{$search}";
-        $issue_list_data = get_transient($issue_cache_key);
-        if ($issue_list_data === false) {
-            $all_issues = [];
-            $api_page = 1; // Use separate variable for API pagination
-            $issue_list_url = "{$this->api_base}series/$title_id/issue_list/?per_page=100";
-            error_log("get_series_issues: Fetching issues from $issue_list_url");
+        // Fetch all issues (no pagination params)
+        $full_issues_cache_key = "metron:issues_full:{$title_id}";
+        $full_issues_data = get_transient($full_issues_cache_key);
+        if ($full_issues_data === false) {
+            $issue_list_url = "{$this->api_base}series/$title_id/issue_list/";
+            error_log("get_series_issues: Fetching full issues from $issue_list_url");
+            $response = $this->api_get($issue_list_url, 3);
+            if (is_array($response) && isset($response['error'])) {
+                error_log("get_series_issues: Failed to fetch issues for title_id=$title_id: " . $response['error']);
+                return ['error' => 'Failed to fetch issues: ' . $response['error']];
+            }
+            if (!$response || empty($response['results'])) {
+                error_log("get_series_issues: No issues found for title_id=$title_id");
+                $full_issues_data = ['count' => 0, 'results' => []];
+            } else {
+                $all_issues = $response['results'];
+                error_log("get_series_issues: Fetched " . count($all_issues) . " issues for title_id=$title_id");
     
-            do {
-                $response = $this->api_get($issue_list_url . '&page=' . $api_page);
-                if (is_array($response) && isset($response['error'])) {
-                    error_log("get_series_issues: Failed to fetch issues for title_id=$title_id, page=$api_page: " . $response['error']);
-                    break;
-                }
-                if (!$response || empty($response['results'])) {
-                    error_log("get_series_issues: No issues found for title_id=$title_id, page=$api_page");
-                    break;
-                }
-                $all_issues = array_merge($all_issues, $response['results']);
-                $api_page++;
-                usleep(300000); // 500ms delay to avoid rate limits
-            } while (!empty($response['next']));
+                // Sort issues by number
+                usort($all_issues, function($a, $b) {
+                    $num_a = floatval($a['number'] ?? 0);
+                    $num_b = floatval($b['number'] ?? 0);
+                    return $num_a <=> $num_b;
+                });
     
-            // Log all issues fetched
-            error_log("get_series_issues: Total issues fetched for title_id=$title_id: " . count($all_issues));
-    
-            // Sort issues by number
-            usort($all_issues, function($a, $b) {
-                $num_a = floatval($a['number'] ?? 0);
-                $num_b = floatval($b['number'] ?? 0);
-                return $num_a <=> $num_b;
-            });
-    
-            // Apply search filtering
-            $filtered_issues = $search ? array_filter($all_issues, function($issue) use ($search) {
-                $issue_title = strtolower($issue['issue'] ?? '');
-                $issue_number = strtolower($issue['number'] ?? '');
-                $cover_date = strtolower($issue['cover_date'] ?? '');
-                return strpos($issue_title, $search) !== false
-                    || strpos($issue_number, $search) !== false
-                    || strpos($cover_date, $search) !== false;
-            }) : $all_issues;
-    
-            $total_issues = count($filtered_issues);
-            $per_page = 10;
-            $start = ($current_page - 1) * $per_page; // Fix: Use $current_page
-            $paginated_issues = array_slice($filtered_issues, $start, $per_page);
-    
-            $issue_list_data = [
-                'count' => $total_issues,
-                'results' => $paginated_issues
-            ];
-    
-            set_transient($issue_cache_key, $issue_list_data, 2 * WEEK_IN_SECONDS);
-            error_log("get_series_issues: Issues cached for title_id=$title_id, page=$current_page, count=" . count($paginated_issues));
+                $full_issues_data = ['count' => count($all_issues), 'results' => $all_issues];
+            }
+            set_transient($full_issues_cache_key, $full_issues_data, 2 * WEEK_IN_SECONDS);
         }
     
-        // Log the final issue list data
-        error_log("get_series_issues: Returning issue_list_data=" . print_r($issue_list_data, true));
+        // Apply search filter
+        $filtered_issues = $search ? array_filter($full_issues_data['results'], function($issue) use ($search) {
+            $issue_title = strtolower($issue['issue'] ?? '');
+            $issue_number = strtolower($issue['number'] ?? '');
+            $cover_date = strtolower($issue['cover_date'] ?? '');
+            return strpos($issue_title, $search) !== false
+                || strpos($issue_number, $search) !== false
+                || strpos($cover_date, $search) !== false;
+        }) : $full_issues_data['results'];
+    
+        $filtered_issues = array_values($filtered_issues);
+        $total_issues = count($filtered_issues);
+        $per_page = 10;
+        $start = ($current_page - 1) * $per_page;
+        $paginated_issues = array_slice($filtered_issues, $start, $per_page);
+    
+        $issue_list_data = [
+            'count' => $total_issues,
+            'results' => $paginated_issues
+        ];
+    
+        $end_time = microtime(true);
+        error_log("get_series_issues: Completed in " . round($end_time - $start_time, 2) . " seconds for title_id=$title_id");
     
         return [
             'series' => $series,

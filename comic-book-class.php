@@ -193,7 +193,7 @@ class Comicbooks extends MetronAPI {
         $search = isset($_POST['search']) ? strtolower(trim($_POST['search'])) : '';
         $cache_key = "metron:ajax_issues:{$title_id}:{$page}:{$search}";
     
-        error_log("ajax_load_issues: title_id=$title_id, page=$page, search=$search");    
+        error_log("ajax_load_issues: title_id=$title_id, page=$page, search=$search");
     
         $cached = get_transient($cache_key);
         if ($cached !== false) {
@@ -205,7 +205,7 @@ class Comicbooks extends MetronAPI {
         $data = $this->get_series_issues($title_id, $page, $search);
         if (is_array($data) && isset($data['error'])) {
             error_log("ajax_load_issues: Failed for title_id=$title_id: " . $data['error']);
-            wp_send_json_error(['message' => 'Failed to load issues: ' . $data['error']]);
+            wp_send_json_error(['message' => 'No issues available: ' . $data['error']]);
             return;
         }
     
@@ -216,26 +216,44 @@ class Comicbooks extends MetronAPI {
         $per_page = 10;
         $total_pages = ceil($total_issues / $per_page);
     
-        error_log("ajax_load_issues: all_issues=" . print_r($all_issues, true));
-        error_log("ajax_load_issues: total_issues=$total_issues, total_pages=$total_pages");
+        error_log("ajax_load_issues: all_issues count=" . count($all_issues) . ", total_issues=$total_issues, sample=" . json_encode($all_issues[0] ?? [], JSON_PRETTY_PRINT));
     
         ob_start();
-        $comic_renderer = $this;
+        $issue_template = defined('COMICBOOKS_FETCHER_PATH') 
+            ? COMICBOOKS_FETCHER_PATH . 'templates/issue-item-template.php'
+            : trailingslashit(WP_PLUGIN_DIR) . 'comic-book-fetcher/templates/issue-item-template.php';
     
+        if (!file_exists($issue_template)) {
+            error_log("ajax_load_issues: Issue template file not found at: $issue_template");
+            echo '<p class="no-results">Error: Issue template file not found.</p>';
+            $issues_html = ob_get_clean();
+            wp_send_json_error(['message' => 'Issue template file not found']);
+            return;
+        }
+    
+        $rendered_issues = 0;
         if (empty($all_issues) || !is_array($all_issues)) {
-            error_log("ajax_load_issues: No issues found or invalid issue data");
-            echo '<p>No issues found.</p>';
+            error_log("ajax_load_issues: No issues found or invalid issue data for title_id=$title_id");
+            echo '<p class="no-results">No issues found for this series.</p>';
         } else {
             echo '<ul class="issues-list">';
-            foreach ($all_issues as $issue) {
+            foreach ($all_issues as $index => $issue) {
+                if (!isset($issue['id'])) {
+                    error_log("ajax_load_issues: Skipping invalid issue at index=$index for title_id=$title_id: " . json_encode($issue, JSON_PRETTY_PRINT));
+                    continue;
+                }
                 error_log("ajax_load_issues: Processing issue ID=" . ($issue['id'] ?? 'N/A'));
-                include plugin_dir_path(__FILE__) . 'templates/issue-item-template.php';
+                include $issue_template;
+                $rendered_issues++;
             }
             echo '</ul>';
+            if ($rendered_issues === 0) {
+                error_log("ajax_load_issues: All issues skipped for title_id=$title_id");
+                echo '<p class="no-results">No valid issues available for this series.</p>';
+            }
         }
     
         $issues_html = ob_get_clean();
-        error_log("ajax_load_issues: issues_html=" . (empty($issues_html) ? 'empty' : substr($issues_html, 0, 100) . '...'));
     
         $response = [
             'issues' => $issues_html,
@@ -245,10 +263,10 @@ class Comicbooks extends MetronAPI {
             'per_page' => $per_page
         ];
     
-        error_log("ajax_load_issues: Response=" . print_r($response, true));
         set_transient($cache_key, $response, 2 * WEEK_IN_SECONDS);
         wp_send_json_success($response);
     }
+    
     public function ajax_load_series_image() {
         $series_id = intval($_POST['series_id'] ?? 0);
         if (!$series_id) {

@@ -1,5 +1,9 @@
-jQuery(document).ready(function($) {
-    const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+/**
+ * comic-book.js
+ * Handles issue loading, pagination, search for Comic Book Issues page
+ * Uses jQuery + AJAX + wp_localize_script
+ */
+jQuery(document).ready(function($) {    
     let allPublishers = [];
     let allSeries = [];
     let currentPublisherId = null;
@@ -7,8 +11,8 @@ jQuery(document).ready(function($) {
     let currentPage = 1;
     let currentSearch = '';
     let isAjaxPending = false;
+    let isInitialLoad = true;
     
-
     // Custom confirm dialog using Toastify and Promise
     function toastConfirm(message) {
         return new Promise((resolve) => {
@@ -63,7 +67,11 @@ jQuery(document).ready(function($) {
         });
     }
 
-    // Cache handling
+    // ===================================================================
+    // Cache Helpers
+    // ===================================================================
+    const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
     function getCachedData(key) {
         const cached = localStorage.getItem(key);
         if (!cached) return null;
@@ -90,16 +98,27 @@ jQuery(document).ready(function($) {
         }
     }
 
-        // Show spinner function
+    // ===================================================================
+    // Spinner
+    // ===================================================================
+    let isFirstLoad = true;
+
     function showSpinner() {
-        $('#loading-spinner').show();
+        if (isFirstLoad) {
+            $('#loading-spinner').show();
+        }
         $('#book-container .publishers-wrapper, #book-container .book-wrapper, #book-container .pagination-wrapper').hide();
     }
     
+
     // Hide spinner function
+
     function hideSpinner() {
         $('#loading-spinner').hide();
+        $('#book-container .book-wrapper, #book-container .pagination-wrapper').show();
+        isFirstLoad = false; // Only show spinner once
     }
+
 
     // UI updates
     function updateActiveLetter(letter) {
@@ -121,10 +140,16 @@ jQuery(document).ready(function($) {
     }
 
     function renderItems(items, type, page, total, search = '', letter = '', perPage) {
+        if (isInitialLoad && $('#book-container').children().length > 0) {
+            console.log('Initial load: skipping renderItems, content already exists');
+            lazyLoadImages();
+            return;
+        }
+    
         const isPublisher = type === 'publishers';
         const container = $('#book-container');
     
-        // Show spinner before rendering
+        // Show spinner...
         container.html(`
             <div id="loading-spinner" aria-busy="true" aria-label="Loading items">
                 <div class="spinner"></div>
@@ -132,10 +157,9 @@ jQuery(document).ready(function($) {
             </div>
         `);
     
-        // Small delay to ensure spinner is visible before rendering items
         setTimeout(() => {
             let html = `<div id="items-wrapper"><div class="${isPublisher ? 'publishers' : 'book'}-wrapper">`;
-    
+
             if (!items.length) {
                 html += `<p>No ${isPublisher ? 'publishers' : 'series'} found${search ? ` for "${search}"` : letter && letter !== 'all' ? ` starting with "${letter}"` : isPublisher ? '' : ' for this publisher'}. </p>`;
             } else {
@@ -172,15 +196,23 @@ jQuery(document).ready(function($) {
             html += '</div>';
             html += renderPagination(page, Math.ceil(total / perPage), letter);
             html += '</div>'; // Close items-wrapper
-    
+
             // Replace spinner with rendered items
             container.html(html);
-    
-            // Lazy load images if you have this function
+
+            // Lazy load images
             lazyLoadImages();
-        }, 50); // 50ms delay to let spinner render (optional but improves UX)
+
+            // Preload next page if applicable
+            if (page < Math.ceil(total / perPage) && comicbooks_fetchers_data.preload_enabled) {
+                preloadData(isPublisher ? 'publishers' : 'books', isPublisher ? null : currentPublisherId, page + 1, search, letter);
+            }
+        }, 50); // 50ms delay to let spinner render
     }
 
+    // ===================================================================
+    // Render Pagination
+    // ===================================================================
     function renderPagination(page, totalPages, letter = '') {
         if (totalPages <= 1) return '';
         let html = '<div class="pagination-wrapper">';
@@ -189,15 +221,14 @@ jQuery(document).ready(function($) {
             html += `<button type="button" class="page-btn" data-page="${page - 1}" data-letter="${letter}">Previous</button>`;
         }
         for (let i = Math.max(1, page - 2); i <= Math.min(totalPages, page + 2); i++) {
-            html += `<button type="button" class="page-btn ${i === page ? 'active' : ''}" data-page="${i}" data-letter="${letter}">${i}</button>`;
+            html += `<button type="button" class="page-btn${i === page ? 'active' : ''}" data-page="${i}" data-letter="${letter}">${i}</button>`;
         }
         if (page < totalPages) {
             html += `<button type="button" class="page-btn" data-page="${page + 1}" data-letter="${letter}">Next</button>`;
         }
         html += '</div>';
         return html;
-    }
-    
+    }    
     
     function renderIssuesPagination(page, totalPages, titleId, search = '', perPage) {
         if (totalPages <= 1) return '';
@@ -207,7 +238,7 @@ jQuery(document).ready(function($) {
             html += `<a href="${new URLSearchParams({title_id: titleId, issue_page: page - 1, search}).toString()}" class="page-btn" data-page="${page - 1}">Previous</a>`;
         }
         for (let i = Math.max(1, page - 2); i <= Math.min(totalPages, page + 2); i++) {
-            html += `<a href="${new URLSearchParams({title_id: titleId, issue_page: i, search}).toString()}" class="page-btn ${i === page ? 'active' : ''}" data-page="${i}">${i}</a>`;
+            html += `<a href="${new URLSearchParams({title_id: titleId, issue_page: i, search}).toString()}" class="page-btn${i === page ? 'active' : ''}" data-page="${i}">${i}</a>`;
         }
         if (page < totalPages) {
             html += `<a href="${new URLSearchParams({title_id: titleId, issue_page: page + 1, search}).toString()}" class="page-btn" data-page="${page + 1}">Next</a>`;
@@ -216,73 +247,130 @@ jQuery(document).ready(function($) {
         return html;
     }
 
-    // Lazy load images
-    function lazyLoadImages() {
-        // Series images
-        const seriesImages = document.querySelectorAll('.comic-title img[loading="lazy"]:not([data-loaded="true"])');
-        const seriesIds = [...new Set(Array.from(seriesImages)
-            .map(img => img.closest('.comic-title')?.dataset.seriesId))
-        ].filter(id => id);
+    let lazyLoadObserver = null;
+    const BATCH_SIZE = 3; // Load 5 images at a time
+    const seriesBatch = new Set();
+    const publisherBatch = new Set();
+    let batchTimeout = null;
     
-        // Publisher images
-        const publisherImages = document.querySelectorAll('.publisher-item img[loading="lazy"]:not([data-loaded="true"]), .publisher-info img[loading="lazy"]:not([data-loaded="true"])');
-        const publisherIds = [...new Set(Array.from(publisherImages)
-            .map(img => img.closest('.publisher-item')?.dataset.publisherId || img.closest('.publisher-info')?.dataset.publisherId))
-        ].filter(id => id);
+    function processBatch() {
+        if (batchTimeout) return; // Already processing
     
-        // Fetch series images
-        if (seriesIds.length) {
-            $.ajax({
-                url: comicbooks_fetchers_data.ajax_url,
-                method: 'POST',
-                data: {
+        batchTimeout = setTimeout(() => {
+            const seriesIds = Array.from(seriesBatch).slice(0, BATCH_SIZE);
+            const publisherIds = Array.from(publisherBatch).slice(0, BATCH_SIZE);
+    
+            // Remove processed IDs
+            seriesIds.forEach(id => seriesBatch.delete(id));
+            publisherIds.forEach(id => publisherBatch.delete(id));
+    
+            // Load series images
+            if (seriesIds.length) {
+                $.post(comicbooks_fetchers_data.ajax_url, {
                     action: 'load_series_images_batch',
                     series_ids: seriesIds,
                     nonce: comicbooks_fetchers_data.nonce
-                },
-                success: response => {
+                }, response => {
                     if (response.success && response.data.images) {
-                        seriesImages.forEach(img => {
-                            const seriesId = img.closest('.comic-title')?.dataset.seriesId;
-                            if (response.data.images[seriesId]) {
-                                img.src = response.data.images[seriesId];
+                        seriesIds.forEach(id => {
+                            const img = document.querySelector(`.comic-title[data-series-id="${id}"] img`);
+                            if (img && response.data.images[id]) {
+                                img.src = response.data.images[id];
                                 img.dataset.loaded = 'true';
+                                img.removeAttribute('loading'); // Optional: clean up
                             }
                         });
                     }
-                },
-                error: () => console.warn('Failed to load series images')
-            });
-        }
+                });
+            }
     
-        // Fetch publisher images
-        if (publisherIds.length) {
-            $.ajax({
-                url: comicbooks_fetchers_data.ajax_url,
-                method: 'POST',
-                data: {
+            // Load publisher images
+            if (publisherIds.length) {
+                $.post(comicbooks_fetchers_data.ajax_url, {
                     action: 'load_publisher_images_batch',
                     publisher_ids: publisherIds,
                     nonce: comicbooks_fetchers_data.nonce
-                },
-                success: response => {
+                }, response => {
                     if (response.success && response.data.images) {
-                        publisherImages.forEach(img => {
-                            const publisherId = img.closest('.publisher-item')?.dataset.publisherId || img.closest('.publisher-info')?.dataset.publisherId;
-                            if (response.data.images[publisherId]) {
-                                img.src = response.data.images[publisherId];
+                        publisherIds.forEach(id => {
+                            const img = document.querySelector(
+                                `.publisher-item[data-publisher-id="${id}"] img, ` +
+                                `.publisher-info[data-publisher-id="${id}"] img`
+                            );
+                            if (img && response.data.images[id]) {
+                                img.src = response.data.images[id];
                                 img.dataset.loaded = 'true';
+                                img.removeAttribute('loading');
                             }
                         });
                     }
-                },
-                error: () => console.warn('Failed to load publisher images')
-            });
+                });
+            }
+    
+            batchTimeout = null;
+    
+            // Continue if more in queue
+            if (seriesBatch.size > 0 || publisherBatch.size > 0) {
+                processBatch();
+            }
+        }, 100); // Small delay to group nearby entries
+    }
+    
+    function lazyLoadImages() {
+        // Disconnect old observer
+        if (lazyLoadObserver) {
+            lazyLoadObserver.disconnect();
         }
+    
+        // Reset batches
+        seriesBatch.clear();
+        publisherBatch.clear();
+        if (batchTimeout) clearTimeout(batchTimeout);
+        batchTimeout = null;
+    
+        const images = document.querySelectorAll('img[loading="lazy"]:not([data-loaded="true"])');
+    
+        if (images.length === 0) return;
+    
+        lazyLoadObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const img = entry.target;
+                    const comicTitle = img.closest('.comic-title');
+                    const publisherItem = img.closest('.publisher-item');
+                    const publisherInfo = img.closest('.publisher-info');
+    
+                    if (comicTitle) {
+                        const id = comicTitle.dataset.seriesId;
+                        if (id && !img.dataset.loaded) {
+                            seriesBatch.add(id);
+                        }
+                    } else if (publisherItem || publisherInfo) {
+                        const id = (publisherItem?.dataset.publisherId) || (publisherInfo?.dataset.publisherId);
+                        if (id && !img.dataset.loaded) {
+                            publisherBatch.add(id);
+                        }
+                    }
+    
+                    // Stop observing this image
+                    lazyLoadObserver.unobserve(img);
+    
+                    // Trigger batch
+                    if (!batchTimeout) {
+                        processBatch();
+                    }
+                }
+            });
+        }, {
+            rootMargin: '200px 0px 200px 0px', // Start loading 200px before viewport
+            threshold: 0.01
+        });
+    
+        images.forEach(img => lazyLoadObserver.observe(img));
     }
 
-      // Centralized debounced AJAX handler
-      const debouncedAjaxAction = debounce(function(action, data, callback, errorCallback) {
+    // Centralized debounced AJAX handler
+    const debouncedAjaxAction = debounce(function(action, data, callback, errorCallback) {
         if (isAjaxPending) {
             console.warn('AJAX request already in progress, queuing:', action, data);
             setTimeout(() => debouncedAjaxAction(action, data, callback, errorCallback), 500);
@@ -291,9 +379,8 @@ jQuery(document).ready(function($) {
 
         isAjaxPending = true;
         const container = action === 'load_issues' ? '#issues-list' : '#book-container';
-        // Show spinner instead of plain text
         $('#loading-spinner').removeClass('hidden').show();
-        $(container).empty(); // Clear container
+        $(container).empty();
 
         console.log('Sending AJAX request:', action, data);
 
@@ -326,7 +413,43 @@ jQuery(document).ready(function($) {
                 $('#loading-spinner').addClass('hidden').hide();
             }
         });
-    }, 300);
+    }, 500); // Increased to 500ms from 300ms
+
+    // ===================================================================
+    // Preload Next Page
+    // ===================================================================
+    function preloadData(type, publisherId, page, search, letter) {
+        const cacheKey = type === 'publishers' ? `metron_publishers_${search}_${page}_${letter}` : `metron_books_${publisherId}_${page}_${search}_${letter}`;
+        if (getCachedData(cacheKey)) {
+            console.log(`Preload skipped: Cache exists for ${cacheKey}`);
+            return;
+        }
+
+        console.log(`Preloading ${type} for page ${page}`);
+        debouncedAjaxAction(
+            type === 'publishers' ? 'load_publishers' : 'load_book',
+            {
+                name: search,
+                page: page,
+                letter: letter,
+                publisher_id: publisherId || ''
+            },
+            response => {
+                if (response.success && response.data) {
+                    setCachedData(cacheKey, {
+                        [type === 'publishers' ? 'publishers' : 'series']: response.data[type === 'publishers' ? 'publishers' : 'series'],
+                        total: response.data.total,
+                        max_pages: response.data.max_pages,
+                        per_page: response.data.per_page
+                    });
+                    console.log(`Preloaded ${type} for page ${page}`);
+                }
+            },
+            error => {
+                console.error(`Preload failed for ${type} page ${page}:`, error);
+            }
+        );
+    }
 
     // Fetch publishers
     function fetchPublishers(name = '', page, letter = 'all') {
@@ -334,18 +457,16 @@ jQuery(document).ready(function($) {
         const cacheKey = `metron_publishers_${name}_${page}_${letter}`;
         const cached = getCachedData(cacheKey);
 
-        // Show spinner before checking cache or making AJAX call
         showSpinner();
 
         if (cached) {
             console.log('cached.publishers: ', cached.publishers);
             allPublishers = cached.publishers || [];
             const total = cached.total || allPublishers.length;
-            console.log("cached allPublishers: ", allPublishers);
             renderItems(allPublishers, 'publishers', page, total, name, letter, 10);
             showLetterButtons(true);
             updateActiveLetter(letter);
-            hideSpinner(); // Hide spinner after rendering cached data
+            hideSpinner();
             return;
         }
 
@@ -354,15 +475,15 @@ jQuery(document).ready(function($) {
             allPublishers = response.data.publishers || [];
             const total = response.data.total || 0;
             const maxPages = response.data.max_pages || Math.ceil(total / 10);
-            setCachedData(cacheKey, { publishers: allPublishers, total, maxPages });        
+            setCachedData(cacheKey, { publishers: allPublishers, total, maxPages });
             renderItems(allPublishers, 'publishers', page, total, name, letter, 10);
             showLetterButtons(true);
             updateActiveLetter(letter);
-            hideSpinner(); // Hide spinner after rendering
+            hideSpinner();
         }, error => {
             console.error('fetchPublishers error:', error);
             $('#book-container').html('<p>Error loading publishers for page ' + page + '. Please try a different page or refresh.</p>');
-            hideSpinner(); // Hide spinner after rendering
+            hideSpinner();
         });
     }
 
@@ -381,7 +502,6 @@ jQuery(document).ready(function($) {
         const cacheKey = `metron_books_${publisherId}_${page}_${name}_${letter}`;
         const cached = getCachedData(cacheKey);
 
-        // Show spinner before checking cache or making AJAX call
         showSpinner();
 
         if (cached) {
@@ -390,7 +510,7 @@ jQuery(document).ready(function($) {
             renderItems(allSeries, 'books', page, cached.total || allSeries.length, name, letter, perPage);
             showLetterButtons(true);
             updateActiveLetter(letter);
-            hideSpinner(); // Hide spinner after rendering cached data
+            hideSpinner();
             return;
         }
 
@@ -407,7 +527,7 @@ jQuery(document).ready(function($) {
             }
             showLetterButtons(true);
             updateActiveLetter(letter);
-            hideSpinner(); // Hide spinner after rendering cached data
+            hideSpinner();
         }, (xhr, status, error) => {
             console.warn('Retrying fetchBooks due to error:', status, error);
             setTimeout(() => fetchBooks(publisherId, page, name, letter), 2000);
@@ -437,35 +557,37 @@ jQuery(document).ready(function($) {
     function fetchIssues(titleId, page = 1, search = '', retries = 3) {
         console.log(`fetchIssues: titleId=${titleId}, page=${page}, search='${search}', retries=${retries}`);
         if (!titleId) {
-            $('#issues-list').html('<p>No series selected.</p>');
+            $('#issues-list').html('<p>No series selected.</p>').addClass('loaded');
             $('#loading-spinner').addClass('hidden').hide();
             $('#pagination-wrapper').empty();
-            return;
-        }
-        const cacheKey = `metron_issues_${titleId}_${page}_${search}`;
-        const cached = getCachedData(cacheKey);
-        if (cached) {
-            const perPage = cached.per_page || 10;
-            const totalIssues = cached.total_issues || 0;
-            const totalPages = Math.ceil(totalIssues / perPage);
-            $('#issues-list').html(cached.issues); // Remove extra <ul> wrapping
-            $('#pagination-wrapper').html(renderIssuesPagination(cached.current_page, totalPages, titleId, search, perPage));
-            $('#issues-list .issues-list').addClass('loaded');
-            updateIssuesUrl(titleId, cached.current_page, search);
-            lazyLoadImages();
-            if (cached.current_page < totalPages) {
-                preloadIssues(titleId, cached.current_page + 1, search);
-            }
+            console.log('fetchIssues: No titleId, hiding spinner');
             return;
         }
     
-        $('#issues-list').html(`
-             <div id="loading-spinner" style="display:none;" aria-busy="true" aria-label="Loading content">
-                        <div class="spinner"></div>
-                        <p>Loading issues...</p>
-            </div>
-        `);
+        console.log('fetchIssues: Showing spinner');
         $('#loading-spinner').removeClass('hidden').show();
+        $('#issues-list').removeClass('loaded').html(''); // Clear content
+    
+        const cacheKey = `metron_issues_${titleId}_${page}_${search}`;
+        const cached = getCachedData(cacheKey);
+        if (cached) {
+            console.log('fetchIssues: Cache hit, rendering cached data');
+            setTimeout(() => {
+                const perPage = cached.per_page || 10;
+                const totalIssues = cached.total_issues || 0;
+                const totalPages = Math.ceil(totalIssues / perPage);
+                $('#issues-list').html(cached.issues).addClass('loaded');
+                $('#pagination-wrapper').html(renderIssuesPagination(cached.current_page, totalPages, titleId, search, perPage));
+                updateIssuesUrl(titleId, cached.current_page, search);
+                lazyLoadImages();
+                console.log('fetchIssues: Hiding spinner after cache render');
+                $('#loading-spinner').addClass('hidden').hide();
+                if (cached.current_page < totalPages) {
+                    preloadIssues(titleId, cached.current_page + 1, search);
+                }
+            }, 300); // Increased delay for visibility
+            return;
+        }
     
         $.ajax({
             url: comicbooks_fetchers_data.ajax_url,
@@ -477,55 +599,53 @@ jQuery(document).ready(function($) {
                 page: page,
                 search: search || ''
             },
-            timeout: 30000,
+            timeout: 45000,
             success: response => {
                 console.log('fetchIssues: AJAX response:', response);
-                if (response.success && response.data) {
-                    const perPage = response.data.per_page || 10;
-                    const totalIssues = response.data.total_issues || 0;
-                    const totalPages = response.data.total_pages || Math.ceil(totalIssues / perPage);
-                    const currentPage = response.data.current_page || page;
-                    const issuesHtml = response.data.issues || '<p>No issues found.</p>';
+                setTimeout(() => {
+                    if (response.success && response.data) {
+                        const perPage = response.data.per_page || 10;
+                        const totalIssues = response.data.total_issues || 0;
+                        const totalPages = response.data.total_pages || Math.ceil(totalIssues / perPage);
+                        const currentPage = response.data.current_page || page;
+                        const issuesHtml = response.data.issues || '<p>No issues found.</p>';
     
-                    $('#issues-list').html(issuesHtml); // Update to avoid extra <ul>
-                    $('#pagination-wrapper').html(renderIssuesPagination(currentPage, totalPages, titleId, search, perPage));
-    
-                    setCachedData(cacheKey, {
-                        issues: issuesHtml,
-                        total_issues: totalIssues,
-                        total_pages: totalPages,
-                        current_page: currentPage,
-                        per_page: perPage
-                    });
-    
-                    $('#issues-list .issues-list').addClass('loaded');
-                    updateIssuesUrl(titleId, currentPage, search);
-                    lazyLoadImages();
-    
-                    if (currentPage < totalPages && comicbooks_fetchers_data.preload_enabled) {
-                        preloadIssues(titleId, currentPage + 1, search);
+                        $('#issues-list').html(issuesHtml).addClass('loaded');
+                        $('#pagination-wrapper').html(renderIssuesPagination(currentPage, totalPages, titleId, search, perPage));
+                        updateIssuesUrl(titleId, currentPage, search);
+                        lazyLoadImages();
+                        console.log('fetchIssues: Hiding spinner after AJAX render');
+                        $('#loading-spinner').addClass('hidden').hide();
+                        if (currentPage < totalPages && comicbooks_fetchers_data.preload_enabled) {
+                            preloadIssues(titleId, currentPage + 1, search);
+                        }
+                    } else {
+                        console.error('fetchIssues: AJAX error:', response.data?.message || 'Failed to load issues');
+                        $('#issues-list').html('<p>' + (response.data?.message || 'Failed to load issues. Please try again.') + '</p>').addClass('loaded');
+                        $('#pagination-wrapper').empty();
+                        console.log('fetchIssues: Hiding spinner after error');
+                        $('#loading-spinner').addClass('hidden').hide();
                     }
-                } else {
-                    console.error('fetchIssues: AJAX error:', response.data?.message || 'Failed to load issues');
-                    $('#issues-list').html('<p>' + (response.data?.message || 'Failed to load issues. Please try again.') + '</p>');
-                    $('#pagination-wrapper').empty();
-                }
-                $('#loading-spinner').addClass('hidden').hide();
+                }, 300); // Increased delay for visibility
             },
             error: (xhr, status, error) => {
                 console.error('fetchIssues: AJAX failure:', status, error, xhr.responseText);
-                if (xhr.status === 429 && retries > 0) {
+                if ((xhr.status === 429 || status === 'timeout') && retries > 0) {
                     console.log(`Retrying fetchIssues, retries left: ${retries - 1}`);
                     setTimeout(() => fetchIssues(titleId, page, search, retries - 1), 2000);
                 } else {
-                    $('#issues-list').html('<p>Error loading issues. Please try again later.</p>');
+                    $('#issues-list').html('<p>Error loading issues. Please try again later.</p>').addClass('loaded');
                     $('#pagination-wrapper').empty();
+                    console.log('fetchIssues: Hiding spinner after failure');
                     $('#loading-spinner').addClass('hidden').hide();
                 }
             }
         });
     }
 
+    // ===================================================================
+    // MAIN: Load Issues
+    // ===================================================================
     function preloadIssues(titleId, page, search) {
         const cacheKey = `metron_issues_${titleId}_${page}_${search}`;
         if (getCachedData(cacheKey)) {
@@ -568,18 +688,21 @@ jQuery(document).ready(function($) {
         let html = '<div class="pagination-wrapper">';
         html += `<p>Page ${page} of ${totalPages}</p>`;
         if (page > 1) {
-            html += `<button type="button" class="page-btn" data-page="${page - 1}">Previous</button>`;
+            html += `<button type="button" class="page-btn" data-page="${page - 1}" data-title-id="${titleId}" data-search="${search}">Previous</button>`;
         }
         for (let i = Math.max(1, page - 2); i <= Math.min(totalPages, page + 2); i++) {
-            html += `<button type="button" class="page-btn ${i === page ? 'active' : ''}" data-page="${i}">${i}</button>`;
+            html += `<button type="button" class="page-btn${i === page ? 'active' : ''}" data-page="${i}" data-title-id="${titleId}" data-search="${search}">${i}</button>`;
         }
         if (page < totalPages) {
-            html += `<button type="button" class="page-btn" data-page="${page + 1}">Next</button>`;
+            html += `<button type="button" class="page-btn" data-page="${page + 1}" data-title-id="${titleId}" data-search="${search}">Next</button>`;
         }
         html += '</div>';
         return html;
     }
-    // Update URL for issues page
+
+    // ===================================================================
+    // Update URLs
+    // ===================================================================
     function updateIssuesUrl(titleId, page, search) {
         const url = new URL(window.location);
         url.searchParams.set('title_id', titleId);
@@ -653,6 +776,10 @@ jQuery(document).ready(function($) {
         }
     }, 500));
 
+    // ===================================================================
+    // EVENT: Search
+    // ===================================================================
+
     $('#issue-search').on('input', debounce(function() {
         const searchQuery = $(this).val().trim();
         currentSearch = searchQuery;
@@ -708,19 +835,27 @@ jQuery(document).ready(function($) {
             fetchPublishers(currentSearch, 1, letter);
         }
     }, 300));
+    
+    // ===================================================================
+    // EVENT: Pagination Click
+    // ===================================================================
 
     $(document).on('click', '.page-btn', function(e) {
         e.preventDefault();
         const page = $(this).data('page');
         const letter = $(this).data('letter') || currentLetter;
+        const titleId = $(this).data('title-id');
+        const search = $(this).data('search') || currentSearch;
+
+        console.log("before clicked page button for page ",page);
+        console.log("before clicked page button for title ",titleId);
         const isIssuesPage = window.location.pathname.includes('/comic-books/issues/');
-        
+    
         showSpinner();
-        
-        if (isIssuesPage) {
-            const params = new URLSearchParams(window.location.search);
-            const titleId = params.get('title_id') || '';
-            const search = params.get('search') || '';
+    
+        if (isIssuesPage && titleId) {
+            console.log("if clicked page button for page ",page);
+            console.log("if clicked page button for title ",titleId);
             updateIssuesUrl(titleId, page, search);
             fetchIssues(titleId, page, search);
             $('html, body').animate({ scrollTop: $('#issues-list').offset().top }, 100);
@@ -860,18 +995,21 @@ jQuery(document).ready(function($) {
         }
     });
 
-    // Initialize
+    // ===================================================================
+    // INITIAL LOAD
+    // ===================================================================
+
     const urlParams = new URLSearchParams(window.location.search);
     const initialPublisherId = urlParams.get('publisher_id');
     const initialTitleId = urlParams.get('title_id') || comicbooks_fetchers_data?.title_id;
     const initialLetter = urlParams.get('letter') || 'all';
     const initialPage = parseInt(urlParams.get('page') || urlParams.get('issue_page')) || 1;
     const initialSearch = urlParams.get('search') || '';
-
+    
     currentLetter = initialLetter;
     currentPage = initialPage;
     currentSearch = initialSearch;
-
+    
     if (initialTitleId && window.location.pathname.includes('/comic-books/issues/')) {
         $('#issue-search').val(initialSearch);
         fetchIssues(initialTitleId, initialPage, initialSearch);
@@ -881,19 +1019,29 @@ jQuery(document).ready(function($) {
         showLetterButtons(true);
         updateActiveLetter(currentLetter);
         $('.publisher-info').css('display', 'block');
-        if (typeof comicbooks_fetchers_data !== 'undefined' && comicbooks_fetchers_data.items) {
-            renderItems(comicbooks_fetchers_data.items, 'book', comicbooks_fetchers_data.page, comicbooks_fetchers_data.total);
-        } else {
+    
+        // Only render via JS if comicbooks_fetchers_data.items is missing or empty
+        if (!comicbooks_fetchers_data || !comicbooks_fetchers_data.items || comicbooks_fetchers_data.items.length === 0) {
             fetchBooks(initialPublisherId, initialPage, initialSearch, currentLetter);
+        } else {
+            // Server already rendered — DO NOT re-render via JS
+            isInitialLoad = true;
+            // But still set up lazy loading
+            lazyLoadImages();
         }
     } else {
         showLetterButtons(true);
         updateActiveLetter(currentLetter);
-        if (typeof comicbooks_fetchers_data !== 'undefined' && comicbooks_fetchers_data.items) {
-            renderItems(comicbooks_fetchers_data.items, 'publishers', comicbooks_fetchers_data.page, comicbooks_fetchers_data.total);
-        } else {
+    
+        if (!comicbooks_fetchers_data || !comicbooks_fetchers_data.items || comicbooks_fetchers_data.items.length === 0) {
             fetchPublishers(initialSearch, initialPage, currentLetter);
+        } else {
+            isInitialLoad = true;
+            lazyLoadImages();
         }
     }
+    
+    // Mark initial load complete
+    setTimeout(() => { isInitialLoad = false; }, 100);
    
 });

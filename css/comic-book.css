@@ -496,6 +496,10 @@
       padding: 10px;
   }
 
+  .comic-issues-container {
+    background: rgba(200, 200, 200, 0.1);
+  }
+
   .comic-series-container li {
       font-size: 0.95rem;
   }

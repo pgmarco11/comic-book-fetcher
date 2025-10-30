@@ -117,36 +117,83 @@ add_action('admin_menu', 'comic_book_api_settings_page');
 
 function render_api_settings_page() {
 
+    /* -------------------------------------------------
+     *  1. SAVE SETTINGS (your existing code)
+     * ------------------------------------------------- */
     if (isset($_POST['submit']) && check_admin_referer('save_api_settings')) {
-  
         update_option('metron_api_username', sanitize_text_field($_POST['metron_api_username']));
         update_option('metron_api_password', sanitize_text_field($_POST['metron_api_password']));
         update_option('comic_vine_api_key', sanitize_text_field($_POST['comic_vine_api_key']));
         delete_transient('metron_publishers');
         global $wpdb;
-        $wpdb->query("DELETE FROM $wpdb->options WHERE option_name LIKE '_transient_metron_%'"); 
+        $wpdb->query("DELETE FROM $wpdb->options WHERE option_name LIKE '_transient_metron_%'");
         echo '<div class="updated"><p>Settings saved and caches cleared.</p></div>';
+    }
+
+    /* -------------------------------------------------
+     *  2. CLEAR SERIES CACHE (NEW)
+     * ------------------------------------------------- */
+    if (isset($_POST['clear_series_cache']) && check_admin_referer('clear_series_cache')) {
+        global $wpdb;
+        $patterns = [
+            '_transient_metron:series_full:%',
+            '_transient_timeout_metron:series_full:%',
+            '_transient_metron:series:%',        // ← NEW: filtered results
+            '_transient_timeout_metron:series:%'
+        ];
+        foreach ($patterns as $like) {
+            $wpdb->query($wpdb->prepare("DELETE FROM $wpdb->options WHERE option_name LIKE %s", $like));
+        }
+        echo '<div class="notice notice-success is-dismissible"><p>All series caches cleared!</p></div>';
     }
     ?>
     <div class="wrap">
         <h1>API Settings</h1>
+
+        <!-- ==================== SETTINGS FORM ==================== -->
         <form method="post">
             <?php wp_nonce_field('save_api_settings'); ?>
+
             <h2>Metron API</h2>
             <p>
                 <label for="metron_api_username">Username:</label><br>
-                <input type="text" id="metron_api_username" name="metron_api_username" value="<?php echo esc_attr(get_option('metron_api_username')); ?>" />
+                <input type="text" id="metron_api_username" name="metron_api_username"
+                       value="<?php echo esc_attr(get_option('metron_api_username')); ?>" size="40" />
             </p>
             <p>
                 <label for="metron_api_password">Password:</label><br>
-                <input type="password" id="metron_api_password" name="metron_api_password" value="<?php echo esc_attr(get_option('metron_api_password')); ?>" />
+                <input type="password" id="metron_api_password" name="metron_api_password"
+                       value="<?php echo esc_attr(get_option('metron_api_password')); ?>" size="40" />
             </p>
+
             <h2>Comic Vine API</h2>
             <p>
                 <label for="comic_vine_api_key">API Key:</label><br>
-                <input type="text" id="comic_vine_api_key" name="comic_vine_api_key" value="<?php echo esc_attr(get_option('comic_vine_api_key')); ?>" />
+                <input type="text" id="comic_vine_api_key" name="comic_vine_api_key"
+                       value="<?php echo esc_attr(get_option('comic_vine_api_key')); ?>" size="40" />
             </p>
-            <p><input type="submit" name="submit" class="button-primary" value="Save Settings" /></p>
+
+            <p>
+                <input type="submit" name="submit" class="button button-primary" value="Save Settings" />
+            </p>
+        </form>
+
+        <!-- ==================== CLEAR SERIES CACHE ==================== -->
+        <hr style="margin: 2.5rem 0;">
+        <h2>Cache Management</h2>
+        <form method="post" style="display:inline;">
+            <?php wp_nonce_field('clear_series_cache'); ?>
+            <p>
+                <input type="submit"
+                       name="clear_series_cache"
+                       id="clear_series_cache"
+                       class="button button-secondary"
+                       value="Clear Series Cache"
+                       onclick="return confirm('Are you sure you want to delete the cached series lists for ALL publishers? This will force a full re-download the next time a publisher is viewed.');" />
+                <span style="margin-left:10px; color:#666; font-style:italic;">
+                    Clears <code>metron:series_full:*</code> transients only.
+                </span>
+            </p>
         </form>
     </div>
     <?php
@@ -640,3 +687,4 @@ function mwp_display_user_wishlist() {
     <?php
     return ob_get_clean();
 }
+

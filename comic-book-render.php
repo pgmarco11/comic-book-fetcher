@@ -95,6 +95,7 @@ class ComicRenderer extends MetronAPI {
     
         return $desc;
     }
+
     public function render_template($initial_data = []) {
         // Ensure initial_data has required keys with defaults
         $initial_data = wp_parse_args($initial_data, [
@@ -199,7 +200,7 @@ class ComicRenderer extends MetronAPI {
                             <button type="button" class="page-btn" data-page="<?php echo esc_attr($current_page - 1); ?>" data-letter="<?php echo esc_attr($letter); ?>">Previous</button>
                         <?php endif; ?>
                         <?php for ($i = max(1, $current_page - 2); $i <= min($total_pages, $current_page + 2); $i++): ?>
-                            <button type="button" class="page-btn <?php echo $i === $current_page ? 'active' : ''; ?>" data-page="<?php echo esc_attr($i); ?>" data-letter="<?php echo esc_attr($letter); ?>">
+                            <button type="button" class="page-btn<?php echo $i === $current_page ? 'active' : ''; ?>" data-page="<?php echo esc_attr($i); ?>" data-letter="<?php echo esc_attr($letter); ?>">
                                 <?php echo esc_html($i); ?>
                             </button>
                         <?php endfor; ?>
@@ -226,6 +227,75 @@ class ComicRenderer extends MetronAPI {
                 'publisher_id' => $selected_publisher,
             ]);
         }
+    }
+
+    /**
+     * Batch-check if user has issues in their collection (WordPress posts with issue_id meta).
+     *
+     * @param array $metron_ids Array of issue IDs to check.
+     * @return array $status Indexed by metron_id => post_id (0 if not in collection).
+     */
+    public function get_collection_status($metron_ids = []) {
+        if (empty($metron_ids) || !is_user_logged_in()) {
+            return array_fill_keys($metron_ids, 0);
+        }
+
+        $cache_key = 'collection_status_' . get_current_user_id() . '_' . md5(implode('_', $metron_ids));
+        $cached = get_transient($cache_key);
+        if ($cached !== false) {
+            return $cached;
+        }
+
+        $status = array_fill_keys($metron_ids, 0); // Default: not in collection
+
+        $existing_posts = get_posts([
+            'post_type'      => 'post',
+            'author'         => get_current_user_id(),
+            'posts_per_page' => -1, // Fetch all matches
+            'fields'         => 'ids',
+            'meta_query'     => [
+                [
+                    'key'     => 'issue_id',
+                    'value'   => $metron_ids,
+                    'compare' => 'IN', // Batch query!
+                ],
+            ],
+        ]);
+
+        foreach ($existing_posts as $post_id) {
+            $issue_id = get_post_meta($post_id, 'issue_id', true);
+            if (in_array($issue_id, $metron_ids)) {
+                $status[$issue_id] = $post_id;
+            }
+        }
+
+        set_transient($cache_key, $status, 30 * MINUTE_IN_SECONDS); // 30-min cache
+        return $status;
+    }
+    
+    /**
+     * Batch-fetch CV info for multiple issues.
+     */
+    public function get_comicvine_issue_info_batch($metron_ids = []) {
+        if (empty($metron_ids)) return [];
+
+        $cache_key = 'cv_batch_' . md5(implode('_', $metron_ids));
+        $cached = get_transient($cache_key);
+        if ($cached !== false) return $cached;
+
+        $cv_data_batch = [];
+        foreach ($metron_ids as $metron_id) {
+            $cv_id = $this->get_metron_cv_id($metron_id);
+            if ($cv_id) {
+                $cv_info = $this->get_comicvine_issue_info($cv_id);
+                if ($cv_info) {
+                    $cv_data_batch[$metron_id] = $cv_info;
+                }
+            }
+        }
+
+        set_transient($cache_key, $cv_data_batch, HOUR_IN_SECONDS);
+        return $cv_data_batch;
     }
     
     public function render_issue_details() {
