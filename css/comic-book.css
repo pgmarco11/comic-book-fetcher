@@ -442,6 +442,15 @@
   transform: translate(-50%, -50%);
   z-index: 10;
 }
+.spinner-overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  z-index: 999;
+  justify-content: center;
+  align-items: center;
+}
 #loading-spinner.hidden {
   display: none;
 }

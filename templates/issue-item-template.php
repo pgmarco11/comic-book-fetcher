@@ -31,7 +31,7 @@ $rendered_issue_ids[$metron_id] = true;
 $issue_title = esc_html($series['name'] ?? 'Unknown') . ' #' . esc_html($issue['number'] ?? 'N/A');
 $date = $issue['cover_date'] ?? '';
 $formatted_date = (!empty($date) && strtotime($date)) ? date('F Y', strtotime($date)) : 'N/A';
-$image_url = !empty($issue['image']) ? esc_url($issue['image']) : (defined('PUBLISHER_PLACEHOLDER_IMAGE_URL') ? esc_url(PUBLISHER_PLACEHOLDER_IMAGE_URL) : 'https://via.placeholder.com/150');
+$image_url = !empty($issue['image']) ? esc_url($issue['image']) : (defined('PUBLISHER_PLACEHOLDER_IMAGE_URL') ? esc_url(PUBLISHER_PLACEHOLDER_IMAGE_URL) : '#');
 
 error_log("issue-item-template: Rendering issue ID=$metron_id");
 
@@ -57,9 +57,13 @@ $genre_string = implode(', ', $genre_sources);
 // **NEW: Use pre-fetched collection status**
 $in_collection = false;
 $collection_post_id = 0;
-if (is_user_logged_in() && isset($collection_status[$metron_id])) {
+
+if (
+    is_user_logged_in()
+    && !empty($collection_status[$metron_id]['owned'])
+) {
     $in_collection = true;
-    $collection_post_id = $collection_status[$metron_id];
+    $collection_post_id = $collection_status[$metron_id]['post_id'];
 }
 ?>
 <!-- **ORIGINAL HTML STRUCTURE - UNCHANGED** -->

@@ -1,0 +1,111 @@
+<?php
+/**
+ * MetronAPI class for handling API interactions in the Comic Books Fetcher plugin.
+ *
+ * Provides methods to fetch comic book data (publishers, series, issues) from the
+ * Metron API and Comic Vine API. Implements caching using WordPress transients,
+ * handles authentication, and manages rate limiting with retries. This class is
+ * extended by other plugin classes to render and process comic book data.
+ *
+ * @package ComicBooksFetcher
+ * @since 1.0.0
+ * @author Peter Giammarco
+ */
+
+ class MetronClient {
+
+    public $api_base = COMICBOOKS_API_BASE;
+    public $cache_ttl = 24 * 3600;
+    public $dataset_ttl = 2 * WEEK_IN_SECONDS;
+
+
+    public function api_get($url, $retries = 3, $backoff = 1) {
+        $cache_key = 'metron:api:' . md5($url);
+        $cached = get_transient($cache_key);
+        if ($cached !== false) return $cached;
+    
+        $username = get_option('metron_api_username', '');
+        $password = get_option('metron_api_password', '');
+    
+        if (!$username || !$password) {
+            error_log('api_get: ERROR: Missing Metron API credentials');
+            return ['error' => 'Missing API credentials'];
+        }
+    
+        // Ensure retries is an integer
+        $retries = is_array($retries) ? 3 : (int)$retries;
+    
+        for ($attempt = 1; $attempt <= $retries; $attempt++) {
+            error_log("api_get: Attempt $attempt/$retries for $url");
+            $response = wp_remote_get($url, [
+                'headers' => [
+                    'User-Agent' => 'ComicBookFetcher/1.0 (+https://thecollectiblespot.com)',
+                    'Accept' => 'application/json',
+                    'Authorization' => 'Basic ' . base64_encode("$username:$password")
+                ],
+                'timeout' => 45,
+                'redirection' => 5,
+                'httpversion' => '1.1',
+            ]);
+    
+            if (is_wp_error($response)) {
+                error_log("api_get: ERROR: WP_Error - " . $response->get_error_message() . " for $url");
+                if ($attempt < $retries && strpos($response->get_error_message(), 'timeout') !== false) {
+                    sleep($backoff);
+                    $backoff *= 2;
+                    continue;
+                }
+                return ['error' => 'WP_Error: ' . $response->get_error_message()];
+            }
+    
+            $status_code = wp_remote_retrieve_response_code($response);
+            if ($status_code == 429) {
+                $retry_after = wp_remote_retrieve_header($response, 'retry-after') ?: $backoff;
+                error_log("api_get: WARN: Rate limit hit (429) for $url, attempt $attempt/$retries, sleeping $retry_after seconds");
+                if ($attempt < $retries) {
+                    sleep($retry_after);
+                    $backoff *= 2;
+                    continue;
+                }
+                return ['error' => 'Rate limit exceeded'];
+            }
+    
+            if ($status_code != 200) {
+                $body = wp_remote_retrieve_body($response);
+                error_log("api_get: ERROR: HTTP $status_code for $url, body preview: " . substr($body, 0, 200));
+                return ['error' => "HTTP $status_code"];
+            }
+    
+            $body = wp_remote_retrieve_body($response);
+            if (empty($body)) {
+                error_log("api_get: ERROR: Empty response body for $url");
+                if ($attempt < $retries) {
+                    sleep($backoff);
+                    $backoff *= 2;
+                    continue;
+                }
+                return ['error' => 'Empty response'];
+            }
+    
+            $data = json_decode($body, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                error_log("api_get: ERROR: Invalid JSON response from $url: " . json_last_error_msg() . ". Raw body preview: " . substr($body, 0, 500));
+                if ($attempt < $retries) {
+                    sleep($backoff);
+                    $backoff *= 2;
+                    continue;
+                }
+                return ['error' => 'Invalid JSON: ' . json_last_error_msg()];
+            }
+    
+            // Adjust cache duration based on response size
+            $cache_duration = count($data['results'] ?? []) > 100 ? WEEK_IN_SECONDS : 2 * WEEK_IN_SECONDS;
+            set_transient($cache_key, $data, $cache_duration);
+            error_log("api_get: Data cached for $url, duration=$cache_duration seconds");
+            return $data;
+        }
+    
+        error_log("api_get: ERROR: All retries exhausted for $url");
+        return ['error' => 'All retries exhausted'];
+    }   
+}
