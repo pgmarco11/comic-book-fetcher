@@ -1,6 +1,6 @@
         <div class="d-flex flex-column flex-md-row w-100">
             <main class="site-main flex-fill">
-                <section id="body-content" class="page-section text-center">
+                <section id="body-content" class="page-section text-center">  
                     <div class="comic-issue-details-container">
                         <header class="page-header">
                             <nav class="category-breadcrumbs">

@@ -335,6 +335,10 @@
   flex-direction: column;
 }
 
+.comic-issues-container .search-wrapper {
+  align-items: flex-end;
+}
+
 .comic-issues-container h2 {
   font-size: 1.8rem;
   color: var(--wp--preset--color--white);

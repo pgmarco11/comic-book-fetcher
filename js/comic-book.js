@@ -269,24 +269,7 @@ jQuery(document).ready(function($){
         }
         html += '</div>';
         return html;
-    } 
-    
-    function renderIssuesPagination(page, totalPages, titleId, search = '', perPage) {
-        if (totalPages <= 1) return '';
-        let html = '<div class="pagination-wrapper">';
-        html += `<p>Page ${page} of ${totalPages}</p>`;
-        if (page > 1) {
-            html += `<a href="${new URLSearchParams({title_id: titleId, issue_page: page - 1, search}).toString()}" class="page-btn" data-page="${page - 1}">Previous</a>`;
-        }
-        for (let i = Math.max(1, page - 2); i <= Math.min(totalPages, page + 2); i++) {
-            html += `<a href="${new URLSearchParams({title_id: titleId, issue_page: i, search}).toString()}" class="page-btn${i === page ? 'active' : ''}" data-page="${i}">${i}</a>`;
-        }
-        if (page < totalPages) {
-            html += `<a href="${new URLSearchParams({title_id: titleId, issue_page: page + 1, search}).toString()}" class="page-btn" data-page="${page + 1}">Next</a>`;
-        }
-        html += '</div>';
-        return html;
-    }
+    }     
 
     let lazyLoadObserver = null;
     const BATCH_SIZE = 3; // Load 5 images at a time
@@ -700,6 +683,23 @@ jQuery(document).ready(function($){
     styleSheet.innerText = styles;
     document.head.appendChild(styleSheet);
 
+    function renderIssuesPagination(page, totalPages, titleId, search = '', perPage) {
+        console.log(`renderIssuesPagination: page=${page}, totalPages=${totalPages}, titleId=${titleId}, search='${search}', perPage=${perPage}`);
+        let html = '<div class="pagination-wrapper">';
+        html += `<p>Page ${page} of ${totalPages}</p>`;
+        if (page > 1) {
+            html += `<button type="button" class="page-btn" data-page="${page - 1}" data-title-id="${titleId}" data-search="${search}">Previous</button>`;
+        }
+        for (let i = Math.max(1, page - 2); i <= Math.min(totalPages, page + 2); i++) {
+            html += `<button type="button" class="page-btn${i === page ? 'active' : ''}" data-page="${i}" data-title-id="${titleId}" data-search="${search}">${i}</button>`;
+        }
+        if (page < totalPages) {
+            html += `<button type="button" class="page-btn" data-page="${page + 1}" data-title-id="${titleId}" data-search="${search}">Next</button>`;
+        }
+        html += '</div>';
+        return html;
+    }
+
     function fetchIssues(titleId, page = 1, search = '', retries = 3) {
         console.log(`fetchIssues: titleId=${titleId}, page=${page}, search='${search}', retries=${retries}`);
         if (!titleId) {
@@ -823,42 +823,28 @@ jQuery(document).ready(function($){
         });
     }
     
-    function renderIssuesPagination(page, totalPages, titleId, search = '', perPage) {
-        console.log(`renderIssuesPagination: page=${page}, totalPages=${totalPages}, titleId=${titleId}, search='${search}', perPage=${perPage}`);
-        let html = '<div class="pagination-wrapper">';
-        html += `<p>Page ${page} of ${totalPages}</p>`;
-        if (page > 1) {
-            html += `<button type="button" class="page-btn" data-page="${page - 1}" data-title-id="${titleId}" data-search="${search}">Previous</button>`;
-        }
-        for (let i = Math.max(1, page - 2); i <= Math.min(totalPages, page + 2); i++) {
-            html += `<button type="button" class="page-btn${i === page ? 'active' : ''}" data-page="${i}" data-title-id="${titleId}" data-search="${search}">${i}</button>`;
-        }
-        if (page < totalPages) {
-            html += `<button type="button" class="page-btn" data-page="${page + 1}" data-title-id="${titleId}" data-search="${search}">Next</button>`;
-        }
-        html += '</div>';
-        return html;
-    }
+
 
     // ===================================================================
     // Update URLs
     // ===================================================================
     function updateIssuesUrl(titleId, page, search) {
-        const url = new URL(window.location);
+        const url = new URL('/comic-books/issues/', window.location.origin);
         url.searchParams.set('title_id', titleId);
-        url.searchParams.set('issue_page', page);
+        url.searchParams.set('page', page);
         if (search) {
             url.searchParams.set('search', search);
-        } else {
+        }  else {
             url.searchParams.delete('search');
-        }
-        console.log('updateIssuesUrl:', url.toString());
+        }  
         history.pushState({ title_id: titleId, page, search }, '', url);
     }
 
     function updatePublisherUrl(letter, page, search) {
         const url = new URL(window.location);
-        url.searchParams.set('letter', letter);
+        if(letter){
+            url.searchParams.set('letter', letter);
+        }     
         url.searchParams.set('page', page);
         if (search) {
             url.searchParams.set('search', search);
@@ -884,7 +870,7 @@ jQuery(document).ready(function($){
         // Trigger fetchIssues if title_id is present
         const urlParams = new URLSearchParams(window.location.search);
         const titleId = urlParams.get('title_id');
-        const page = parseInt(urlParams.get('issue_page')) || 1;
+        const page = parseInt(urlParams.get('page')) || 1;
         const search = urlParams.get('search') || '';
         if (titleId) {
             fetchIssues(titleId, page, search);
@@ -1022,25 +1008,49 @@ jQuery(document).ready(function($){
     });
     
 
-    $(document).on('click', '.comic-title', debounce(function(e) {
+    $(document).on('click', '.comic-title', function(e) {
         e.preventDefault();
+    
         const seriesId = $(this).data('series-id');
-        if (seriesId) {
-            const url = new URL(window.location.origin + '/comic-books/issues/');
-            url.searchParams.set('title_id', seriesId);
-            url.searchParams.set('issue_page', 1);
+        if (!seriesId) return;
     
-            // Show loading state immediately
-            $('#book-container').html(`
-                <div id="loading-spinner" class="spinner-overlay" aria-busy="true" aria-label="Loading comic issues">
-                    <div class="spinner"></div>
-                    <p>Loading series...</p>
-                </div>
-            `);
+        const $container = $('#body-content');
+        const $spinner   = $('#loading-spinner, #global-page-loader');    
+       
+        showSpinner();  
     
-            window.location.href = url.toString();
-        }
-    }, 300));
+        const url = new URL('/comic-books/issues/', window.location.origin);
+        url.searchParams.set('title_id', seriesId);
+        url.searchParams.set('page', '1');
+
+        url.searchParams.delete('letter');
+        url.searchParams.delete('search');
+    
+        history.pushState({ title_id: seriesId, page: 1 }, '', url);    
+    
+        $.ajax({
+            url: url.toString(),
+            method: 'GET',
+            timeout: 45000,    
+            beforeSend: () => {
+                $spinner.find('p').text('Loading series...');
+            },
+            success: (html) => {
+                // Replace only the changeable part
+                $('#body-content').html($(html).find('#body-content').html());
+                
+                // Re-init
+                lazyLoadImages();
+                hideSpinner();
+             
+            },
+            error: () => {
+                $container.html('<p style="color:red;padding:2rem;">Failed to load series. Please try again.</p>');
+                hideSpinner();
+            }
+        });
+    });    
+
 
     $(document).on('click', '.add-to-collection', async function(e) {
         e.preventDefault();
@@ -1181,7 +1191,10 @@ jQuery(document).ready(function($){
     );
 
     // Enhance UI
-    updateActiveLetter(urlLetter);
+    if(urlLetter){
+        updateActiveLetter(urlLetter);
+    }
+    
     lazyLoadImages();
 
     // Preload next page
@@ -1199,7 +1212,7 @@ jQuery(document).ready(function($){
 
     // Check if server already rendered issues
     const titleId = urlParams.get('title_id');
-    const issuePage = parseInt(urlParams.get('issue_page')) || 1;
+    const issuePage = parseInt(urlParams.get('page')) || 1;
     const issueSearch = urlParams.get('search') || '';
     
     // Only run on issues page

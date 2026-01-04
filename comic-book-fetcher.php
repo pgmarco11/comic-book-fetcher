@@ -142,9 +142,7 @@ function render_api_settings_page() {
         global $wpdb;
         $patterns = [
             '_transient_metron:series_full:%',
-            '_transient_timeout_metron:series_full:%',
-            '_transient_metron:series:%',
-            '_transient_timeout_metron:series:%'
+            '_transient_timeout_metron:series_full:%'  
         ];
         foreach ($patterns as $like) {
             $wpdb->query($wpdb->prepare("DELETE FROM $wpdb->options WHERE option_name LIKE %s", $like));

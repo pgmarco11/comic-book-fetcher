@@ -215,7 +215,7 @@ class Comicbooks {
         $page     = isset( $_POST['page'] ) ? max( 1, intval( $_POST['page'] ) ) : 1;
         $search   = isset( $_POST['search'] ) ? strtolower( trim( $_POST['search'] ) ) : '';
 
-        $cache_key = "metron:ajax_issues:{$title_id}:{$page}:{$search}";
+        $cache_key = "metron:issue_list:{$title_id}:{$page}:{$search}";
         $cached    = get_transient( $cache_key );
         if ( $cached !== false ) {
             wp_send_json_success( $cached );
@@ -247,10 +247,13 @@ class Comicbooks {
             echo '<p class="no-results">No issues found for this series.</p>';
         } else {
             echo '<ul class="issues-list">';
-            foreach ( $all_issues as $issue ) {
-                if ( empty( $issue['id'] ) ) {
-                    continue;
-                }
+            foreach ($all_issues as $issue) {
+                if (empty($issue['id'])) continue;            
+                // If using CV batch/collection (recommended for full features):
+                $metron_ids = array_column($all_issues, 'id');
+                $cv_info_batch = $this->data_service->get_comicvine_issue_info_batch($metron_ids);
+                $collection_status = is_user_logged_in() ? $this->data_service->get_collection_status($metron_ids) : [];
+            
                 include $template;
             }
             echo '</ul>';
@@ -273,17 +276,17 @@ class Comicbooks {
      *  AJAX – Single series image
      * ----------------------------------------------------------------- */
     public function ajax_load_series_image() {
-        $series_id = intval( $_POST['series_id'] ?? 0 );
-        if ( ! $series_id ) {
+        $title_id = intval( $_POST['series_id'] ?? 0 );
+        if ( ! $title_id ) {
             wp_send_json_error( [ 'message' => 'Missing series ID' ] );
         }
 
-        $cache_key = "metron:issue_list:$series_id";
+        $cache_key = "metron:issue_list:$title_id";
         $data      = get_transient( $cache_key );
 
         if ( $data === false ) {
             $client = $this->data_service->get_client();               // <-- NOW EXISTS
-            $url    = $client->api_base . "series/$series_id/issue_list/?per_page=1";
+            $url    = $client->api_base . "series/$title_id/issue_list/?per_page=1";
             $data   = $client->api_get( $url );
             if ( $data && ! empty( $data['results'] ) ) {
                 set_transient( $cache_key, $data, $client->dataset_ttl * 4 );

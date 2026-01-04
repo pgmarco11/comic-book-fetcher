@@ -7,11 +7,23 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-$issue = $issue ?? [];
-$series = $series ?? [];
-$title_id = $title_id ?? 0;
-$cv_info_batch = $cv_info_batch ?? []; // **NEW: Pre-fetched batch**
-$collection_status = $collection_status ?? []; // **NEW: Pre-fetched batch**
+// Force require critical context variables from parent scope
+if (!isset($series) || !is_array($series) || empty($series['name'])) {
+    error_log("issue-item-template: Missing or invalid \$series");
+    return;
+}
+if (!isset($title_id) || !$title_id) {
+    error_log("issue-item-template: Missing \$title_id");
+    return;
+}
+if (!isset($issue) || !is_array($issue) || empty($issue['id'])) {
+    error_log("issue-item-template: Missing or invalid \$issue");
+    return;
+}
+
+// Optional: make cv_info_batch & collection_status available too
+$cv_info_batch     = $cv_info_batch ?? [];
+$collection_status = $collection_status ?? [];
 
 if (empty($issue) || empty($series) || !$title_id) {
     error_log("issue-item-template: Missing critical data");
