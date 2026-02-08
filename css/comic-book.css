@@ -433,27 +433,42 @@
 }
 
 /* Spinner CSS */
+#loading-spinner.spinner-overlay {
+  position: fixed !important;     /* override any inherited positioning */
+  inset: 0 !important;
+  margin: 0 !important;
+  transform: none !important;     /* remove centering transform */
+  background: rgba(0, 0, 0, 0.65);
+  z-index: 9999;
+  top: 0 !important;
+  left: 0 !important;
+}
+#loading-spinner[style*="opacity: 1"] {
+  opacity: 1 !important;
+  display: flex !important;
+}
 #loading-spinner {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-size: 1.2rem;
-  padding: 20px;
-  position: relative;
-  top: 5rem;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 10;
+  color: white;
+  font-size: 1.3rem;
+  text-align: center;
+  padding: 2rem;
+  background: rgba(0, 0, 0, 0.5);    /* optional: darker card behind text/spinner */
+  border-radius: 12px;
+  min-width: 220px;
+  pointer-events: none;       /* lets clicks pass through if needed */
 }
-.spinner-overlay {
-  display: none;
-  position: absolute;
-  inset: 0;
-  background: transparent;
-  z-index: 999;
-  justify-content: center;
-  align-items: center;
+#loading-spinner .spinner {
+  border: 5px solid rgba(255, 255, 255, 0.3);
+  border-top: 5px solid #09f;   /* or your accent color */
+  border-radius: 50%;
+  width: 50px;
+  height: 50px;
+  animation: spin 1s linear infinite;
+  margin-bottom: 1rem;
 }
 #loading-spinner.hidden {
   display: none;
@@ -471,6 +486,14 @@
 #loading-spinner p {
   margin: 0;
   font-size: 16px;
+  font-weight: bold;
+}
+.spinner-overlay {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.spinner-overlay.active {
+  opacity: 1;
 }
 
 @keyframes spin {

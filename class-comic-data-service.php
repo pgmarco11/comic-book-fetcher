@@ -212,87 +212,110 @@ class ComicDataService {
      *  ISSUES for a series
      * ----------------------------------------------------------------- */
     public function get_series_issues( $title_id, $current_page, $search = '' ) {
-        $start = microtime( true );
+        $timer_start = microtime(true);
+        $per_page = 10;
+    
+        /* -------------------------------------------------
+         * Full list cache — ALL issues (once)
+         * ------------------------------------------------- */
+        $full_list_key = "metron:issue_list_full:{$title_id}";
+        $all_issues_data = get_transient($full_list_key);
 
-        $title_key = "metron:issue_list:{$title_id}";
-        $issues_data = get_transient( $title_key );        
-   
-        if ( $issues_data === false ) {
-
+        if ( false === $all_issues_data || !isset($all_issues_data['results']) ) {
             $all = [];
+            $page_fetch = 1;
+            $max_pages = 50;
 
             do {   
-
-                $url_issues = $this->client->api_base . "series/{$title_id}/issue_list/";
-                $response = $this->client->api_get($url_issues);
-
-                if (isset($response['error'])) {
-                    error_log("Metron error page {$page}: " . $response['error']);
-                    break;
-                }
+                $url = $this->client->api_base . "series/{$title_id}/issue_list/?page={$page_fetch}";
+                $response = $this->client->api_get($url);
+                if (isset($response['error'])) break;
             
                 $results = $response['results'] ?? [];
                 if (empty($results)) break;
             
                 $all = array_merge($all, $results);
-                error_log("Series {$title_id} page {$page}: " . count($results) . " issues (next: " . ($response['next'] ?? 'none') . ")");
-            
-                $page++;
-                if ($page > 50) break;  // safety
-                usleep(500000);  // ← add delay to avoid rate limit
+                $page_fetch++;
+                if ($page_fetch > $max_pages) break;
+                usleep(500000);
             } while (!empty($response['next']));
             
-            usort($all, fn($a, $b) => floatval($a['number'] ?? 0) <=> floatval($b['number'] ?? 0));
+            // OLDEST → NEWEST
+            usort($all, function($a, $b){
+                $na = (float)($a['number'] ?? 0);
+                $nb = (float)($b['number'] ?? 0);
+                if ($na === $nb) {
+                    return strcmp($a['number'] ?? '', $b['number'] ?? '');
+                }
+                return $na <=> $nb;
+            });
+    
+            $all_issues_data = [
+                'count'   => count($all),
+                'results' => $all,
+            ];
 
-            $issues_key = "metron:issue_list:{$title_id}";   
-            $issues_data = [ 'count' => count( $all ), 'results' => $all ];
-
-            set_transient( $issues_key, $issues_data, 2 * WEEK_IN_SECONDS );
+            set_transient($full_list_key, $all_issues_data, 30 * DAY_IN_SECONDS);
         }
 
-        $url_title    = $this->client->api_base . "series/{$title_id}/";   
-        $series = $this->client->api_get( $url_title );    
-
-        if ( is_array( $series ) && isset( $series['error'] ) ) {
-            error_log( "get_series_issues: series error $title_id – " . $series['error'] );
-            return [ 'error' => $series['error'] ];
+        /* -------------------------------------------------
+         * Series metadata
+         * ------------------------------------------------- */
+        $series_key = "metron:series:{$title_id}";
+        $series = get_transient($series_key);
+    
+        if ( false === $series ) {
+            $url_title = $this->client->api_base . "series/{$title_id}/";
+            $series = $this->client->api_get($url_title);
+            if ( isset($series['error']) || empty($series['name']) ) {
+                return [ 'error' => $series['error'] ?? 'Series not found' ];
+            }
+            set_transient($series_key, $series, 2 * WEEK_IN_SECONDS);
         }
-
-        if ( $series && ! empty( $series['name'] ) ) {
-            set_transient( $title_key, $series, 2 * WEEK_IN_SECONDS );
-        } else {
-            return [ 'error' => 'Series not found' ];
-        }
-
+    
+        /* -------------------------------------------------
+         * Search filter
+         * ------------------------------------------------- */
         $filtered = $search
-            ? array_filter(
-                $issues_data['results'],
-                function ( $i ) use ( $search ) {
-                    $search = strtolower( $search );
-                    return strpos( strtolower( $i['issue'] ?? '' ), $search ) !== false
-                        || strpos( strtolower( $i['number'] ?? '' ), $search ) !== false
-                        || strpos( strtolower( $i['cover_date'] ?? '' ), $search ) !== false;
-               }
-            )
-            : $issues_data['results'];
+            ? array_filter($all_issues_data['results'], function($i) use($search){
+                $s = strtolower($search);
+                return stripos($i['issue'] ?? '', $s) !== false
+                    || stripos($i['number'] ?? '', $s) !== false
+                    || stripos($i['cover_date'] ?? '', $s) !== false;
+            })
+            : $all_issues_data['results'];
 
-        $filtered = array_values( $filtered );
-        $total    = count( $filtered );
-        $per_page = 10;
-        $start    = ( $current_page - 1 ) * $per_page;
-        $paged    = array_slice( $filtered, $start, $per_page );
+        $filtered = array_values($filtered);
+        $total_issues = count($filtered);
+    
+        /* -------------------------------------------------
+         * Pagination slice (FIXED)
+         * ------------------------------------------------- */
+        $current_page = max(1, (int) $current_page);
+        $offset = ($current_page - 1) * $per_page;
+        $paged_results = array_slice($filtered, $offset, $per_page);
 
-        $elapsed = microtime(true) - $start;
-        error_log( sprintf("get_series_issues: %d – %.4f s (fetched %d issues)", $title_id, $elapsed, count($all_issues ?? [])) );
+        $elapsed = microtime(true) - $timer_start;
+    
+        error_log(sprintf(
+            "get_series_issues %d (page %d, search='%s') – %.3fs – showing %d of %d issues",
+            $title_id,
+            $current_page,
+            $search,
+            $elapsed,
+            count($paged_results),
+            $total_issues
+        ));
 
         return [
-            'series'      => $series,
-            'issue_list'  => [
-                'count'   => $total,
-                'results' => $paged,
+            'series' => $series,
+            'issue_list' => [
+                'count'   => $total_issues,
+                'results' => $paged_results,
             ],
         ];
     }
+    
 
         /* -----------------------------------------------------------------
      *  SINGLE ISSUE
@@ -307,7 +330,7 @@ class ComicDataService {
      * @return array|null    Issue data array or null on failure
      */
     public function get_single_issue( $title_id, $issue_id ) {
-        $cache_key = "metron:issue_list:{$title_id}_{$issue_id}"; 
+        $cache_key = "metron:issue:{$title_id}_{$issue_id}"; 
 
         $cached = get_transient( $cache_key );
         if ( false !== $cached ) {          
@@ -353,7 +376,7 @@ class ComicDataService {
      * ----------------------------------------------------------------- */
     public function get_series_images( array $series_ids ) {
         $images       = [];
-        $prefix       = 'metron:issue_list:';
+        $prefix       = 'metron:issue_list_full:';
         $missing      = [];
 
         foreach ( $series_ids as $id ) {
@@ -519,7 +542,7 @@ class ComicDataService {
             return null;
         }
 
-        $cache_key = 'metron:issue_list:' . md5( $metron_id );
+        $cache_key = 'metron:issue_vine:' . md5( $metron_id );
         $cached    = get_transient( $cache_key );
         if ( $cached !== false ) {
             return $cached;
@@ -529,6 +552,7 @@ class ComicDataService {
         $data = $this->client->api_get( $url );
 
         $cv_id = $data['cv_id'] ?? null;
+       
         if ( $cv_id ) {
             set_transient( $cache_key, $cv_id, WEEK_IN_SECONDS );
         }

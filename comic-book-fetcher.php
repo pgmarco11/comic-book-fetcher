@@ -44,7 +44,7 @@ function comicbooks_enqueue_scripts() {
     $load_comic_assets = false;
 
     // Load on specific pages
-    if (is_page(['comic-books', 'issues', 'issue'])) {
+    if (is_page(['comic-catalog', 'issues', 'issue'])) {
         $load_comic_assets = true;
     }
 

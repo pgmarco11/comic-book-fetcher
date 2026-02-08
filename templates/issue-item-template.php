@@ -31,6 +31,7 @@ if (empty($issue) || empty($series) || !$title_id) {
 }
 
 $metron_id = $issue['id'] ?? 0;
+
 if (!$metron_id) {
     error_log("issue-item-template: Missing issue ID");
     return;
@@ -41,7 +42,7 @@ if (isset($rendered_issue_ids[$metron_id])) return;
 $rendered_issue_ids[$metron_id] = true;
 
 $issue_title = esc_html($series['name'] ?? 'Unknown') . ' #' . esc_html($issue['number'] ?? 'N/A');
-$date = $issue['cover_date'] ?? '';
+$date = $issue['cover_date'] ?? ''; //check on issue details is same
 $formatted_date = (!empty($date) && strtotime($date)) ? date('F Y', strtotime($date)) : 'N/A';
 $image_url = !empty($issue['image']) ? esc_url($issue['image']) : (defined('PUBLISHER_PLACEHOLDER_IMAGE_URL') ? esc_url(PUBLISHER_PLACEHOLDER_IMAGE_URL) : '#');
 
@@ -78,9 +79,21 @@ if (
     $collection_post_id = $collection_status[$metron_id]['post_id'];
 }
 ?>
-<!-- **ORIGINAL HTML STRUCTURE - UNCHANGED** -->
+
+
 <li class="issue-item" data-title-id="<?php echo esc_attr($title_id); ?>" data-issue-id="<?php echo esc_attr($metron_id); ?>" data-cv-id="<?php echo esc_attr($metron_cv_id); ?>">
-    <a href="<?php echo esc_url(add_query_arg(['issue_id' => $metron_id, 'title_id' => $title_id], home_url('/comic-books/issue/'))); ?>" class="issue-link">
+        <a href="<?php        
+            $base_url = home_url( '/comic-catalog/issue/' );
+            echo esc_url(
+                add_query_arg(
+                    [
+                        'issue_id'  => $metron_id,
+                        'title_id'  => $title_id,
+                    ],
+                    $base_url
+                )
+            );
+        ?>" class="issue-link">
         <?php if ($image_url): ?>
             <img src="<?php echo $image_url; ?>" alt="<?php echo esc_attr($issue_title); ?>" class="issue-image" loading="lazy" data-loaded="true">
         <?php else: ?>
@@ -133,11 +146,10 @@ if (
                 data-item-id="<?php echo esc_attr($metron_cv_id); ?>"
                 data-title="<?php echo esc_attr($issue_title); ?>"
                 data-volume="<?php echo esc_attr($series['volume'] ?? ''); ?>"
-                data-item-url="<?php echo esc_url(add_query_arg(['issue_id' => $metron_id, 'title_id' => $title_id], home_url('/comic-books/issue/'))); ?>"
+                data-item-url="<?php echo esc_url(add_query_arg(['issue_id' => $metron_id, 'title_id' => $title_id], home_url('/comic-catalog/issue/'))); ?>"
                 data-image-url="<?php echo esc_url($image_url); ?>">
                 Add to Wishlist
             </button>
         </div>
     <?php endif; ?>
 </li>
-<!-- **REMOVED: Original inline <script> - No more per-issue AJAX** -->

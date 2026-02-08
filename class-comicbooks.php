@@ -213,12 +213,18 @@ class Comicbooks {
 
         $title_id = isset( $_POST['title_id'] ) ? intval( $_POST['title_id'] ) : 0;
         $page     = isset( $_POST['page'] ) ? max( 1, intval( $_POST['page'] ) ) : 1;
-        $search   = isset( $_POST['search'] ) ? strtolower( trim( $_POST['search'] ) ) : '';
+        $search = isset( $_POST['search'] )
+        ? strtolower( trim( (string) wp_strip_all_tags( $_POST['search'] ) ) )
+        : '';
 
-        $cache_key = "metron:issue_list:{$title_id}:{$page}:{$search}";
+        $cache_key = "metron:issue_list_html:{$title_id}:{$page}:{$search}";
         $cached    = get_transient( $cache_key );
         if ( $cached !== false ) {
-            wp_send_json_success( $cached );
+            wp_send_json_success([
+                'issues' => $cached,
+                'total_issues' => $total_issues ?? null,
+                'cached' => true
+            ]);
         }
 
         $data = $this->data_service->get_series_issues( $title_id, $page, $search );
@@ -226,7 +232,10 @@ class Comicbooks {
             wp_send_json_error( [ 'message' => 'No issues available: ' . $data['error'] ] );
         }
 
+        $series = $data['series'] ?? [];
+        $series['name'] = $data['series']['name'] ?? 'Unknown';
         $issue_list_data = $data['issue_list'] ?? [];
+      
         $all_issues      = $issue_list_data['results'] ?? [];
         $total_issues    = $issue_list_data['count'] ?? 0;
         $per_page        = 10;
@@ -247,15 +256,17 @@ class Comicbooks {
             echo '<p class="no-results">No issues found for this series.</p>';
         } else {
             echo '<ul class="issues-list">';
-            foreach ($all_issues as $issue) {
-                if (empty($issue['id'])) continue;            
                 // If using CV batch/collection (recommended for full features):
                 $metron_ids = array_column($all_issues, 'id');
                 $cv_info_batch = $this->data_service->get_comicvine_issue_info_batch($metron_ids);
-                $collection_status = is_user_logged_in() ? $this->data_service->get_collection_status($metron_ids) : [];
-            
-                include $template;
-            }
+                $collection_status = is_user_logged_in()
+                    ? $this->data_service->get_collection_status($metron_ids)
+                    : [];
+
+                foreach ($all_issues as $issue) {
+                    if (empty($issue['id'])) continue; 
+                    include $template;
+                }
             echo '</ul>';
         }
         $issues_html = ob_get_clean();
@@ -281,7 +292,7 @@ class Comicbooks {
             wp_send_json_error( [ 'message' => 'Missing series ID' ] );
         }
 
-        $cache_key = "metron:issue_list:$title_id";
+        $cache_key = "metron:issue_list_full:$title_id";
         $data      = get_transient( $cache_key );
 
         if ( $data === false ) {
@@ -312,7 +323,7 @@ class Comicbooks {
         $images = [];
 
         foreach ( $series_ids as $sid ) {
-            $ck   = "metron:issue_list:$sid";
+            $ck   = "metron:issue_list_full:$sid";
             $data = get_transient( $ck );
 
             if ( $data === false ) {
@@ -351,7 +362,7 @@ class Comicbooks {
      *  Redirect logged-in users to their collection post if it exists
      * ----------------------------------------------------------------- */
     public function check_collection_redirect() {
-        if ( ! is_page( 'comic-books/issue' ) ) {
+        if ( ! is_page( 'comic-catalog/issue' ) ) {
             return;
         }
 

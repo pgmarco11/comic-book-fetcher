@@ -2,23 +2,25 @@
             <main class="site-main flex-fill">
                 <section id="body-content" class="page-section text-center">  
                     <div class="comic-issue-details-container">
-                        <header class="page-header">
+                        <header class="page-header">                        
                             <nav class="category-breadcrumbs">
-                                <a href="<?php echo esc_url(home_url('/comic-books')); ?>">Publishers</a>
+                                <a href="<?php echo esc_url(home_url('/comic-catalog')); ?>">Publishers</a>
                                 <span class="separator">&#10148;</span>
-                                <span class="category"><a href="<?php echo esc_url(home_url('/comic-books/?publisher_id=' . $series['publisher']['id'])); ?>">
+                                <span class="category"><a href="<?php echo esc_url(home_url('/comic-catalog/?publisher_id=' . $series['publisher']['id'])); ?>">
+
                                     <?php echo esc_html($series['publisher']['name']); ?>
+
                                 </a></span>
                                 <span class="separator">&#10148;</span>
                                 <span class="category">
-                                    <a href="<?php echo esc_url(home_url('/comic-books/issues/?title_id=' . $title_id)); ?>">
-                                    <?php echo esc_html($series['name'] ?? 'Comic Series'); ?></a>
+                                    <a href="<?php echo esc_url(home_url('/comic-catalog/issues/?title_id=' . $title_id)); ?>">
+                                    <?php echo esc_html($series['series']['name'] ?? 'Comic Series'); ?></a>
                                 </span>
                                 <span class="current-category"><?php echo '&nbsp; # ' . esc_html($issue['number'] ?? 'N/A'); ?></div>
                             </nav>
                             <h1 class="page-title">
                                 <?php
-                                $issue_title = esc_html($series['name'] ?? 'Comic Series') . ' #' . esc_html($issue['number'] ?? 'N/A');
+                                $issue_title = esc_html($series['series']['name'] ?? 'Comic Series') . ' #' . esc_html($issue['number'] ?? 'N/A');
                                 ?>
                                 <span><?php echo $issue_title; ?></span>
                             </h1>
@@ -110,7 +112,7 @@
                                                         'issue_id' => $issue_id,
                                                         'title_id' => $title_id
                                                     ],
-                                                    site_url('/comic-books/issue/')
+                                                    site_url('/comic-catalog/issue/')
                                                 );
                                                 ?>
                                                 <button

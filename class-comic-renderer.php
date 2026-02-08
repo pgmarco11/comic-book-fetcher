@@ -126,7 +126,7 @@ class ComicRenderer {
         $per_page = $initial_data['per_page'];
         $letter = $initial_data['letter'] ?? 'all';
         $selected_publisher = $initial_data['publisher_id'];
-
+      
         // Hydrate JS
         wp_localize_script('comicbook-script', 'comicbooks_fetchers_data', [
             'items' => $items,
@@ -148,7 +148,7 @@ class ComicRenderer {
         if (defined('DOING_AJAX') && DOING_AJAX) ob_start();
 
         extract($initial_data);
-        include plugin_dir_path(__FILE__) . 'templates/comic-books-template.php';
+        include plugin_dir_path(__FILE__) . 'templates/comic-catalog-template.php';
 
         if (defined('DOING_AJAX') && DOING_AJAX) {
             wp_send_json_success(['html' => ob_get_clean()]);
@@ -251,7 +251,7 @@ class ComicRenderer {
             return;
         }    
         
-        $series_cache_key = "metron:issue_list:{$title_id}";
+        $series_cache_key = "metron:issue:{$title_id}_{$issue_id}";     
         $series = get_transient( $series_cache_key );
     
         if ( false === $series ) {
@@ -268,8 +268,11 @@ class ComicRenderer {
     
         // ─────────────────────────────────────────────────────────────
         //  ComicVine enrichment (same as before)
-        // ─────────────────────────────────────────────────────────────
-        $cv_series_id = $this->data_service->get_metron_cv_id( $title_id ); 
+        // ───────────────────────────────────────────────────────────── 
+
+        $cv_series_id = $this->data_service->get_metron_cv_id( $issue_id ); 
+
+
         $cv_issue = $cv_series_id 
             ? $this->data_service->get_comicvine_issue_info( $cv_series_id, $issue_id ) 
             : [];
