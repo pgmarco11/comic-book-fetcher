@@ -238,7 +238,7 @@ class ComicDataService {
 
                 $page_fetch++;
                 if ($page_fetch > $max_pages) break;
-                usleep(500000);
+                usleep(300000);
             } while (!empty($response['next']));  
 
             usort($all, function($a, $b) {
