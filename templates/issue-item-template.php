@@ -1,7 +1,7 @@
 <?php
 /**
  * Template part for rendering a single comic issue item
- * Used in comic-book-issues.php and ajax_load_issues
+ * Used in page-comic-issues.php and ajax_load_issues
  */
 if (!defined('ABSPATH')) {
     exit;

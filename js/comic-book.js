@@ -34,7 +34,7 @@ jQuery(document).ready(function($){
                 const page = parseInt(list.attr('data-page')) || 1;
                 const search = $('#issue-search').val() || '';
                 const titleId = new URLSearchParams(location.search).get('title_id');
-                if (total > 0 && titleId) {
+                if (total > 0 && titleId && window.location.pathname.includes('/issues/')) {
                     renderIssuePagination(titleId, page, search, total);
                 }
             } else {
@@ -186,17 +186,25 @@ jQuery(document).ready(function($){
 
     // UI updates
     function updateActiveLetter(letter) {
+   
+        if (window.location.pathname.includes('/issues/') || window.location.pathname.includes('/issue/')) {
+            console.log("[updateActiveLetter] Skipped - issue or issues page");
+            return;
+        }
+    
         $('.letter-btn').removeClass('active');
         $(`.letter-btn[data-letter="${letter}"]`).addClass('active');
         currentLetter = letter;
-
+    
         const params = new URLSearchParams(window.location.search);
         params.set('letter', letter || 'all');
         if (!params.has('page') || currentPage === 1) {
             params.set('page', currentPage);
         }
-        console.log('updateActiveLetter, updating URL to:', `${window.location.pathname}?${params.toString()}`);
-        history.pushState({ page: parseInt(params.get('page')) || 1, letter }, '', `${window.location.pathname}?${params.toString()}`);
+    
+        const newUrl = `${window.location.pathname}?${params.toString()}`;
+        console.log('updateActiveLetter updating URL to:', newUrl);
+        history.pushState({ page: parseInt(params.get('page')) || 1, letter }, '', newUrl);
     }
 
     function showLetterButtons(show) {
@@ -914,15 +922,18 @@ function fetchIssues(titleId = null, page = null, search = '', retries = 3) {
     // Update URLs
     // ===================================================================
     function updateIssuesUrl(titleId, page, search) {
+        // Only run on issues list pages
+        if (!window.location.pathname.includes('/issues/')) {
+            console.log("[updateIssuesUrl] Skipped — only on issues page");
+            return;
+        }
+    
         const url = new URL('/comic-catalog/issues/', window.location.origin);
-
         url.searchParams.set('title_id', titleId);
         url.searchParams.set('page', page);
-        if (search) {
-            url.searchParams.set('search', search);
-        }  else {
-            url.searchParams.delete('search');
-        }  
+        if (search) url.searchParams.set('search', search);
+        else url.searchParams.delete('search');
+    
         history.pushState({ title_id: titleId, page, search }, '', url);
     }
 
@@ -1171,23 +1182,24 @@ function fetchIssues(titleId = null, page = null, search = '', retries = 3) {
         fetchSeries(); // initial call
     });  
 
-    $(document).on('click', '.issue-item .issue-link', function(e) {
-        e.preventDefault();
+    // $(document).on('click', '.issue-item .issue-link', function(e) {
+    //     console.log("Issue link clicked — this handler ran");
+    //     e.preventDefault();
     
-        const $item = jQuery(this).closest('.issue-item');
-        const titleId  = $item.data('title-id');
-        const issueId  = $item.data('issue-id');
+    //     const $item = jQuery(this).closest('.issue-item');
+    //     const titleId  = $item.data('title-id');
+    //     const issueId  = $item.data('issue-id');
     
-        if (!titleId || !issueId) return;
+    //     if (!titleId || !issueId) return;
     
-        const cleanUrl = new URL('/comic-catalog/issue/', location.origin);
-        cleanUrl.searchParams.set('issue_id', issueId);
-        cleanUrl.searchParams.set('title_id', titleId);
-        cleanUrl.searchParams.delete('page');
-        cleanUrl.searchParams.delete('letter');
+    //     const cleanUrl = new URL('/comic-catalog/issue/', location.origin);
+    //     cleanUrl.searchParams.set('issue_id', issueId);
+    //     cleanUrl.searchParams.set('title_id', titleId);
+    //     cleanUrl.searchParams.delete('page');
+    //     cleanUrl.searchParams.delete('letter');
     
-        location.assign(cleanUrl);
-    });
+    //     location.assign(cleanUrl);
+    // });
 
 
     $(document).on('click', '.add-to-collection', async function(e) {
