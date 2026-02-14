@@ -865,9 +865,9 @@ function fetchIssues(titleId = null, page = null, search = '', retries = 3) {
         
             const data = response.data || {};
             const html = data.issues || '';
-        
+           
             console.log('Extracted HTML length:', html.length);
-            console.log('HTML preview (first 200 chars):', html.substring(0, 200));
+            console.log('Page:', data.current_page, 'Total issues:', data.total_issues);
         
             if (typeof html !== 'string' || html.trim() === '') {
                 console.error('No valid HTML in response - empty or wrong format', data);

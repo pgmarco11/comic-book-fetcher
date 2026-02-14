@@ -253,7 +253,7 @@ class ComicRenderer {
     /* -----------------------------------------------------------------
     / *  COLLECTION STATUS (user-owned issues)
     / * ----------------------------------------------------------------- */
-    public function get_collection_status( $metron_ids ) {
+    public static function get_collection_status( $metron_ids ) {
         if ( ! is_user_logged_in() || empty( $metron_ids ) ) {
             return [];
         }

@@ -234,12 +234,11 @@ class Comicbooks {
 
         $series = $data['series'] ?? [];
         $series['name'] = $data['series']['name'] ?? 'Unknown';
-        $issue_list_data = $data['issue_list'] ?? [];
-      
-        $all_issues      = $issue_list_data['results'] ?? [];
+        $issue_list_data = $data['issue_list'] ?? [];      
+        $all_issues      = $issue_list_data['results'] ?? []; 
         $total_issues    = $issue_list_data['count'] ?? 0;
         $per_page        = 10;
-        $total_pages     = ceil( $total_issues / $per_page );
+        $total_pages     = ceil( $total_issues / $per_page ); 
 
         ob_start();
         $template = defined( 'COMICBOOKS_FETCHER_PATH' )
@@ -260,9 +259,8 @@ class Comicbooks {
                 $metron_ids = array_column($all_issues, 'id');
                 $cv_info_batch = $this->data_service->get_comicvine_issue_info_batch($metron_ids);
                 $collection_status = is_user_logged_in()
-                    ? $this->data_service->get_collection_status($metron_ids)
-                    : [];
-
+                ? ComicRenderer::get_collection_status($metron_ids)
+                : [];  
                 foreach ($all_issues as $issue) {
                     if (empty($issue['id'])) continue; 
                     include $template;
@@ -296,7 +294,7 @@ class Comicbooks {
         $data      = get_transient( $cache_key );
 
         if ( $data === false ) {
-            $client = $this->data_service->get_client();               // <-- NOW EXISTS
+            $client = $this->data_service->get_client();              
             $url    = $client->api_base . "series/$title_id/issue_list/?per_page=1";
             $data   = $client->api_get( $url );
             if ( $data && ! empty( $data['results'] ) ) {
@@ -319,7 +317,7 @@ class Comicbooks {
             wp_send_json_error( [ 'message' => 'No series IDs provided' ] );
         }
 
-        $client = $this->data_service->get_client();                  // <-- NOW EXISTS
+        $client = $this->data_service->get_client();                  
         $images = [];
 
         foreach ( $series_ids as $sid ) {

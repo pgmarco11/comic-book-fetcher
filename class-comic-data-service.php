@@ -235,20 +235,22 @@ class ComicDataService {
                 if (empty($results)) break;
             
                 $all = array_merge($all, $results);
+
                 $page_fetch++;
                 if ($page_fetch > $max_pages) break;
                 usleep(500000);
-            } while (!empty($response['next']));
-            
-            // OLDEST → NEWEST
-            usort($all, function($a, $b){
-                $na = (float)($a['number'] ?? 0);
-                $nb = (float)($b['number'] ?? 0);
-                if ($na === $nb) {
-                    return strcmp($a['number'] ?? '', $b['number'] ?? '');
-                }
-                return $na <=> $nb;
+            } while (!empty($response['next']));  
+
+            usort($all, function($a, $b) {
+                $idA = (int) ($a['id'] ?? 0);
+                $idB = (int) ($b['id'] ?? 0);
+                return $idA <=> $idB;
             });
+
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log("Full list sorted by ID for title {$title_id} — first: " . ($all[0]['id'] ?? 'n/a') . 
+                          ", last: " . end($all)['id']);
+            }
     
             $all_issues_data = [
                 'count'   => count($all),
