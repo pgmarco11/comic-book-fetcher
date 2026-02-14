@@ -101,6 +101,10 @@
     transform: translateX(5px);
   }
 
+  .comic-title-name {
+    font-size: 1.1rem;
+  } 
+
   .comic-title-meta {
     font-size: medium;
     line-height: 1.4;
@@ -393,7 +397,11 @@
 .issue-item:hover {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
-
+img.lazy-placeholder,
+.issue-image {
+  background: #111;
+  transition: opacity 0.4s ease-in-out;
+}
 .issue-image {
   width: 50px;
   height: auto;
@@ -402,13 +410,25 @@
   border-radius: 4px;
   margin-right: 15px;
 }
-
+.no-cover {
+  filter: grayscale(30%) brightness(0.9);
+  border: 1px dashed #444;
+}
 .issue-info {
   flex: 1;
   font-size: 1rem;
   color: #333;
   text-align: left;
 }
+.issue-info h3 {
+  font-size: 1.14rem;
+  font-weight: 600;
+}
+.issue-info h4 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
 
 .issue-info strong {
   color: #333;
@@ -665,10 +685,10 @@
   margin-bottom: 20px;
   text-align: left;
 }
-
+.issue-section h3, 
 .issue-section h4 {
   margin-bottom: 10px;
-  font-size: 1.2em;
+  font-size: 1.4em;
   color: #333;
 }
 

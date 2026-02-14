@@ -1,4 +1,67 @@
-        <div class="d-flex flex-column flex-md-row w-100">
+    <?php
+
+    $issue = $this->data_service->get_single_issue( $title_id, $issue_id );
+    if ( ! $issue ) {
+        echo '<p>Issue not found or does not belong to this series.</p>';
+        return;
+    }    
+
+    $series_cache_key = "metron:issue:{$title_id}_{$issue_id}";     
+    $series = get_transient( $series_cache_key );
+
+    if ( false === $series ) {
+        $url_series = $this->client->api_base . "series/{$title_id}/";
+        $series = $this->client->api_get( $url_series );
+
+        if ( isset( $series['error'] ) || empty( $series['name'] ) ) {
+            echo '<p>Series not found.</p>';
+            return;
+        }
+
+        set_transient( $series_cache_key, $series, MONTH_IN_SECONDS );  // series rarely changes
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  ComicVine enrichment (same as before)
+    // ───────────────────────────────────────────────────────────── 
+
+    $cv_series_id = $this->data_service->get_metron_cv_id( $issue_id ); 
+
+
+    $cv_issue = $cv_series_id 
+        ? $this->data_service->get_comicvine_issue_info( $cv_series_id, $issue_id ) 
+        : [];
+
+    $description = $this->clean_cv_description(
+        $cv_issue['description'] ?? $issue['description'] ?? $issue['desc'] ?? ''
+    );
+
+    var_dump($description);
+
+    $creators = $cv_issue['person_credits'] ?? $issue['credits'] ?? [];
+    $creator_infos = array_map( function( $p ) {
+        $name = $p['name'] ?? $p['creator'] ?? 'Unknown';
+        $role = is_array( $p['role'] ?? [] )
+            ? implode( ', ', array_column( $p['role'], 'name' ) )
+            : ( $p['role'] ?? 'N/A' );
+        return "$name – $role";
+    }, $creators );
+
+    $creator_info_string = implode( "\n", $creator_infos );
+
+    $genre_sources = ! empty( $series['genres'] ) ? $series['genres'] : ( $cv_issue['concept_credits'] ?? [] );
+    $genre_string = implode( ', ', array_column( $genre_sources, 'name' ) );
+
+    $date_raw = $cv_issue['cover_date'] ?? $issue['cover_date'] ?? null;
+    $cover_date_display = $date_raw ? date( 'F Y', strtotime( $date_raw ) ) : 'Unknown';
+
+    // Optional: more fallbacks
+    $issue_number = $issue['number'] ?? '??';
+    $issue_title  = trim( ( $series['name'] ?? 'Series' ) . ' #' . $issue_number ); 
+
+    ?>
+       
+       <div class="d-flex flex-column flex-md-row w-100">
             <main class="site-main flex-fill">
                 <section id="body-content" class="page-section text-center">  
                     <div class="comic-issue-details-container">
@@ -50,7 +113,7 @@
                             <div class="issue-notes-box">
                                 <?php if (!empty($issue) || !empty($cv_issue)): ?>
                                     <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
-                                        <h3>Summary</h3>
+                                        <h2>Summary</h2>
                                         <?php
                                         $in_collection = false;
                                         $collection_post_id = 0;
@@ -139,7 +202,7 @@
     
                                     <?php if (!empty($issue['characters'])): ?>
                                         <div class="issue-section characters">
-                                            <h4>Key Characters</h4>
+                                            <h3>Key Characters</h3>
                                             <ul>
                                                 <?php
                                                 $char_count = count($issue['characters']);
@@ -160,7 +223,7 @@
     
                                     <?php if (!empty($cv_issue['location_credits'])): ?>
                                         <div class="issue-section location">
-                                            <h4>Locations</h4>
+                                            <h3>Locations</h3>
                                             <ul>
                                                 <?php
                                                 $loc_count = count($cv_issue['location_credits']);
@@ -188,7 +251,7 @@
     
                                     <?php if (!empty($genre_string)): ?>
                                         <div class="issue-section genre">
-                                            <h4><?php echo esc_html($genre_label); ?></h4>
+                                            <h3><?php echo esc_html($genre_label); ?></h3>
                                             <ul>
                                                 <li><?php echo esc_html($genre_string); ?></li>
                                             </ul>
@@ -197,7 +260,7 @@
     
                                     <?php if (!empty($issue['reprints'])): ?>
                                         <div class="issue-section reprints">
-                                            <h4>Reprints</h4>
+                                            <h3>Reprints</h3>
                                             <ul>
                                                 <?php
                                                 $reprint_count = count($issue['reprints']);
@@ -218,7 +281,7 @@
     
                                     <?php if (!empty($creator_infos)): ?>
                                         <div class="issue-section creators">
-                                            <h4>Creators</h4>
+                                            <h3>Creators</h3>
                                             <ul>
                                                 <?php foreach ($creator_infos as $info): ?>
                                                     <li><?php echo esc_html($info); ?></li>

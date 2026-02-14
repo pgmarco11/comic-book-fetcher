@@ -243,64 +243,7 @@ class ComicRenderer {
         if ( ! $title_id || ! $issue_id ) {
             echo '<p>Required parameters missing (series or issue ID).</p>';
             return;
-        }    
-        
-        $issue = $this->data_service->get_single_issue( $title_id, $issue_id );
-        if ( ! $issue ) {
-            echo '<p>Issue not found or does not belong to this series.</p>';
-            return;
-        }    
-        
-        $series_cache_key = "metron:issue:{$title_id}_{$issue_id}";     
-        $series = get_transient( $series_cache_key );
-    
-        if ( false === $series ) {
-            $url_series = $this->client->api_base . "series/{$title_id}/";
-            $series = $this->client->api_get( $url_series );
-    
-            if ( isset( $series['error'] ) || empty( $series['name'] ) ) {
-                echo '<p>Series not found.</p>';
-                return;
-            }
-    
-            set_transient( $series_cache_key, $series, MONTH_IN_SECONDS );  // series rarely changes
-        }
-    
-        // ─────────────────────────────────────────────────────────────
-        //  ComicVine enrichment (same as before)
-        // ───────────────────────────────────────────────────────────── 
-
-        $cv_series_id = $this->data_service->get_metron_cv_id( $issue_id ); 
-
-
-        $cv_issue = $cv_series_id 
-            ? $this->data_service->get_comicvine_issue_info( $cv_series_id, $issue_id ) 
-            : [];
-    
-        $description = $this->clean_cv_description(
-            $cv_issue['description'] ?? $issue['description'] ?? $issue['desc'] ?? ''
-        );
-    
-        $creators = $cv_issue['person_credits'] ?? $issue['credits'] ?? [];
-        $creator_infos = array_map( function( $p ) {
-            $name = $p['name'] ?? $p['creator'] ?? 'Unknown';
-            $role = is_array( $p['role'] ?? [] )
-                ? implode( ', ', array_column( $p['role'], 'name' ) )
-                : ( $p['role'] ?? 'N/A' );
-            return "$name – $role";
-        }, $creators );
-    
-        $creator_info_string = implode( "\n", $creator_infos );
-    
-        $genre_sources = ! empty( $series['genres'] ) ? $series['genres'] : ( $cv_issue['concept_credits'] ?? [] );
-        $genre_string = implode( ', ', array_column( $genre_sources, 'name' ) );
-    
-        $date_raw = $cv_issue['cover_date'] ?? $issue['cover_date'] ?? null;
-        $cover_date_display = $date_raw ? date( 'F Y', strtotime( $date_raw ) ) : 'Unknown';
-    
-        // Optional: more fallbacks
-        $issue_number = $issue['number'] ?? '??';
-        $issue_title  = trim( ( $series['name'] ?? 'Series' ) . ' #' . $issue_number ); 
+        } 
     
         // Pass everything to your template
         include plugin_dir_path( __FILE__ ) . 'templates/issue-details-template.php';

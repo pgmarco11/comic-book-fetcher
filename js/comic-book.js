@@ -915,6 +915,7 @@ function fetchIssues(titleId = null, page = null, search = '', retries = 3) {
     // ===================================================================
     function updateIssuesUrl(titleId, page, search) {
         const url = new URL('/comic-catalog/issues/', window.location.origin);
+
         url.searchParams.set('title_id', titleId);
         url.searchParams.set('page', page);
         if (search) {
@@ -924,6 +925,7 @@ function fetchIssues(titleId = null, page = null, search = '', retries = 3) {
         }  
         history.pushState({ title_id: titleId, page, search }, '', url);
     }
+
 
     function updatePublisherUrl(letter, page, search) {
         const url = new URL(window.location);
@@ -1181,6 +1183,8 @@ function fetchIssues(titleId = null, page = null, search = '', retries = 3) {
         const cleanUrl = new URL('/comic-catalog/issue/', location.origin);
         cleanUrl.searchParams.set('issue_id', issueId);
         cleanUrl.searchParams.set('title_id', titleId);
+        cleanUrl.searchParams.delete('page');
+        cleanUrl.searchParams.delete('letter');
     
         location.assign(cleanUrl);
     });

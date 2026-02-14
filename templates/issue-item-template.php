@@ -100,8 +100,8 @@ if (
             <img src="<?php echo esc_url(defined('PUBLISHER_PLACEHOLDER_IMAGE_URL') ? PUBLISHER_PLACEHOLDER_IMAGE_URL : ''); ?>" alt="Placeholder" class="issue-image" loading="lazy" data-loaded="true">
         <?php endif; ?>
         <div class="issue-info">
-            <h5>#<?php echo esc_html($issue['number'] ?? 'N/A') . ' — ' . esc_html($series['name'] ?? 'Unknown'); ?></h5>
-            <h6><?php echo esc_html($formatted_date); ?></h6>
+            <h3>#<?php echo esc_html($issue['number'] ?? 'N/A') . ' — ' . esc_html($series['name'] ?? 'Unknown'); ?></h3>
+            <h4><?php echo esc_html($formatted_date); ?></h4>
             
             <!-- **NEW: Server-rendered CV highlights (from batch) - No AJAX** -->
             <?php if (!empty($highlights)): ?>

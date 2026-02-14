@@ -1,6 +1,6 @@
 <?php
 /**
- * comic-books-template.php
+ * comic-catalog-template.php
  * Used by ComicRenderer::render_template()
  * 100% identical to renderItems() output, except the empty‑state text.
  */
