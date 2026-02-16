@@ -274,35 +274,41 @@ jQuery(document).ready(function($){
             items.forEach(item => {
                 if (isPublisher) {
                     html += `
-                        <div class="publisher-item" data-publisher-id="${item.id}">
+                    <div class="publisher-item" data-publisher-id="${item.id}">
+                        <a href="/comic-catalog/?publisher_id=${item.id}&letter=all&page=1">
                             <div class="publisher-image">
-                                <img src="${item.image || comicbooks_fetchers_data.placeholder}" alt="${item.name}" loading="lazy">
+                                    <img src="${item.image || comicbooks_fetchers_data.placeholder}" 
+                                     alt="${item.name}" 
+                                     loading="lazy">
                             </div>
                             <div class="publisher-info">
-                                <h3>${item.name}</h3>
-                                <p><strong>Founded:</strong> ${item.founded || 'N/A'}</p>
-                                <p>${item.desc || 'No description available.'}</p>
+                                    <h3>${item.name}</h3>
+                                    <p><strong>Founded:</strong> ${item.founded || 'N/A'}</p>
+                                    <p>${item.desc || 'No description available.'}</p>
                             </div>
-                        </div>`;
+                        </a>
+                    </div>`;
                 } else {
                     html += `
-                        <div class="comic-title" data-series-id="${item.series_id}">
-                            <div class="comic-image">
-                                <img src="${comicbooks_fetchers_data.placeholder}" 
-                                     data-src="${item.first_issue_image || ''}" 
-                                     alt="${item.name}" 
-                                     loading="lazy"
-                                     class="lazy-placeholder">
-                            </div>
-                            <div class="comic-info">
-                                <div class="comic-title-name">${item.name}</div>
-                                <div class="comic-title-meta">
-                                    <p>Vol. <span>${item.volume || 1}</span></p>
-                                    <p>Issues: <span>${item.issue_count || 0}</span></p>
-                                    <p>Started: <span>${item.year_began || 'N/A'}</span></p>
+                    <div class="comic-title" data-series-id="${item.series_id}">
+                            <a href="/comic-catalog/issues/?title_id=${item.series_id}&page=1">
+                                <div class="comic-image">
+                                    <img src="${comicbooks_fetchers_data.placeholder}"
+                                        data-src="${item.first_issue_image || ''}"
+                                        alt="${item.name}"
+                                        loading="lazy"
+                                        class="lazy-placeholder">
                                 </div>
-                            </div>
-                        </div>`;
+                                <div class="comic-info">
+                                    <div class="comic-title-name">${item.name}</div>
+                                    <div class="comic-title-meta">
+                                        <p>Vol. <span>${item.volume || 1}</span></p>
+                                        <p>Issues: <span>${item.issue_count || 0}</span></p>
+                                        <p>Started: <span>${item.year_began || 'N/A'}</span></p>
+                                    </div>
+                                </div>
+                            </a>
+                    </div>`;
                 }
             });
         }
@@ -1035,10 +1041,10 @@ function fetchIssues(titleId = null, page = null, search = '', retries = 3) {
         }
     }, 300));
 
-    $(document).on('click', '.publisher-item', debounce(function() {
-        const publisherId = $(this).data('publisher-id'); 
-        $('#publisher-select').val(publisherId).trigger('change');  
-    }, 300));
+    // $(document).on('click', '.publisher-item', debounce(function() {
+    //     const publisherId = $(this).data('publisher-id'); 
+    //     $('#publisher-select').val(publisherId).trigger('change');  
+    // }, 300));
 
     $(document).on('click', '.letter-btn', debounce(function() {
         const letter = $(this).attr('data-letter') || 'all';
@@ -1131,56 +1137,57 @@ function fetchIssues(titleId = null, page = null, search = '', retries = 3) {
     });
     
 
-    $(document).on('click', '.comic-title', function(e) {
-        e.preventDefault();
+  $(document).on('click', '.comic-title a', function() {
+    showSpinner();
+    //     e.preventDefault();
     
-        const seriesId = $(this).data('series-id');
-        if (!seriesId) return;
+    //     const seriesId = $(this).data('series-id');
+    //     if (!seriesId) return;
     
-        const $container = $('#body-content');
-        const $spinner   = $('#loading-spinner, #global-page-loader');    
+    //     const $container = $('#body-content');
+    //     const $spinner   = $('#loading-spinner, #global-page-loader');    
     
-        $('#comic-search').val('');
-        currentSearch = '';
+    //     $('#comic-search').val('');
+    //     currentSearch = '';
     
-        showSpinner();
+    //     showSpinner();
     
-        const url = new URL('/comic-catalog/issues/', window.location.origin);
-        url.searchParams.set('title_id', seriesId);
-        url.searchParams.set('page', '1');
-        url.searchParams.delete('letter');
-        url.searchParams.delete('search');
+    //     const url = new URL('/comic-catalog/issues/', window.location.origin);
+    //     url.searchParams.set('title_id', seriesId);
+    //     url.searchParams.set('page', '1');
+    //     url.searchParams.delete('letter');
+    //     url.searchParams.delete('search');
     
-        history.pushState({ title_id: seriesId, page: 1 }, '', url);
+    //     history.pushState({ title_id: seriesId, page: 1 }, '', url);
     
-        // Retry with exponential backoff
-        const fetchSeries = (retries = 3, delay = 1000) => {
-            $.ajax({
-                url: url.toString(),
-                method: 'GET',
-                timeout: 50000,
-                beforeSend: () => {
-                    $spinner.find('p').text('Loading series...');
-                },
-                success: (html) => {
-                    $('#body-content').html($(html).find('#body-content').html());
-                    lazyLoadImages();
-                    hideSpinner();
-                },
-                error: () => {
-                    if (retries > 0) {
-                        console.warn(`Failed to load series. Retrying in ${delay}ms...`);
-                        setTimeout(() => fetchSeries(retries - 1, delay * 2), delay); // double delay each retry
-                    } else {
-                        $container.html('<p style="color:red;padding:2rem;">Failed to load series. Please try again later.</p>');
-                        hideSpinner();
-                    }
-                }
-            });
-        };
+    //     // Retry with exponential backoff
+    //     const fetchSeries = (retries = 3, delay = 1000) => {
+    //         $.ajax({
+    //             url: url.toString(),
+    //             method: 'GET',
+    //             timeout: 50000,
+    //             beforeSend: () => {
+    //                 $spinner.find('p').text('Loading series...');
+    //             },
+    //             success: (html) => {
+    //                 $('#body-content').html($(html).find('#body-content').html());
+    //                 lazyLoadImages();
+    //                 hideSpinner();
+    //             },
+    //             error: () => {
+    //                 if (retries > 0) {
+    //                     console.warn(`Failed to load series. Retrying in ${delay}ms...`);
+    //                     setTimeout(() => fetchSeries(retries - 1, delay * 2), delay); // double delay each retry
+    //                 } else {
+    //                     $container.html('<p style="color:red;padding:2rem;">Failed to load series. Please try again later.</p>');
+    //                     hideSpinner();
+    //                 }
+    //             }
+    //         });
+    //     };
     
-        fetchSeries(); // initial call
-    });  
+    //     fetchSeries(); // initial call
+  });  
 
     // $(document).on('click', '.issue-item .issue-link', function(e) {
     //     console.log("Issue link clicked — this handler ran");

@@ -92,6 +92,12 @@
     gap: 1rem;
   }
 
+  .comic-title a {
+    color: inherit;
+    text-decoration: none;
+    width: 100%;
+  }
+
   .comic-title > div:not(.comic-image) {
     flex-grow: 1;
   }
@@ -117,6 +123,10 @@
   .comic-info {
     display: flex;
     flex-direction: column;
+  }
+  .comic-image  {
+    padding-right: 1rem;
+    float: left;
   }
 
   .comic-image img {
@@ -214,27 +224,33 @@
 
 /* publisher information */
 .publisher-image {
-  max-width: 150px;
-  max-height: 100%;
-  height: auto;
-  border-radius: 4px;
-  flex: 0 0 120px;
-  margin-right: 20px;
+  flex: 0 0 140px;              
+  height: 140px;               
+  display: flex;
+  align-items: center;         
+  justify-content: center;         
+  background: transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-right: 0;                
 }
 
+/* The image itself */
 .publisher-image img {
-  width: 100%;
-  height: auto;
-  object-fit: contain;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;        
+  display: block;
 }
 .publisher-info {
-  margin: 1rem 0;
+  flex: 1;                       
+  margin: 0;           
   padding: 1rem;
-  background: #f9f9f9;
+  background: #f9f9f9;   
+  border: none;                     
   color: var(--wp--preset--color--black);
   border: 1px solid #ddd;
   text-align: left;
-  flex: 1;
 }
 .publisher-info .publisher-image {
   max-height: 180px;
@@ -242,17 +258,18 @@
 .publisher-info h2 {
   margin-bottom: 1rem;
 }
+/* Make sure text looks good */
 .publisher-info h3 {
-  margin: 0 0 10px;
-  font-size: 1.5rem;
-  text-align: left;
+  margin: 0 0 0.6rem 0;
+  font-size: 1.4rem;
+  line-height: 1.2;  
   font-weight: 600;
 }
+
 .publisher-info p {
-  margin: 5px 0;
+  margin: 0.35rem 0;
   font-size: 1rem;
-  text-align: left;
-  line-height: 1.5;
+  line-height: 1.45;
 }
 .publisher-details{
   display: flex;
@@ -289,9 +306,18 @@
   cursor: pointer;
   transition: all 0.3s ease;
 }
+.publisher-item a {
+  display: flex;                   
+  align-items: center;             
+  gap: 1.25rem;                     
+  width: 100%;
+  text-decoration: none;
+  color: inherit;
+}
 .publisher-item:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  transform: translateY(-2px);
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  transition: all 0.25s ease;
 }
 
 /* Comic Series Container */
@@ -477,7 +503,7 @@ img.lazy-placeholder,
   text-align: center;
   padding: 2rem;
   background: rgba(0, 0, 0, 0.5);    /* optional: darker card behind text/spinner */
-  border-radius: 12px;
+  border-radius: 0;
   min-width: 220px;
   pointer-events: none;       /* lets clicks pass through if needed */
 }
@@ -532,16 +558,25 @@ img.lazy-placeholder,
       align-items: center;
       text-align: center;
   }
+  .publisher-item a {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 1rem;
+  }
 
   .publisher-image {
-      margin-right: 0;
-      margin-bottom: 15px;
-      flex: 0 0 auto;
-      max-width: 100px;
+    flex: 0 0 120px;
+    height: 120px;
+    width: 120px;
+  }
+
+  .publisher-info {
+    text-align: center;
   }
 
   .publisher-info h3 {
-      font-size: 1.3rem;
+    font-size: 1.35rem;
   }
 
   .publisher-info p {

@@ -43,37 +43,38 @@ $is_publisher = $type === 'publishers';
 
                     if ( $is_publisher ) : ?>
                         <div class="publisher-item" data-publisher-id="<?php echo esc_attr( $item['id'] ); ?>">
-                            <div class="publisher-image">
-                                <img  src="<?php echo esc_url(!empty($item['image']) ? $item['image'] : PUBLISHER_PLACEHOLDER_IMAGE_URL); ?>"
-                                     alt="<?php echo esc_attr( $item['name'] ); ?>"
-                                     loading="lazy">
-                            </div>
-                            <div class="publisher-info">                          
-                                <h3><?php echo esc_html( $item['name'] ); ?></h3>
-                                <p><strong>Founded:</strong> <?php echo esc_html( $item['founded'] ?? 'N/A' ); ?></p>
-                                <p><?php echo wp_kses_post( $item['desc'] ?? 'No description available.' ); ?></p>
-                            </div>
+                            <a href="/comic-catalog/?publisher_id=<?php echo esc_attr($item['id']); ?>&letter=all&page=1">
+                                <div class="publisher-image">
+                                    <img  src="<?php echo esc_url(!empty($item['image']) ? $item['image'] : PUBLISHER_PLACEHOLDER_IMAGE_URL); ?>"
+                                        alt="<?php echo esc_attr( $item['name'] ); ?>"
+                                        loading="lazy">
+                                </div>
+                                <div class="publisher-info">                          
+                                    <h3><?php echo esc_html( $item['name'] ); ?></h3>
+                                    <p><strong>Founded:</strong> <?php echo esc_html( $item['founded'] ?? 'N/A' ); ?></p>
+                                    <p><?php echo wp_kses_post( $item['desc'] ?? 'No description available.' ); ?></p>
+                                </div>
+                            </a>
                         </div>
                     <?php else : ?>
-                        <div class="comic-title" data-series-id="<?php echo esc_attr( $item['series_id'] ); ?>">
-
-                            <div class="comic-image">
-                            <img 
-                                src="<?php echo esc_url(PUBLISHER_PLACEHOLDER_IMAGE_URL); ?>" 
-                                data-src="<?php echo esc_url(!empty($item['first_issue_image']) ? $item['first_issue_image'] : ''); ?>" 
-                                alt="<?php echo esc_attr( $item['name'] ); ?>" 
-                                loading="lazy"
-                                class="lazy-placeholder">
-                            </div>
-                            <div class="comic-info">
-
-                                <div class="comic-title-name"><?php echo esc_html( $item['name'] ); ?></div>
-                                <div class="comic-title-meta">
-                                    <p>Vol. <span><?php echo esc_html( $item['volume'] ?? '1' ); ?></span></p>
-                                    <p>Issues: <span><?php echo esc_html( $item['issue_count'] ?? 0 ); ?></span></p>
-                                    <p>Started: <span><?php echo esc_html( $item['year_began'] ?? 'N/A' ); ?></span></p>
+                        <div class="comic-title" data-series-id="<?php echo esc_attr($item['series_id']); ?>">                     
+                            <a href="/comic-catalog/issues/?title_id=<?php echo esc_attr($item['series_id']); ?>&page=1">
+                                <div class="comic-image">
+                                    <img src="<?php echo esc_url(PUBLISHER_PLACEHOLDER_IMAGE_URL); ?>"
+                                        data-src="<?php echo esc_url($item['first_issue_image'] ?? ''); ?>"
+                                        alt="<?php echo esc_attr($item['name']); ?>"
+                                        loading="lazy"
+                                        class="lazy-placeholder">
                                 </div>
-                            </div>
+                                <div class="comic-info">
+                                    <div class="comic-title-name"><?php echo esc_html($item['name']); ?></div>
+                                    <div class="comic-title-meta">
+                                        <p>Vol. <span><?php echo esc_html($item['volume'] ?? '1'); ?></span></p>
+                                        <p>Issues: <span><?php echo esc_html($item['issue_count'] ?? 0); ?></span></p>
+                                        <p>Started: <span><?php echo esc_html($item['year_began'] ?? 'N/A'); ?></span></p>
+                                    </div>
+                                </div>
+                            </a>
                         </div>
                     <?php endif; ?>
                 <?php endforeach; ?>
