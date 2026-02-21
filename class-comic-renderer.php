@@ -105,7 +105,13 @@ class ComicRenderer {
     }
 
     public function warm_series_cache_background($publisher_id) {
-        $this->get_series($publisher_id, 1, 10, '', 'all', true);
+        $per_page = 10;
+        $pages_to_warm = 2;  
+    
+        for ($page = 1; $page <= $pages_to_warm; $page++) {
+            $this->get_series($publisher_id, $page, $per_page, '', 'all', true);
+            usleep(500000); //prevent rate limiting
+        }    
     }
 
     public function ajax_warm_series_cache() {
@@ -119,13 +125,13 @@ class ComicRenderer {
 
     // === RENDER MAIN LIST PAGE ===
     public function render_template($initial_data = []) {
-        $items = $initial_data['items'];
-        $total = $initial_data['total'];
+        $items = $initial_data['items'] ?? [];
+        $total = $initial_data['total'] ?? 0;
         $type = $initial_data['type'];
-        $page = $initial_data['page'];
-        $per_page = $initial_data['per_page'];
+        $page = $initial_data['page'] ?? 1; // Default to 1 if not set
+        $per_page = $initial_data['per_page'] ?? 10; // Default to 10 if not set
         $letter = $initial_data['letter'] ?? 'all';
-        $selected_publisher = $initial_data['publisher_id'];
+        $selected_publisher = $initial_data['publisher_id'] ?? 0;
       
         // Hydrate JS
         wp_localize_script('comicbook-script', 'comicbooks_fetchers_data', [
@@ -136,11 +142,11 @@ class ComicRenderer {
             'page' => $page,
             'letter' => $letter,
             'publisher_id' => $selected_publisher,
-            'search' => $initial_data['search'], // ← ADD THIS
+            'search' => $initial_data['search'] ?? '', // ← ADD THIS
             'ajax_url' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('comicbooks_fetchers_data'),
             'placeholder' => PUBLISHER_PLACEHOLDER_IMAGE_URL ?? '',
-            'preload_enabled' => true,
+            'preload_enabled' => false,
         ]);
 
         
@@ -257,25 +263,36 @@ class ComicRenderer {
         if ( ! is_user_logged_in() || empty( $metron_ids ) ) {
             return [];
         }
-
+    
         $user_id = get_current_user_id();
+        
+        // Cache the result to avoid repeated DB hits on same page load
+        $cache_key = 'user_collection:' . $user_id . ':' . md5( implode( ',', $metron_ids ) );
+        $cached = wp_cache_get( $cache_key );
+        if ( $cached !== false ) {
+            return $cached;
+        }
+    
         $placeholders = implode( ',', array_fill( 0, count( $metron_ids ), '%d' ) );
-        $in = $metron_ids;
-
+    
         global $wpdb;
         $table = $wpdb->prefix . 'comic_collection';
-
+    
         // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders
         $sql = $wpdb->prepare(
             "SELECT metron_id FROM `$table` WHERE user_id = %d AND metron_id IN ($placeholders)",
-            array_merge( [ $user_id ], $in )
+            array_merge( [ $user_id ], $metron_ids )
         );
-
+    
         $owned = $wpdb->get_col( $sql ); // phpcs:ignore
         $status = [];
         foreach ( $metron_ids as $mid ) {
             $status[ $mid ] = in_array( $mid, $owned, true );
         }
+        
+        // Cache for this page load
+        wp_cache_set( $cache_key, $status );
+        
         return $status;
     }
 

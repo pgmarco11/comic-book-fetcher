@@ -8,15 +8,15 @@ if (!defined('ABSPATH')) {
 }
 
 // Force require critical context variables from parent scope
-if (!isset($series) || !is_array($series) || empty($series['name'])) {
+if (!is_array($series) || empty($series['name'])) {
     error_log("issue-item-template: Missing or invalid \$series");
     return;
 }
-if (!isset($title_id) || !$title_id) {
+if (!isset($title_id) || !is_scalar($title_id) || !$title_id) {
     error_log("issue-item-template: Missing \$title_id");
     return;
 }
-if (!isset($issue) || !is_array($issue) || empty($issue['id'])) {
+if (!(is_array($issue) && !empty($issue['id']))) {
     error_log("issue-item-template: Missing or invalid \$issue");
     return;
 }
@@ -37,14 +37,16 @@ if (!$metron_id) {
     return;
 }
 
-static $rendered_issue_ids = [];
-if (isset($rendered_issue_ids[$metron_id])) return;
-$rendered_issue_ids[$metron_id] = true;
+$transient_key = 'rendered_issue_' . $metron_id;
+if (get_transient($transient_key)) {
+    return;
+}
+$issue_title = esc_html(sprintf('%s #%s', $series['name'] ?? 'Unknown', $issue['number'] ?? 'N/A'));
 
 $issue_title = esc_html($series['name'] ?? 'Unknown') . ' #' . esc_html($issue['number'] ?? 'N/A');
 $date = $issue['cover_date'] ?? ''; //check on issue details is same
 $formatted_date = (!empty($date) && strtotime($date)) ? date('F Y', strtotime($date)) : 'N/A';
-$image_url = !empty($issue['image']) ? esc_url($issue['image']) : (defined('PUBLISHER_PLACEHOLDER_IMAGE_URL') ? esc_url(PUBLISHER_PLACEHOLDER_IMAGE_URL) : '#');
+$image_url = !empty($issue['image']) ? esc_url($issue['image']) : (defined('PUBLISHER_PLACEHOLDER_IMAGE_URL') && PUBLISHER_PLACEHOLDER_IMAGE_URL ? esc_url(PUBLISHER_PLACEHOLDER_IMAGE_URL) : '#');
 
 error_log("issue-item-template: Rendering issue ID=$metron_id");
 
@@ -58,13 +60,13 @@ $creators = $issue['credits'] ?? [];
 $creator_infos = [];
 foreach ($creators as $person) {
     $name = $person['name'] ?? $person['creator'] ?? 'Unknown';
-    $role = is_array($person['role']) ? implode(', ', array_column($person['role'], 'name')) : ($person['role'] ?? 'N/A');
+    $role = (isset($person['role']) && is_array($person['role'])) ? implode(', ', array_column($person['role'], 'name')) : ($person['role'] ?? 'N/A');
     $creator_infos[] = $name . ' – ' . $role;
 }
 $creator_info_string = implode('; ', $creator_infos);
 
 $genres_origin = 'metron';
-$genre_sources = !empty($series['genres']) && is_array($series['genres']) ? array_column($series['genres'], 'name') : [];
+$genre_sources = is_array($series['genres']) && !empty($series['genres']) ? array_column($series['genres'], 'name') : [];
 $genre_string = implode(', ', $genre_sources);
 
 // **NEW: Use pre-fetched collection status**
@@ -87,8 +89,8 @@ if (
             echo esc_url(
                 add_query_arg(
                     [
-                        'issue_id'  => $metron_id,
-                        'title_id'  => $title_id,
+                        'issue_id'  => esc_attr($metron_id),
+                        'title_id'  => esc_attr($title_id),
                     ],
                     $base_url
                 )
@@ -132,7 +134,7 @@ if (
                     data-issue-number="<?php echo esc_attr($issue['number'] ?? 'N/A'); ?>"
                     data-image-url="<?php echo esc_url($image_url); ?>"
                     <?php if ($in_collection): ?>
-                        data-post-id="<?php echo esc_attr($collection_post_id); ?>"
+                        data-post-id="<?php echo esc_attr($collection_post_id ?? ''); ?>"
                         data-action="remove"
                     <?php else: ?>
                         data-action="add"

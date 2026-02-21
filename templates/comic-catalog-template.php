@@ -9,15 +9,16 @@ $total_pages = $total > 0 ? ceil( $total / $per_page ) : 0;
 $is_publisher = $type === 'publishers';
 
 ?>
-
-<div id="book-container">
-
-    <!-- SPINNER -->
-    <div id="loading-spinner" class="spinner-overlay" aria-live="polite">
+<!-- SPINNER -->
+<div id="loading-spinner" 
+            class="spinner-overlay"                    
+            aria-live="polite"                  
+            aria-label="Loading content">
         <div class="spinner"></div>
         <p>Loading...</p>
-    </div>
-            
+</div>
+
+<div id="book-container">            
     <div id="items-wrapper">
         <div class="<?php echo $is_publisher ? 'publishers' : 'book'; ?>-wrapper">
 
@@ -80,26 +81,5 @@ $is_publisher = $type === 'publishers';
                 <?php endforeach; ?>
             <?php endif; ?>
         </div>
-
-
     </div>
-    <!-- DEBUG PANEL – ONLY VISIBLE TO ADMINS -->
-<?php if (current_user_can('manage_options')): ?>
-<div id="debug-panel" style="position:fixed; bottom:10px; right:10px; background:#000; color:#0f0; padding:10px; font-family:monospace; font-size:12px; max-width:400px; max-height:300px; overflow-y:auto; z-index:99999; border:2px solid #0f0; border-radius:8px; opacity:0.9;">
-    <strong>DEBUG LOG (admin only)</strong><br>
-    <div id="debug-log"></div>
-    <button type="button" onclick="document.getElementById('debug-panel').style.display='none'" style="margin-top:5px; font-size:10px;">Close</button>
-</div>
-
-<script>
-function debugLog(msg) {
-    if (!document.getElementById('debug-log')) return;
-    const now = new Date().toLocaleTimeString();
-    const line = document.createElement('div');
-    line.innerHTML = `[${now}] ${msg}`;
-    document.getElementById('debug-log').prepend(line);
-    console.log('DEBUG:', msg);
-}
-</script>
-<?php endif; ?>
 </div>

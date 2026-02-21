@@ -35,6 +35,9 @@ class Comicbooks {
         add_action( 'wp_ajax_load_issues',             [ $this, 'ajax_load_issues' ] );
         add_action( 'wp_ajax_nopriv_load_issues',      [ $this, 'ajax_load_issues' ] );
 
+        add_action( 'wp_ajax_load_comic_vine_batch',   [ $this, 'ajax_load_comic_vine_batch' ] );
+        add_action( 'wp_ajax_nopriv_load_comic_vine_batch', [ $this, 'ajax_load_comic_vine_batch' ] );
+
         add_action( 'wp_ajax_load_series_image',       [ $this, 'ajax_load_series_image' ] );
         add_action( 'wp_ajax_nopriv_load_series_image',[ $this, 'ajax_load_series_image' ] );
 
@@ -206,25 +209,21 @@ class Comicbooks {
     }
 
     /* -----------------------------------------------------------------
-     *  AJAX – Issues (for a series)
-     * ----------------------------------------------------------------- */
+    *  AJAX – Issues (for a series) – FAST VERSION
+    * ----------------------------------------------------------------- */
     public function ajax_load_issues() {
         check_ajax_referer( 'comicbooks_fetchers_data', 'nonce' );
 
         $title_id = isset( $_POST['title_id'] ) ? intval( $_POST['title_id'] ) : 0;
         $page     = isset( $_POST['page'] ) ? max( 1, intval( $_POST['page'] ) ) : 1;
-        $search = isset( $_POST['search'] )
-        ? strtolower( trim( (string) wp_strip_all_tags( $_POST['search'] ) ) )
-        : '';
+        $search   = isset( $_POST['search'] )
+            ? strtolower( trim( (string) wp_strip_all_tags( $_POST['search'] ) ) )
+            : '';
 
         $cache_key = "metron:issue_list_html:{$title_id}:{$page}:{$search}";
         $cached    = get_transient( $cache_key );
         if ( $cached !== false ) {
-            wp_send_json_success([
-                'issues' => $cached,
-                'total_issues' => $total_issues ?? null,
-                'cached' => true
-            ]);
+            wp_send_json_success( $cached );
         }
 
         $data = $this->data_service->get_series_issues( $title_id, $page, $search );
@@ -240,33 +239,38 @@ class Comicbooks {
         $per_page        = 10;
         $total_pages     = ceil( $total_issues / $per_page ); 
 
-        ob_start();
         $template = defined( 'COMICBOOKS_FETCHER_PATH' )
             ? COMICBOOKS_FETCHER_PATH . 'templates/issue-item-template.php'
             : trailingslashit( WP_PLUGIN_DIR ) . 'comic-book-fetcher/templates/issue-item-template.php';
 
         if ( ! file_exists( $template ) ) {
-            echo '<p class="no-results">Error: Issue template file not found.</p>';
-            $html = ob_get_clean();
             wp_send_json_error( [ 'message' => 'Issue template file not found' ] );
         }
+
+        ob_start();
 
         if ( empty( $all_issues ) || ! is_array( $all_issues ) ) {
             echo '<p class="no-results">No issues found for this series.</p>';
         } else {
             echo '<ul class="issues-list">';
-                // If using CV batch/collection (recommended for full features):
-                $metron_ids = array_column($all_issues, 'id');
-                $cv_info_batch = $this->data_service->get_comicvine_issue_info_batch($metron_ids);
-                $collection_status = is_user_logged_in()
-                ? ComicRenderer::get_collection_status($metron_ids)
-                : [];  
-                foreach ($all_issues as $issue) {
-                    if (empty($issue['id'])) continue; 
-                    include $template;
-                }
+
+            $metron_ids = array_column( $all_issues, 'id' );
+
+            // REMOVED: get_comicvine_issue_info_batch() – NO LONGER CALLED HERE
+            // REMOVED: get_collection_status() – NO LONGER CALLED HERE
+            
+            // Only pass empty arrays to template
+            $cv_info_batch = [];
+            $collection_status = [];
+
+            foreach ( $all_issues as $issue ) {
+                if ( empty( $issue['id'] ) ) continue;
+                include $template;
+            }
+
             echo '</ul>';
         }
+
         $issues_html = ob_get_clean();
 
         $response = [
@@ -275,10 +279,39 @@ class Comicbooks {
             'current_page' => $page,
             'total_pages'  => $total_pages,
             'per_page'     => $per_page,
+            'metron_ids'   => array_column( $all_issues, 'id' ),
         ];
 
         set_transient( $cache_key, $response, 2 * WEEK_IN_SECONDS );
         wp_send_json_success( $response );
+    }
+
+    /* -----------------------------------------------------------------
+    *  AJAX – Load Comic Vine data (non-blocking)
+    * ----------------------------------------------------------------- */
+    public function ajax_load_comic_vine_batch() {
+        check_ajax_referer( 'comicbooks_fetchers_data', 'nonce' );
+
+        $metron_ids = isset( $_POST['metron_ids'] ) 
+            ? array_map( 'intval', explode( ',', $_POST['metron_ids'] ) )
+            : [];
+        
+        if ( empty( $metron_ids ) ) {
+            wp_send_json_error( [ 'message' => 'No IDs provided' ] );
+        }
+
+        // Fetch CV data
+        $cv_info_batch = $this->data_service->get_comicvine_issue_info_batch( $metron_ids );
+
+        // Fetch collection status if logged in
+        $collection_status = is_user_logged_in()
+            ? ComicRenderer::get_collection_status( $metron_ids )
+            : [];
+
+        wp_send_json_success( [
+            'cv_data' => $cv_info_batch,
+            'collection_status' => $collection_status,
+        ] );
     }
 
     /* -----------------------------------------------------------------

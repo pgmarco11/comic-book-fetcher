@@ -220,43 +220,61 @@ class ComicDataService {
          * ------------------------------------------------- */
         $full_list_key = "metron:issue_list_full:{$title_id}";
         $all_issues_data = get_transient($full_list_key);
-
+    
         if ( false === $all_issues_data || !isset($all_issues_data['results']) ) {
             $all = [];
             $page_fetch = 1;
-            $max_pages = 50;
-
+            $max_pages = 100; // Increased to handle more issues
+    
             do {   
                 $url = $this->client->api_base . "series/{$title_id}/issue_list/?page={$page_fetch}";
                 $response = $this->client->api_get($url);
-                if (isset($response['error'])) break;
+                
+                if (isset($response['error'])) {
+                    if (defined('WP_DEBUG') && WP_DEBUG) {
+                        error_log("Metron API error on page {$page_fetch}: " . $response['error']);
+                    }
+                    break;
+                }
             
                 $results = $response['results'] ?? [];
                 if (empty($results)) break;
             
                 $all = array_merge($all, $results);
-
+    
                 $page_fetch++;
                 if ($page_fetch > $max_pages) break;
-                usleep(300000);
+                
+                // Reduced sleep: only 50ms between requests (instead of 300ms)
+                usleep(50000);
             } while (!empty($response['next']));  
-
+    
             usort($all, function($a, $b) {
+                $numA = isset($a['number']) ? trim((string)$a['number']) : '0';
+                $numB = isset($b['number']) ? trim((string)$b['number']) : '0';
+                
+                $nA = is_numeric($numA) ? (float)$numA : INF;
+                $nB = is_numeric($numB) ? (float)$numB : INF;
+                
+                if ($nA !== $nB) {
+                    return $nA <=> $nB;
+                }
+                
                 $idA = (int) ($a['id'] ?? 0);
                 $idB = (int) ($b['id'] ?? 0);
                 return $idA <=> $idB;
             });
-
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log("Full list sorted by ID for title {$title_id} — first: " . ($all[0]['id'] ?? 'n/a') . 
-                          ", last: " . end($all)['id']);
-            }
     
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log("Fetched " . count($all) . " issues for series {$title_id}");
+            }
+        
             $all_issues_data = [
                 'count'   => count($all),
                 'results' => $all,
             ];
-
+    
+            // Cache for 30 days
             set_transient($full_list_key, $all_issues_data, 30 * DAY_IN_SECONDS);
         }
 
@@ -522,17 +540,139 @@ class ComicDataService {
         if ( empty( $metron_ids ) || ! is_array( $metron_ids ) ) {
             return [];
         }
-
+    
         $results = [];
+        $cv_key = get_option( 'comic_vine_api_key', '' );
+        if ( ! $cv_key ) {
+            error_log( 'Comic Vine API key missing' );
+            return [];
+        }
+    
+        // Step 1: Batch fetch CV IDs from Metron (single request with multiple IDs)
+        $cv_ids_map = []; // metron_id => cv_id
         foreach ( $metron_ids as $mid ) {
-            $cv_id = $this->get_metron_cv_id( $mid );
-            if ( $cv_id ) {
-                $info = $this->get_comicvine_issue_info( $cv_id );
-                if ( $info ) {
-                    $results[ $mid ] = $info;
+            $cache_key = 'metron:issue_vine:' . md5( $mid );
+            $cached = get_transient( $cache_key );
+            if ( $cached !== false ) {
+                $cv_ids_map[ $mid ] = $cached;
+            }
+        }
+    
+        // Only fetch uncached IDs
+        $uncached_ids = array_diff( $metron_ids, array_keys( $cv_ids_map ) );
+        if ( ! empty( $uncached_ids ) ) {
+            // Fetch all uncached IDs at once
+            foreach ( $uncached_ids as $mid ) {
+                $url = $this->client->api_base . "issue/$mid/";
+                $data = $this->client->api_get( $url );
+                $cv_id = $data['cv_id'] ?? null;
+                
+                if ( $cv_id ) {
+                    $cv_ids_map[ $mid ] = $cv_id;
+                    set_transient( 'metron:issue_vine:' . md5( $mid ), $cv_id, WEEK_IN_SECONDS );
                 }
             }
         }
+    
+        // Step 2: Batch fetch Comic Vine data for all CV IDs
+        if ( ! empty( $cv_ids_map ) ) {
+            foreach ( $cv_ids_map as $mid => $cv_id ) {
+                $cache_key = "cv_issue_full_$cv_id";
+                $cached = get_transient( $cache_key );
+                
+                if ( $cached !== false ) {
+                    $results[ $mid ] = $cached;
+                    continue;
+                }
+    
+                // Fetch from Comic Vine
+                $url = "https://comicvine.gamespot.com/api/issue/4000-{$cv_id}/?api_key={$cv_key}&format=json";
+                $res = wp_remote_get( $url, [
+                    'timeout' => 30,
+                    'headers' => [ 'User-Agent' => 'CollectibleSpotBot/1.1 (+' . get_site_url() . ')' ],
+                ] );
+    
+                if ( is_wp_error( $res ) ) {
+                    continue;
+                }
+    
+                $body = json_decode( wp_remote_retrieve_body( $res ), true );
+                if ( empty( $body['results'] ) ) {
+                    continue;
+                }
+    
+                $merged = $body['results'];
+    
+                // Enrich with Metron data
+                $met_url = $this->client->api_base . 'issue/?cv_id=' . $cv_id;
+                $met_res = $this->client->api_get( $met_url );
+    
+                if ( $met_res && ! empty( $met_res['results'][0] ) ) {
+                    $met = $met_res['results'][0];
+                    $merged['metron'] = $met;
+    
+                    if ( empty( $merged['cover_date'] ) && ! empty( $met['cover_date'] ) ) {
+                        $merged['cover_date'] = $met['cover_date'];
+                    }
+                    if ( empty( $merged['description'] ) && ! empty( $met['desc'] ) ) {
+                        $merged['description'] = $met['desc'];
+                    }
+                    if ( ! empty( $met['reprints'] ) ) {
+                        $merged['reprint_info'] = array_column( $met['reprints'], 'issue' );
+                    }
+                }
+    
+                // Generate highlights
+                $highlights = [];
+                $fields = [
+                    'first_appearance_characters' => 'First Appearance of Characters',
+                    'characters_died_in'          => 'Character Deaths',
+                    'first_appearance_locations'  => 'New Locations Introduced',
+                    'first_appearance_objects'    => 'First Appearance of Objects',
+                    'first_appearance_concepts'   => 'First Appearance of Concepts',
+                ];
+                foreach ( $fields as $key => $txt ) {
+                    if ( ! empty( $merged[ $key ] ) ) {
+                        $highlights[] = $txt;
+                    }
+                }
+    
+                if ( ! empty( $merged['concept_credits'] ) ) {
+                    foreach ( $merged['concept_credits'] as $c ) {
+                        $n = strtolower( $c['name'] );
+                        if ( strpos( $n, 'homage' ) !== false ) {
+                            $highlights[] = 'Homage Cover';
+                        }
+                        if ( strpos( $n, 'reprint' ) !== false ) {
+                            $highlights[] = 'Reprint Issue';
+                        }
+                    }
+                }
+    
+                if ( ! empty( $merged['reprint_info'] ) ) {
+                    $highlights[] = 'Contains Reprinted Material';
+                }
+    
+                if ( ! empty( $merged['description'] ) ) {
+                    $d = strtolower( $merged['description'] );
+                    if ( strpos( $d, 'first appearance' ) !== false ) {
+                        $highlights[] = 'First Appearance Mentioned';
+                    }
+                    if ( strpos( $d, 'death of' ) !== false ) {
+                        $highlights[] = 'Mentions a Death';
+                    }
+                    if ( strpos( $d, 'second appearance' ) !== false ) {
+                        $highlights[] = 'Second Appearance';
+                    }
+                }
+    
+                $merged['_highlights'] = array_unique( $highlights );
+                set_transient( $cache_key, $merged, $this->get_dataset_ttl() );
+                
+                $results[ $mid ] = $merged;
+            }
+        }
+    
         return $results;
     }
 
