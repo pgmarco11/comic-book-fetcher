@@ -43,30 +43,26 @@ class ComicDataService {
         $bypass_cache = false,
         $letter      = 'all'
     ) {
-        $transient_key = 'metron:publishers:full';
-        $full          = $bypass_cache ? false : get_transient( $transient_key );
+        $transient_key = 'metron:publishers:full:v1'; // versioned
 
-        if ( $full === false ) {
+        $full = $bypass_cache ? false : get_transient($transient_key);
+    
+        if ($full === false) {
             $full = [];
-            $url  = $this->client->api_base . 'publisher/?page=1';
-            $data = $this->client->api_get( $url );
-
-            if ( $data && ! empty( $data['results'] ) ) {
-                foreach ( $data['results'] as $p ) {
-                    $full[] = [ 'id' => $p['id'], 'name' => $p['name'] ];
+            $api_page = 1;
+            do {
+                $url = $this->client->api_base . "publisher/?page={$api_page}&page_size=100";
+                $data = $this->client->api_get($url);
+                if (!$data || empty($data['results'])) break;
+    
+                foreach ($data['results'] as $p) {
+                    $full[] = ['id' => $p['id'], 'name' => $p['name']];
                 }
-            }
-
-            if ( ! empty( $data['next'] ) ) {
-                $next = $this->client->api_get( $data['next'] );
-                if ( $next && ! empty( $next['results'] ) ) {
-                    foreach ( $next['results'] as $p ) {
-                        $full[] = [ 'id' => $p['id'], 'name' => $p['name'] ];
-                    }
-                }
-            }
-
-            set_transient( $transient_key, $full, WEEK_IN_SECONDS );
+                $api_page++;
+                usleep(50000);
+            } while (!empty($data['next']));
+    
+            set_transient($transient_key, $full, WEEK_IN_SECONDS * 2); // longer TTL
         }
 
         if ( $letter !== 'all' ) {
@@ -215,29 +211,23 @@ class ComicDataService {
         $timer_start = microtime(true);
         $per_page = 10;
     
-        /* -------------------------------------------------
-         * Full list cache — ALL issues (once) — now versioned :v2
-         * ------------------------------------------------- */
-        $full_list_key = "metron:issue_list_full:{$title_id}:v2";  // ← changed to :v2
+        $full_list_key = "metron:issue_list_full:{$title_id}:v2";
     
         $all_issues_data = get_transient($full_list_key);
     
-        // Raise threshold: anything under ~300 issues without search looks suspicious now
         if ($all_issues_data && count($all_issues_data['results'] ?? []) < 300 && $search === '') {
             delete_transient($full_list_key);
             $all_issues_data = false;
-            error_log("Low issue count detected (<300) for series {$title_id} — forcing refetch");
+            error_log("Low issue count (<300) detected for series {$title_id} — forcing refetch");
         }
     
-        if ( false === $all_issues_data || !isset($all_issues_data['results']) ) {
+        if (false === $all_issues_data || !isset($all_issues_data['results'])) {
             $all = [];
             $page_fetch = 1;
             $next_url = null;
-            $max_pages = 500;
     
-            do {   
-                $url = $this->client->api_base . "series/{$title_id}/issue_list/?page={$page_fetch}&page_size=100";   
-        
+            do {
+                $url = $this->client->api_base . "series/{$title_id}/issue_list/?page={$page_fetch}&page_size=100";
                 $response = $this->client->api_get($url);
     
                 if (isset($response['error'])) {
@@ -246,27 +236,28 @@ class ComicDataService {
                 }
     
                 if (empty($response['results'])) {
-                    error_log("Empty results on series {$title_id} page {$page_fetch} — stopping. Next was: " . ($response['next'] ?? 'null'));
+                    error_log("Empty results on series {$title_id} page {$page_fetch} — stopping. Next: " . ($response['next'] ?? 'null'));
                     break;
                 }
-                
+    
                 $all = array_merge($all, $response['results']);
                 $next_url = $response['next'] ?? null;
                 $page_fetch++;
-                usleep(50000); // 50ms delay - good rate-limit safety
+                usleep(50000);
             } while ($next_url);
     
+            // FIXED SORTING
             usort($all, function($a, $b) {
-                $numA = isset($a['number']) ? trim((string)$a['number']) : '0';
-                $numB = isset($b['number']) ? trim((string)$b['number']) : '0';
-                
-                $nA = is_numeric($numA) ? (float)$nA : INF;
-                $nB = is_numeric($numB) ? (float)$nB : INF;
-                
-                if ($nA !== $nB) {
-                    return $nA <=> $nB;
+                $numA = isset($a['number']) ? trim((string)($a['number'] ?? '0')) : '0';
+                $numB = isset($b['number']) ? trim((string)($b['number'] ?? '0')) : '0';
+    
+                $valueA = is_numeric($numA) ? (float)$numA : INF;
+                $valueB = is_numeric($numB) ? (float)$numB : INF;
+    
+                if ($valueA !== $valueB) {
+                    return $valueA <=> $valueB;
                 }
-                
+    
                 $idA = (int) ($a['id'] ?? 0);
                 $idB = (int) ($b['id'] ?? 0);
                 return $idA <=> $idB;
