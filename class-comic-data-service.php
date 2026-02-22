@@ -222,12 +222,6 @@ class ComicDataService {
     
         $all_issues_data = get_transient($full_list_key);
     
-        // Force refresh for this known problematic series on next load (remove after confirmed working)
-        if ($title_id == 835) {
-            delete_transient($full_list_key);
-            error_log("Forced cache refresh for series 835 (title_id=835) - using fresh fetch");
-        }
-    
         // Raise threshold: anything under ~300 issues without search looks suspicious now
         if ($all_issues_data && count($all_issues_data['results'] ?? []) < 300 && $search === '') {
             delete_transient($full_list_key);
