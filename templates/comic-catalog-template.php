@@ -39,8 +39,9 @@ $is_publisher = $type === 'publishers';
                 }
                 ?>
                 <p>Showing <?php echo $showing; ?> of <?php echo $of; ?> <?php echo $what . $extra; ?></p>
-
-                <?php foreach ( $items as $item ) : 
+                <?php 
+                $index = 0; // For image loading priority
+                foreach ( $items as $item ) : 
 
                     if ( $is_publisher ) : ?>
                         <div class="publisher-item" data-publisher-id="<?php echo esc_attr( $item['id'] ); ?>">
@@ -60,12 +61,13 @@ $is_publisher = $type === 'publishers';
                     <?php else : ?>
                         <div class="comic-title" data-series-id="<?php echo esc_attr($item['series_id']); ?>">                     
                             <a href="/comic-catalog/issues/?title_id=<?php echo esc_attr($item['series_id']); ?>&page=1">
-                                <div class="comic-image">
-                                    <img src="<?php echo esc_url(PUBLISHER_PLACEHOLDER_IMAGE_URL); ?>"
-                                        data-src="<?php echo esc_url($item['first_issue_image'] ?? ''); ?>"
-                                        alt="<?php echo esc_attr($item['name']); ?>"
-                                        loading="lazy"
-                                        class="lazy-placeholder">
+                                <div class="comic-image"> 
+                                    <?php $priority = $index < 2 ? 'eager' : 'lazy'; ?>                           
+                                    <img src="<?php echo esc_url(PUBLISHER_PLACEHOLDER_IMAGE_URL); ?>"  
+                                        data-src="<?= esc_url($item['first_issue_image']) ?>"
+                                        loading="<?= $priority ?>"
+                                        fetchpriority="<?= $index < 2 ? 'high' : 'low' ?>"
+                                    >
                                 </div>
                                 <div class="comic-info">
                                     <div class="comic-title-name"><?php echo esc_html($item['name']); ?></div>
@@ -77,8 +79,9 @@ $is_publisher = $type === 'publishers';
                                 </div>
                             </a>
                         </div>
-                    <?php endif; ?>
-                <?php endforeach; ?>
+                    <?php endif; 
+                    $index++;
+                 endforeach; ?>
             <?php endif; ?>
         </div>
     </div>

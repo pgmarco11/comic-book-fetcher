@@ -94,8 +94,55 @@ class ComicRenderer {
         return $data;
     }
 
-
     // === CACHE WARM-UP ===
+    public function get_top_publishers_with_series($top_n_publishers = 10, $series_per_publisher = 10) {
+        $cache_key = 'metron:top_10_publishers_10_series_summary';
+        $cached = get_transient($cache_key);
+        if ($cached !== false) {
+            return $cached;
+        }
+
+        // You can hard-code, or better: make this configurable via admin
+        $top_publisher_ids = get_option('comicbooks_top_publisher_ids', [1,2,3,4,5,6,7,8,9,10]); // default Marvel/DC/etc.
+
+        $result = [];
+        foreach (array_slice($top_publisher_ids, 0, $top_n_publishers) as $pid) {
+            $series_data = $this->get_series($pid, 1, $series_per_publisher, '', 'all', false);
+            $result[$pid] = [
+                'publisher' => $this->get_publisher_info($pid), // name, logo, etc.
+                'series'    => $series_data['series'] ?? [],
+                'total'     => $series_data['total'] ?? 0,
+            ];
+        }
+
+        set_transient($cache_key, $result, DAY_IN_SECONDS * 1); // or WEEK_IN_SECONDS if less volatile
+
+        return $result;
+    }
+
+    /**
+     * Pre-warm cache for one publisher page using our own key pattern
+     */
+    public function warm_catalog_page($publisher_id, $page = 1) {
+        $publisher_id = (int) $publisher_id;
+        $page = max(1, (int) $page);
+    
+        // Positional arguments – safe on PHP 7.4 → 8.3+
+        $this->get_series(
+            $publisher_id,   // 1st param: publisher_id
+            $page,           // 2nd: page
+            10,              // 3rd: per_page
+            '',              // 4th: search
+            'all',           // 5th: letter
+            true             // 6th: force_api
+        );
+    
+        // Optional: log success
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log("Warm catalog page: publisher {$publisher_id}, page {$page} completed.");
+        }
+    }
+
     public function schedule_cache_warm($publisher_id) {
         $hook = "warm_series_cache_{$publisher_id}";
         if (!wp_next_scheduled($hook)) {
@@ -161,45 +208,42 @@ class ComicRenderer {
         }
     }
 
-    public function clean_cv_description($desc) {
+    public function clean_cv_description($desc) { 
         if (empty($desc)) return '';
     
         // Step 1: Remove <em> tags if they wrap the entire first <p> tag's content
         $desc = preg_replace('/<p>\s*<em>(.*?)<\/em>\s*<\/p>/is', '<p>$1</p>', $desc);
-
+    
         // Step 1a: Remove <em> tags if they wrap the entire description
         $desc = preg_replace('/^<em>(.*?)<\/em>$/is', '$1', $desc);
     
         // Step 2: Remove all <a> tags, keeping their inner text
         $desc = preg_replace('/<a\s+[^>]*>(.*?)<\/a>/is', '$1', $desc);
     
-        // Step 3: Clean all <li> entries by removing quotes around formatted titles
+        // Step 3: Clean all <li> entries
         $desc = preg_replace_callback('/<li>(.*?)<\/li>/is', function ($matches) {
             $item = $matches[1];
     
-            // Remove quotes inside <b> or <strong> blocks
             $item = preg_replace('/^<b>\s*["\']\s*(<[^>]+>[^<]+<\/[^>]+>)\s*["\']\s*<\/b>/i', '<b>$1</b>', $item);
             $item = preg_replace('/<b>\s*["\']\s*(<em>[^<]+<\/em>)\s*["\']\s*<\/b>/i', '<b>$1</b>', $item);
             $item = preg_replace('/<b>\s*["\']([^<]+)["\']\s*<\/b>/i', '<b>$1</b>', $item);
             $item = preg_replace('/(<\/(?:em|strong|b)>)["\']/', '$1', $item);
     
-            // Remove quotes directly wrapping inline tags like <em> or <strong>
             $item = preg_replace('/"(<(?:em|strong)[^>]*>.*?<\/(?:em|strong)>)"/i', '$1', $item);
     
             return '<li>' . $item . '</li>';
         }, $desc);
     
-        // Step 4: Clean quotes around inline <em> or <strong> tags outside of <li>
+        // Step 4: Clean quotes around inline tags outside <li>
         $desc = preg_replace('/"(<(?:em|strong)[^>]*>.*?<\/(?:em|strong)>)"/i', '$1', $desc);
     
-        // Step 5: Remove any stray quotes at the start/end of the description
+        // Step 5: Remove stray quotes
         $desc = preg_replace('/^["\']\s*|\s*["\']$/i', '', $desc);
     
         // Step 6: Remove "Sidebar Location" column from tables
         $desc = preg_replace_callback('/<table.*?>.*?<\/table>/is', function ($table_match) {
             $table_html = $table_match[0];
     
-            // Remove <th>Sidebar Location</th> and get the index
             $dom = new DOMDocument();
             libxml_use_internal_errors(true);
             $dom->loadHTML('<?xml encoding="utf-8" ?>' . $table_html);
@@ -207,6 +251,7 @@ class ComicRenderer {
             $xpath = new DOMXPath($dom);
             $header_ths = $xpath->query('//th');
             $sidebar_index = -1;
+    
             foreach ($header_ths as $i => $th) {
                 if (trim($th->textContent) === 'Sidebar Location') {
                     $sidebar_index = $i;
@@ -215,7 +260,6 @@ class ComicRenderer {
                 }
             }
     
-            // Remove the corresponding <td> in each row
             if ($sidebar_index > -1) {
                 $rows = $xpath->query('//tr');
                 foreach ($rows as $row) {
@@ -229,7 +273,6 @@ class ComicRenderer {
                 }
             }
     
-            // Extract updated HTML
             $body = $dom->getElementsByTagName('body')->item(0);
             $new_table = '';
             foreach ($body->childNodes as $child) {
@@ -238,6 +281,18 @@ class ComicRenderer {
     
             return $new_table;
         }, $desc);
+    
+        // ✅ Step 7: FIX HEADING HIERARCHY (NEW)
+        // Downgrade ComicVine headings so they fit under your <h2> Summary
+
+        // OPTIONAL future-proof:
+        // Convert h3 → h4 (uncomment if you ever nest deeper)
+        $desc = preg_replace('/<h3(.*?)>/i', '<h4$1>', $desc);
+        $desc = preg_replace('/<\/h3>/i', '</h4>', $desc);
+    
+        // Convert h2 → h3
+        $desc = preg_replace('/<h2(.*?)>/i', '<h3$1>', $desc);
+        $desc = preg_replace('/<\/h2>/i', '</h3>', $desc);  
     
         return $desc;
     }
