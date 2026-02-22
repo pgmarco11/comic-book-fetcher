@@ -266,7 +266,20 @@ jQuery(document).ready(function($){
     
         container.html(html);
         hideSpinner();
-        lazyLoadImages();    
+        lazyLoadImages();
+    
+        // Preload next page only when we actually rendered the current one
+        //const totalPages = Math.ceil(total / perPage);
+        // if (requestedPage < totalPages && comicbooks_fetchers_data.preload_enabled) {
+        //     if (typeof debugLog === 'function') debugLog(`Preloading next page ${requestedPage + 1}`);
+        //     preloadData(
+        //         isPublisher ? 'publishers' : 'books',
+        //         currentPublisherId,
+        //         requestedPage + 1,
+        //         search,
+        //         letter
+        //     );
+        // }
     }
 
     // ===================================================================
@@ -339,7 +352,7 @@ jQuery(document).ready(function($){
     let batchTimeout = null;
     
     function processBatch() {
-        if (batchTimeout) return;
+        if (batchTimeout) return; // Already processing
     
         batchTimeout = setTimeout(() => {
             const seriesIds = Array.from(seriesBatch).slice(0, BATCH_SIZE);
@@ -349,7 +362,7 @@ jQuery(document).ready(function($){
             seriesIds.forEach(id => seriesBatch.delete(id));
             publisherIds.forEach(id => publisherBatch.delete(id));
     
-            // Load series images (optional AJAX)
+            // Load series images
             if (seriesIds.length) {
                 $.post(comicbooks_fetchers_data.ajax_url, {
                     action: 'load_series_images_batch',
@@ -370,7 +383,7 @@ jQuery(document).ready(function($){
                 });
             }
     
-            // Load publisher images (keep this, optimized)
+            // Load publisher images
             if (publisherIds.length) {
                 $.post(comicbooks_fetchers_data.ajax_url, {
                     action: 'load_publisher_images_batch',
@@ -385,8 +398,8 @@ jQuery(document).ready(function($){
                             );
                             if (img && response.data.images[id]) {
                                 img.src = response.data.images[id];
-                                img.removeAttribute('loading'); // Let it render immediately
                                 img.dataset.loaded = 'true';
+                                img.removeAttribute('loading');
                             }
                         });
                     }
@@ -399,7 +412,7 @@ jQuery(document).ready(function($){
             if (seriesBatch.size > 0 || publisherBatch.size > 0) {
                 processBatch();
             }
-        }, 50); // Shorter delay for faster batching
+        }, 100); // Small delay to group nearby entries
     }
     
     function lazyLoadImages() {
@@ -448,15 +461,12 @@ jQuery(document).ready(function($){
                 }
             });
         }, {
-            rootMargin: '400px 0px 400px 0px', // Start loading 400px before viewport
+            rootMargin: '200px 0px 200px 0px', // Start loading 200px before viewport
             threshold: 0.01
         });
     
         images.forEach(img => lazyLoadObserver.observe(img));
     } 
-    
-    // Initialize
-    document.addEventListener('DOMContentLoaded', lazyLoadImages);
 
     // Fetch publishers
     function fetchPublishers(name = '', page, letter = 'all', retries = 3) {
@@ -893,26 +903,14 @@ jQuery(document).ready(function($){
     // EVENT: Search
     // ===================================================================
 
-    if ($('#issue-search').length) {
     $('#issue-search').on('input', debounce(function() {
         const searchQuery = $(this).val().trim();
         currentSearch = searchQuery;
         currentPage = 1;
-        
-            // Resolve titleId from URL if not in JS data
-            let titleId = comicbooks_fetchers_data?.title_id;
-            if (!titleId) {
-                const params = new URLSearchParams(window.location.search);
-                titleId = parseInt(params.get('title_id')) || null;
-            }
-        
-            if (titleId) {
-                fetchIssues(titleId, 1, searchQuery);
-            } else {
-                console.warn('No title_id found for issue search');
+        if (comicbooks_fetchers_data && comicbooks_fetchers_data.title_id) {
+            fetchIssues(comicbooks_fetchers_data.title_id, 1, searchQuery);
         }
     }, 500));
-    }
 
     $('#publisher-select').on('change', debounce(function() {
         const publisherId = $(this).val();
