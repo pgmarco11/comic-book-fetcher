@@ -51,73 +51,7 @@ class Comicbooks {
         add_action( 'wp_ajax_nopriv_load_publisher_info',[ $this, 'ajax_load_publisher_info' ] );
     }
 
-    /* -----------------------------------------------------------------
-     *  Helper – clean ComicVine description
-     * ----------------------------------------------------------------- */
-    public function clean_cv_description( $desc ) {
-        if ( empty( $desc ) ) {
-            return '';
-        }
-
-        // (your existing cleanup logic – unchanged)
-        $desc = preg_replace( '/<p>\s*<em>(.*?)<\/em>\s*<\/p>/is', '<p>$1</p>', $desc );
-        $desc = preg_replace( '/^<em>(.*?)<\/em>$/is', '$1', $desc );
-        $desc = preg_replace( '/<a\s+[^>]*>(.*?)<\/a>/is', '$1', $desc );
-
-        $desc = preg_replace_callback( '/<li>(.*?)<\/li>/is', function ( $m ) {
-            $item = $m[1];
-            $item = preg_replace( '/^<b>\s*["\']\s*(<[^>]+>[^<]+<\/[^>]+>)\s*["\']\s*<\/b>/i', '<b>$1</b>', $item );
-            $item = preg_replace( '/<b>\s*["\']\s*(<em>[^<]+<\/em>)\s*["\']\s*<\/b>/i', '<b>$1</b>', $item );
-            $item = preg_replace( '/<b>\s*["\']([^<]+)["\']\s*<\/b>/i', '<b>$1</b>', $item );
-            $item = preg_replace( '/(<\/(?:em|strong|b)>)["\']/', '$1', $item );
-            $item = preg_replace( '/"(<(?:em|strong)[^>]*>.*?<\/(?:em|strong)>)"/i', '$1', $item );
-            return '<li>' . $item . '</li>';
-        }, $desc );
-
-        $desc = preg_replace( '/"(<(?:em|strong)[^>]*>.*?<\/(?:em|strong)>)"/i', '$1', $desc );
-        $desc = preg_replace( '/^["\']\s*|\s*["\']$/i', '', $desc );
-
-        // Table cleanup – Sidebar Location column
-        $desc = preg_replace_callback( '/<table.*?>.*?<\/table>/is', function ( $m ) {
-            $table_html = $m[0];
-            $dom        = new DOMDocument();
-            libxml_use_internal_errors( true );
-            $dom->loadHTML( '<?xml encoding="utf-8" ?>' . $table_html );
-
-            $xpath       = new DOMXPath( $dom );
-            $header_ths  = $xpath->query( '//th' );
-            $sidebar_idx = -1;
-            foreach ( $header_ths as $i => $th ) {
-                if ( trim( $th->textContent ) === 'Sidebar Location' ) {
-                    $sidebar_idx = $i;
-                    $th->parentNode->removeChild( $th );
-                    break;
-                }
-            }
-
-            if ( $sidebar_idx > -1 ) {
-                foreach ( $xpath->query( '//tr' ) as $row ) {
-                    $tds = $row->getElementsByTagName( 'td' );
-                    if ( $tds->length > $sidebar_idx ) {
-                        $td = $tds->item( $sidebar_idx );
-                        if ( $td ) {
-                            $row->removeChild( $td );
-                        }
-                    }
-                }
-            }
-
-            $body = $dom->getElementsByTagName( 'body' )->item( 0 );
-            $new  = '';
-            foreach ( $body->childNodes as $child ) {
-                $new .= $dom->saveHTML( $child );
-            }
-            return $new;
-        }, $desc );
-
-        return $desc;
-    }
-
+    
          /* -----------------------------------------------------------------
      *  AJAX – Publishers (list + detailed info)
      * ----------------------------------------------------------------- */

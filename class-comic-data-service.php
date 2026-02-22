@@ -216,45 +216,58 @@ class ComicDataService {
         $per_page = 10;
     
         /* -------------------------------------------------
-         * Full list cache — ALL issues (once)
+         * Full list cache — ALL issues (once) — now versioned :v2
          * ------------------------------------------------- */
-        $full_list_key = "metron:issue_list_full:{$title_id}";
+        $full_list_key = "metron:issue_list_full:{$title_id}:v2";  // ← changed to :v2
+    
         $all_issues_data = get_transient($full_list_key);
+    
+        // Force refresh for this known problematic series on next load (remove after confirmed working)
+        if ($title_id == 835) {
+            delete_transient($full_list_key);
+            error_log("Forced cache refresh for series 835 (title_id=835) - using fresh fetch");
+        }
+    
+        // Raise threshold: anything under ~300 issues without search looks suspicious now
+        if ($all_issues_data && count($all_issues_data['results'] ?? []) < 300 && $search === '') {
+            delete_transient($full_list_key);
+            $all_issues_data = false;
+            error_log("Low issue count detected (<300) for series {$title_id} — forcing refetch");
+        }
     
         if ( false === $all_issues_data || !isset($all_issues_data['results']) ) {
             $all = [];
             $page_fetch = 1;
-            $max_pages = 100; // Increased to handle more issues
+            $next_url = null;
+            $max_pages = 500;
     
             do {   
-                $url = $this->client->api_base . "series/{$title_id}/issue_list/?page={$page_fetch}";
+                $url = $this->client->api_base . "series/{$title_id}/issue_list/?page={$page_fetch}&page_size=100";   
+        
                 $response = $this->client->api_get($url);
-                
+    
                 if (isset($response['error'])) {
-                    if (defined('WP_DEBUG') && WP_DEBUG) {
-                        error_log("Metron API error on page {$page_fetch}: " . $response['error']);
-                    }
+                    error_log("Metron API error on series {$title_id} page {$page_fetch}: " . json_encode($response['error']));
                     break;
                 }
-            
-                $results = $response['results'] ?? [];
-                if (empty($results)) break;
-            
-                $all = array_merge($all, $results);
     
-                $page_fetch++;
-                if ($page_fetch > $max_pages) break;
+                if (empty($response['results'])) {
+                    error_log("Empty results on series {$title_id} page {$page_fetch} — stopping. Next was: " . ($response['next'] ?? 'null'));
+                    break;
+                }
                 
-                // Reduced sleep: only 50ms between requests (instead of 300ms)
-                usleep(50000);
-            } while (!empty($response['next']));  
+                $all = array_merge($all, $response['results']);
+                $next_url = $response['next'] ?? null;
+                $page_fetch++;
+                usleep(50000); // 50ms delay - good rate-limit safety
+            } while ($next_url);
     
             usort($all, function($a, $b) {
                 $numA = isset($a['number']) ? trim((string)$a['number']) : '0';
                 $numB = isset($b['number']) ? trim((string)$b['number']) : '0';
                 
-                $nA = is_numeric($numA) ? (float)$numA : INF;
-                $nB = is_numeric($numB) ? (float)$numB : INF;
+                $nA = is_numeric($numA) ? (float)$nA : INF;
+                $nB = is_numeric($numB) ? (float)$nB : INF;
                 
                 if ($nA !== $nB) {
                     return $nA <=> $nB;
@@ -265,19 +278,20 @@ class ComicDataService {
                 return $idA <=> $idB;
             });
     
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log("Fetched " . count($all) . " issues for series {$title_id}");
+            $fetched_count = count($all);
+            error_log("Fetched {$fetched_count} issues for series {$title_id} (full list refresh)");
+    
+            if ($fetched_count < 300) {
+                error_log("WARNING: Only {$fetched_count} issues fetched for series {$title_id} — possible incomplete pagination!");
             }
-        
+    
             $all_issues_data = [
-                'count'   => count($all),
+                'count'   => $fetched_count,
                 'results' => $all,
             ];
     
-            // Cache for 30 days
             set_transient($full_list_key, $all_issues_data, 30 * DAY_IN_SECONDS);
         }
-
         /* -------------------------------------------------
          * Series metadata
          * ------------------------------------------------- */
@@ -297,40 +311,79 @@ class ComicDataService {
          * Search filter
          * ------------------------------------------------- */
         $filtered = $search
-            ? array_filter($all_issues_data['results'], function($i) use($search){
-                $s = strtolower($search);
-                return stripos($i['issue'] ?? '', $s) !== false
-                    || stripos($i['number'] ?? '', $s) !== false
-                    || stripos($i['cover_date'] ?? '', $s) !== false;
-            })
-            : $all_issues_data['results'];
+        ? array_filter($all_issues_data['results'], function($i) use($search) {
+            $s = trim(strtolower($search));
+            $number = isset($i['number']) ? trim(strtolower($i['number'])) : '';
+            
+            if ($number !== '') {
+                if ($number === $s) return true;
+                if (stripos($number, $s) === 0) return true;
+                if (stripos($number, $s . '.') === 0 || 
+                    stripos($number, $s . ' ') === 0 || 
+                    stripos($number, $s . '-') === 0 || 
+                    stripos($number, $s . '/') === 0) {
+                    return true;
+                }
+            }
+            
+            $s_lower = strtolower($s);
+            return stripos(strtolower($i['issue'] ?? ''), $s_lower) !== false
+                || stripos($i['cover_date'] ?? '', $s_lower) !== false;
+        })
+        : $all_issues_data['results'];
 
         $filtered = array_values($filtered);
-        $total_issues = count($filtered);
-    
+        $filtered_count = count($filtered);
+
         /* -------------------------------------------------
-         * Pagination slice (FIXED)
-         * ------------------------------------------------- */
+        * Reliable pagination total – prefer the larger number
+        * ------------------------------------------------- */
+        $series_reported_count = (int) ($series['issue_count'] ?? 0);
+        $actually_fetched_count = count($all_issues_data['results']);
+
+        $total_issues_for_pagination = max($series_reported_count, $actually_fetched_count);
+
+        // Extra safety: when no search active, never trust reported count if it's lower
+        if ($search === '' && $actually_fetched_count > $series_reported_count) {
+            $total_issues_for_pagination = $actually_fetched_count;
+        }
+
+        // Log discrepancies >30 issues (helps identify problematic series)
+        if (abs($series_reported_count - $actually_fetched_count) > 30) {
+            error_log(sprintf(
+                "Series %d (%s) pagination mismatch – reported: %d, fetched: %d → using %d",
+                $title_id,
+                $series['name'] ?? 'unknown',
+                $series_reported_count,
+                $actually_fetched_count,
+                $total_issues_for_pagination
+            ));
+        }
+
+        /* -------------------------------------------------
+        * Pagination slice
+        * ------------------------------------------------- */
         $current_page = max(1, (int) $current_page);
         $offset = ($current_page - 1) * $per_page;
         $paged_results = array_slice($filtered, $offset, $per_page);
 
         $elapsed = microtime(true) - $timer_start;
-    
+
         error_log(sprintf(
-            "get_series_issues %d (page %d, search='%s') – %.3fs – showing %d of %d issues",
+            "get_series_issues %d (page %d, search='%s') – %.3fs – showing %d of %d (filtered), pagination uses %d",
             $title_id,
             $current_page,
             $search,
-            $elapsed,
+            microtime(true) - $timer_start,
             count($paged_results),
-            $total_issues
+            $filtered_count,
+            $total_issues_for_pagination
         ));
-
+    
         return [
             'series' => $series,
             'issue_list' => [
-                'count'   => $total_issues,
+                'count' => $total_issues_for_pagination,
                 'results' => $paged_results,
             ],
         ];
@@ -530,6 +583,106 @@ class ComicDataService {
         set_transient( $cache_key, $merged, $this->get_dataset_ttl() );
 
         return $merged;
+    }
+
+    /* -----------------------------------------------------------------
+     *  Helper – clean ComicVine description
+     * ----------------------------------------------------------------- */
+    public function clean_cv_description( $desc ) {
+        if ( empty( $desc ) ) {
+            return '';
+        }
+
+        // (your existing cleanup logic – unchanged)
+        $desc = preg_replace( '/<p>\s*<em>(.*?)<\/em>\s*<\/p>/is', '<p>$1</p>', $desc );
+        $desc = preg_replace( '/^<em>(.*?)<\/em>$/is', '$1', $desc );
+
+	    // Step 2: Strip all <a> tags, keep text
+        $desc = preg_replace( '/<a\s+[^>]*>(.*?)<\/a>/is', '$1', $desc );
+	
+        $desc = preg_replace_callback( '/<li>(.*?)<\/li>/is', function ( $m ) {
+            $item = $m[1];
+
+	        // Remove quotes around formatted content in <b>
+            $item = preg_replace( '/^<b>\s*["\']\s*(<[^>]+>[^<]+<\/[^>]+>)\s*["\']\s*<\/b>/i', '<b>$1</b>', $item );
+            $item = preg_replace( '/<b>\s*["\']\s*(<em>[^<]+<\/em>)\s*["\']\s*<\/b>/i', '<b>$1</b>', $item );
+            $item = preg_replace( '/<b>\s*["\']([^<]+)["\']\s*<\/b>/i', '<b>$1</b>', $item );
+            $item = preg_replace( '/(<\/(?:em|strong|b)>)["\']/', '$1', $item );
+
+	        // Remove quotes wrapping inline tags
+            $item = preg_replace( '/"(<(?:em|strong)[^>]*>.*?<\/(?:em|strong)>)"/i', '$1', $item );
+            return '<li>' . $item . '</li>';
+        }, $desc );
+
+        $desc = preg_replace( '/"(<(?:em|strong)[^>]*>.*?<\/(?:em|strong)>)"/i', '$1', $desc );
+        $desc = preg_replace( '/^["\']\s*|\s*["\']$/i', '', $desc );
+
+        // Table cleanup – Sidebar Location column
+        $desc = preg_replace_callback( '/<table.*?>.*?<\/table>/is', function ( $m ) {
+            $table_html = $m[0];
+            $dom        = new DOMDocument();
+            libxml_use_internal_errors( true );
+            $dom->loadHTML( '<?xml encoding="utf-8" ?>' . $table_html );
+
+            $xpath       = new DOMXPath( $dom );
+            $header_ths  = $xpath->query( '//th' );
+            $sidebar_idx = -1;
+            foreach ( $header_ths as $i => $th ) {
+                if ( trim( $th->textContent ) === 'Sidebar Location' ) {
+                    $sidebar_idx = $i;
+                    $th->parentNode->removeChild( $th );
+                    break;
+                }
+            }
+
+            if ( $sidebar_idx > -1 ) {
+                foreach ( $xpath->query( '//tr' ) as $row ) {
+                    $tds = $row->getElementsByTagName( 'td' );
+                    if ( $tds->length > $sidebar_idx ) {
+                        $td = $tds->item( $sidebar_idx );
+                        if ( $td ) {
+                            $row->removeChild( $td );
+                        }
+                    }
+                }
+            }
+
+            $body = $dom->getElementsByTagName( 'body' )->item( 0 );
+            $new  = '';
+            foreach ( $body->childNodes as $child ) {
+                $new .= $dom->saveHTML( $child );
+            }
+            return $new;
+        }, $desc );
+
+        // Step 7: Normalize headings – aim for top level = <h3>
+    	$has_h2 = preg_match( '/<h2\b/i', $desc );
+
+    	// Always shift deeper headings first (safe order)
+    	$desc = preg_replace( '/<h6([^>]*)>/i', '<h5$1>', $desc );
+    	$desc = preg_replace( '/<\/h6>/i', '</h5>', $desc );
+
+    	$desc = preg_replace( '/<h5([^>]*)>/i', '<h4$1>', $desc );
+    	$desc = preg_replace( '/<\/h5>/i', '</h4>', $desc );
+
+    	$desc = preg_replace( '/<h4([^>]*)>/i', '<h3$1>', $desc );
+    	$desc = preg_replace( '/<\/h4>/i', '</h3>', $desc );
+
+    	if ( $has_h2 ) {
+        	// Real top-level h2 exists → demote everything one level
+        	$desc = preg_replace( '/<h3([^>]*)>/i', '<h4$1>', $desc );
+        	$desc = preg_replace( '/<\/h3>/i', '</h4>', $desc );
+
+        	$desc = preg_replace( '/<h2([^>]*)>/i', '<h3$1>', $desc );
+        	$desc = preg_replace( '/<\/h2>/i', '</h3>', $desc );
+    	}
+    	// else: promotion happened (h4 → h3, h3 → h4) — good for CVs that start with h3/h4
+
+    	// Also catch rogue h1 → treat as top level
+    	$desc = preg_replace( '/<h1([^>]*)>/i', '<h3$1>', $desc );
+    	$desc = preg_replace( '/<\/h1>/i', '</h3>', $desc );
+
+        return $desc;
     }
 
     
