@@ -221,34 +221,56 @@ class ComicDataService {
         $full_list_key = "metron:issue_list_full:{$title_id}";
         $all_issues_data = get_transient($full_list_key);
     
+        // Optional: force refresh if suspiciously low count and no search
+        if ($all_issues_data && count($all_issues_data['results'] ?? []) < 50 && $search === '') {
+            delete_transient($full_list_key);
+            $all_issues_data = false;
+        }
+    
         if ( false === $all_issues_data || !isset($all_issues_data['results']) ) {
             $all = [];
             $page_fetch = 1;
-            $max_pages = 100; // Increased to handle more issues
+            $max_pages = 500;  // ← Increased from 100 – covers even the longest runs
     
-            do {   
+            do {
                 $url = $this->client->api_base . "series/{$title_id}/issue_list/?page={$page_fetch}";
+                error_log("ISSUE LIST FETCH: series {$title_id} - page {$page_fetch} - URL: {$url}");
+            
                 $response = $this->client->api_get($url);
-                
+            
+                $log_data = [
+                    'page'        => $page_fetch,
+                    'results_count' => count($response['results'] ?? []),
+                    'has_next'    => isset($response['next']) && !empty($response['next']),
+                    'next_url'    => $response['next'] ?? 'NONE',
+                    'error'       => $response['error'] ?? 'no error key',
+                    'total_returned_so_far' => count($all),
+                ];
+                error_log("ISSUE LIST RESPONSE: " . json_encode($log_data, JSON_PRETTY_PRINT));
+            
                 if (isset($response['error'])) {
-                    if (defined('WP_DEBUG') && WP_DEBUG) {
-                        error_log("Metron API error on page {$page_fetch}: " . $response['error']);
-                    }
+                    error_log("SERIOUS ERROR on page {$page_fetch}: " . $response['error']);
                     break;
                 }
             
                 $results = $response['results'] ?? [];
-                if (empty($results)) break;
+                if (empty($results)) {
+                    error_log("Empty results on page {$page_fetch} - breaking loop");
+                    break;
+                }
             
                 $all = array_merge($all, $results);
-    
                 $page_fetch++;
-                if ($page_fetch > $max_pages) break;
-                
-                // Reduced sleep: only 50ms between requests (instead of 300ms)
-                usleep(50000);
-            } while (!empty($response['next']));  
+            
+                if ($page_fetch > $max_pages) {
+                    error_log("Hit max_pages limit ({$max_pages})");
+                    break;
+                }
+            
+                usleep(100000); // 100ms - increase if needed
+            } while (!empty($response['next']));
     
+            // Sort numerically by issue number, fallback to ID
             usort($all, function($a, $b) {
                 $numA = isset($a['number']) ? trim((string)$a['number']) : '0';
                 $numB = isset($b['number']) ? trim((string)$b['number']) : '0';
@@ -260,24 +282,21 @@ class ComicDataService {
                     return $nA <=> $nB;
                 }
                 
-                $idA = (int) ($a['id'] ?? 0);
-                $idB = (int) ($b['id'] ?? 0);
-                return $idA <=> $idB;
+                return ((int)($a['id'] ?? 0)) <=> ((int)($b['id'] ?? 0));
             });
     
             if (defined('WP_DEBUG') && WP_DEBUG) {
                 error_log("Fetched " . count($all) . " issues for series {$title_id}");
             }
-        
+    
             $all_issues_data = [
-                'count'   => count($all),
+                'count' => count($all),
                 'results' => $all,
             ];
     
-            // Cache for 30 days
             set_transient($full_list_key, $all_issues_data, 30 * DAY_IN_SECONDS);
         }
-
+    
         /* -------------------------------------------------
          * Series metadata
          * ------------------------------------------------- */
@@ -297,40 +316,79 @@ class ComicDataService {
          * Search filter
          * ------------------------------------------------- */
         $filtered = $search
-            ? array_filter($all_issues_data['results'], function($i) use($search){
-                $s = strtolower($search);
-                return stripos($i['issue'] ?? '', $s) !== false
-                    || stripos($i['number'] ?? '', $s) !== false
-                    || stripos($i['cover_date'] ?? '', $s) !== false;
+            ? array_filter($all_issues_data['results'], function($i) use($search) {
+                $s = trim(strtolower($search));
+                $number = isset($i['number']) ? trim(strtolower($i['number'])) : '';
+                
+                if ($number !== '') {
+                    if ($number === $s) return true;
+                    if (stripos($number, $s) === 0) return true;
+                    if (stripos($number, $s . '.') === 0 || 
+                        stripos($number, $s . ' ') === 0 || 
+                        stripos($number, $s . '-') === 0 || 
+                        stripos($number, $s . '/') === 0) {
+                        return true;
+                    }
+                }
+                
+                $s_lower = strtolower($s);
+                return stripos(strtolower($i['issue'] ?? ''), $s_lower) !== false
+                    || stripos($i['cover_date'] ?? '', $s_lower) !== false;
             })
             : $all_issues_data['results'];
-
+    
         $filtered = array_values($filtered);
-        $total_issues = count($filtered);
+        $filtered_count = count($filtered);
     
         /* -------------------------------------------------
-         * Pagination slice (FIXED)
+         * Reliable pagination total – prefer the larger number
+         * ------------------------------------------------- */
+        $series_reported_count = (int) ($series['issue_count'] ?? 0);
+        $actually_fetched_count = count($all_issues_data['results']);
+    
+        $total_issues_for_pagination = max($series_reported_count, $actually_fetched_count);
+    
+        // Extra safety: when no search active, never trust reported count if it's lower
+        if ($search === '' && $actually_fetched_count > $series_reported_count) {
+            $total_issues_for_pagination = $actually_fetched_count;
+        }
+    
+        // Log discrepancies >30 issues (helps identify problematic series)
+        if (abs($series_reported_count - $actually_fetched_count) > 30) {
+            error_log(sprintf(
+                "Series %d (%s) pagination mismatch – reported: %d, fetched: %d → using %d",
+                $title_id,
+                $series['name'] ?? 'unknown',
+                $series_reported_count,
+                $actually_fetched_count,
+                $total_issues_for_pagination
+            ));
+        }
+    
+        /* -------------------------------------------------
+         * Pagination slice
          * ------------------------------------------------- */
         $current_page = max(1, (int) $current_page);
         $offset = ($current_page - 1) * $per_page;
         $paged_results = array_slice($filtered, $offset, $per_page);
-
+    
         $elapsed = microtime(true) - $timer_start;
     
         error_log(sprintf(
-            "get_series_issues %d (page %d, search='%s') – %.3fs – showing %d of %d issues",
+            "get_series_issues %d (page %d, search='%s') – %.3fs – showing %d of %d (filtered), pagination uses %d",
             $title_id,
             $current_page,
             $search,
             $elapsed,
             count($paged_results),
-            $total_issues
+            $filtered_count,
+            $total_issues_for_pagination
         ));
-
+    
         return [
             'series' => $series,
             'issue_list' => [
-                'count'   => $total_issues,
+                'count' => $total_issues_for_pagination,
                 'results' => $paged_results,
             ],
         ];

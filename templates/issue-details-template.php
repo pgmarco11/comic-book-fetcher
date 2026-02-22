@@ -35,9 +35,6 @@
     $description = $this->clean_cv_description(
         $cv_issue['description'] ?? $issue['description'] ?? $issue['desc'] ?? ''
     );
-
-    var_dump($description);
-
     $creators = $cv_issue['person_credits'] ?? $issue['credits'] ?? [];
     $creator_infos = array_map( function( $p ) {
         $name = $p['name'] ?? $p['creator'] ?? 'Unknown';
@@ -150,7 +147,7 @@
                                                         data-title="<?php echo esc_attr($issue_title); ?>"
                                                         data-genres="<?php echo esc_attr($genre_string); ?>"
                                                         data-genre-origin="<?php echo empty($series['genres']) ? 'cv' : 'metron'; ?>"
-                                                        data-description="<?php echo esc_html($description); ?>"
+                                                        data-description="<?php echo esc_attr($description); ?>"
                                                         data-issue-id="<?php echo esc_attr($issue_id); ?>"
                                                         data-title-id="<?php echo esc_attr($title_id); ?>"
                                                         data-publisher="<?php echo esc_attr($series['publisher']['name'] ?? 'Unknown'); ?>"
