@@ -264,11 +264,7 @@ class ComicDataService {
             });
     
             $fetched_count = count($all);
-            error_log("Fetched {$fetched_count} issues for series {$title_id} (full list refresh)");
-    
-            if ($fetched_count < 300) {
-                error_log("WARNING: Only {$fetched_count} issues fetched for series {$title_id} — possible incomplete pagination!");
-            }
+            error_log("Fetched {$fetched_count} issues for series {$title_id} (full list refresh)");    
     
             $all_issues_data = [
                 'count'   => $fetched_count,
@@ -352,23 +348,20 @@ class ComicDataService {
         $offset = ($current_page - 1) * $per_page;
         $paged_results = array_slice($filtered, $offset, $per_page);
 
-        $elapsed = microtime(true) - $timer_start;
-
-        error_log(sprintf(
-            "get_series_issues %d (page %d, search='%s') – %.3fs – showing %d of %d (filtered), pagination uses %d",
-            $title_id,
-            $current_page,
-            $search,
-            microtime(true) - $timer_start,
-            count($paged_results),
-            $filtered_count,
-            $total_issues_for_pagination
-        ));
+        $elapsed = microtime(true) - $timer_start;   
     
+        // Final count & pagination logic
+        $display_count = $filtered_count;
+
+        if ($search === '') {
+            // When no filter: prefer the larger number to avoid truncating real data
+            $display_count = max($series_reported_count, $actually_fetched_count);
+        }
+
         return [
-            'series' => $series,
+            'series'     => $series,
             'issue_list' => [
-                'count' => $total_issues_for_pagination,
+                'count'   => $display_count,
                 'results' => $paged_results,
             ],
         ];
@@ -573,102 +566,147 @@ class ComicDataService {
     /* -----------------------------------------------------------------
      *  Helper – clean ComicVine description
      * ----------------------------------------------------------------- */
-    public function clean_cv_description( $desc ) {
-        if ( empty( $desc ) ) {
-            return '';
-        }
+        public function clean_cv_description( $desc ) {
 
-        // (your existing cleanup logic – unchanged)
-        $desc = preg_replace( '/<p>\s*<em>(.*?)<\/em>\s*<\/p>/is', '<p>$1</p>', $desc );
-        $desc = preg_replace( '/^<em>(.*?)<\/em>$/is', '$1', $desc );
-
-	    // Step 2: Strip all <a> tags, keep text
-        $desc = preg_replace( '/<a\s+[^>]*>(.*?)<\/a>/is', '$1', $desc );
-	
-        $desc = preg_replace_callback( '/<li>(.*?)<\/li>/is', function ( $m ) {
-            $item = $m[1];
-
-	        // Remove quotes around formatted content in <b>
-            $item = preg_replace( '/^<b>\s*["\']\s*(<[^>]+>[^<]+<\/[^>]+>)\s*["\']\s*<\/b>/i', '<b>$1</b>', $item );
-            $item = preg_replace( '/<b>\s*["\']\s*(<em>[^<]+<\/em>)\s*["\']\s*<\/b>/i', '<b>$1</b>', $item );
-            $item = preg_replace( '/<b>\s*["\']([^<]+)["\']\s*<\/b>/i', '<b>$1</b>', $item );
-            $item = preg_replace( '/(<\/(?:em|strong|b)>)["\']/', '$1', $item );
-
-	        // Remove quotes wrapping inline tags
-            $item = preg_replace( '/"(<(?:em|strong)[^>]*>.*?<\/(?:em|strong)>)"/i', '$1', $item );
-            return '<li>' . $item . '</li>';
-        }, $desc );
-
-        $desc = preg_replace( '/"(<(?:em|strong)[^>]*>.*?<\/(?:em|strong)>)"/i', '$1', $desc );
-        $desc = preg_replace( '/^["\']\s*|\s*["\']$/i', '', $desc );
-
-        // Table cleanup – Sidebar Location column
-        $desc = preg_replace_callback( '/<table.*?>.*?<\/table>/is', function ( $m ) {
-            $table_html = $m[0];
-            $dom        = new DOMDocument();
-            libxml_use_internal_errors( true );
-            $dom->loadHTML( '<?xml encoding="utf-8" ?>' . $table_html );
-
-            $xpath       = new DOMXPath( $dom );
-            $header_ths  = $xpath->query( '//th' );
-            $sidebar_idx = -1;
-            foreach ( $header_ths as $i => $th ) {
-                if ( trim( $th->textContent ) === 'Sidebar Location' ) {
-                    $sidebar_idx = $i;
-                    $th->parentNode->removeChild( $th );
-                    break;
-                }
+            if ( empty( $desc ) ) {
+                return '';
             }
 
-            if ( $sidebar_idx > -1 ) {
-                foreach ( $xpath->query( '//tr' ) as $row ) {
-                    $tds = $row->getElementsByTagName( 'td' );
-                    if ( $tds->length > $sidebar_idx ) {
-                        $td = $tds->item( $sidebar_idx );
-                        if ( $td ) {
-                            $row->removeChild( $td );
+            $desc = str_replace(
+                ['Ã€', 'Ã', 'Ã‚', 'Ãƒ', 'Ã„', 'Ã…', 'Ã†', 'Ã‡', 'Ãˆ', 'Ã‰', 'ÃŠ', 'Ã‹', 'ÃŒ', 'Ã', 'ÃŽ', 'Ã', 'Ã', 'Ã‘', 'Ã’', 'Ã“', 'Ã”', 'Ã•', 'Ã–', 'Ã—', 'Ã˜', 'Ã™', 'Ãš', 'Ã›', 'Ãœ', 'Ã', 'Ãž', 'ÃŸ',
+                 'Ã ', 'Ã¡', 'Ã¢', 'Ã£', 'Ã¤', 'Ã¥', 'Ã¦', 'Ã§', 'Ã¨', 'Ã©', 'Ãª', 'Ã«', 'Ã¬', 'Ã­', 'Ã®', 'Ã¯', 'Ã°', 'Ã±', 'Ã²', 'Ã³', 'Ã´', 'Ãµ', 'Ã¶', 'Ã·', 'Ã¸', 'Ã¹', 'Ãº', 'Ã»', 'Ã¼', 'Ã½', 'Ã¾', 'Ã¿'],
+                ['À', 'Á', 'Â', 'Ã', 'Ä', 'Å', 'Æ', 'Ç', 'È', 'É', 'Ê', 'Ë', 'Ì', 'Í', 'Î', 'Ï', 'Ð', 'Ñ', 'Ò', 'Ó', 'Ô', 'Õ', 'Ö', '×', 'Ø', 'Ù', 'Ú', 'Û', 'Ü', 'Ý', 'Þ', 'ß',
+                 'à', 'á', 'â', 'ã', 'ä', 'å', 'æ', 'ç', 'è', 'é', 'ê', 'ë', 'ì', 'í', 'î', 'ï', 'ð', 'ñ', 'ò', 'ó', 'ô', 'õ', 'ö', '÷', 'ø', 'ù', 'ú', 'û', 'ü', 'ý', 'þ', 'ÿ'],
+                $desc
+            );
+        
+            /* -------------------------------------------------
+             * 1. Encoding Normalization (NO GUESSING)
+             * ------------------------------------------------- */
+        
+            // Remove Unicode replacement characters FIRST
+            $desc = str_replace("\xEF\xBF\xBD", '', $desc);
+
+            // Decode HTML entities
+            $desc = html_entity_decode($desc, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+            // Fix mixed encodings
+            if (function_exists('mb_convert_encoding')) {
+                $desc = mb_convert_encoding($desc, 'UTF-8', 'UTF-8, ISO-8859-1, Windows-1252');
+            } elseif (function_exists('iconv')) {
+                $desc = iconv('UTF-8', 'UTF-8//IGNORE', $desc);
+            }
+
+            // Normalize Unicode composition
+            if (class_exists('Normalizer')) {
+                $desc = Normalizer::normalize($desc, Normalizer::FORM_C);
+            }
+
+            // Remove control characters
+            $desc = preg_replace('/[^\P{C}\n]+/u', '', $desc);
+        
+            /* -------------------------------------------------
+             * 2. Your Existing Cleanup Logic
+             * ------------------------------------------------- */
+        
+            // Remove italic wrapper paragraphs
+            $desc = preg_replace( '/<p>\s*<em>(.*?)<\/em>\s*<\/p>/is', '<p>$1</p>', $desc );
+            $desc = preg_replace( '/^<em>(.*?)<\/em>$/is', '$1', $desc );
+        
+            // Strip links but keep text
+            $desc = preg_replace( '/<a\s+[^>]*>(.*?)<\/a>/is', '$1', $desc );
+        
+            // Clean <li> formatting
+            $desc = preg_replace_callback( '/<li>(.*?)<\/li>/is', function ( $m ) {
+        
+                $item = $m[1];
+        
+                $item = preg_replace( '/^<b>\s*["\']\s*(<[^>]+>[^<]+<\/[^>]+>)\s*["\']\s*<\/b>/i', '<b>$1</b>', $item );
+                $item = preg_replace( '/<b>\s*["\']\s*(<em>[^<]+<\/em>)\s*["\']\s*<\/b>/i', '<b>$1</b>', $item );
+                $item = preg_replace( '/<b>\s*["\']([^<]+)["\']\s*<\/b>/i', '<b>$1</b>', $item );
+                $item = preg_replace( '/(<\/(?:em|strong|b)>)["\']/', '$1', $item );
+                $item = preg_replace( '/"(<(?:em|strong)[^>]*>.*?<\/(?:em|strong)>)"/i', '$1', $item );
+        
+                return '<li>' . $item . '</li>';
+        
+            }, $desc );
+        
+            $desc = preg_replace( '/"(<(?:em|strong)[^>]*>.*?<\/(?:em|strong)>)"/i', '$1', $desc );
+            $desc = preg_replace( '/^["\']\s*|\s*["\']$/i', '', $desc );
+        
+        
+            /* -------------------------------------------------
+             * 3. Table Cleanup
+             * ------------------------------------------------- */
+        
+            $desc = preg_replace_callback( '/<table.*?>.*?<\/table>/is', function ( $m ) {
+        
+                $dom = new DOMDocument();
+                libxml_use_internal_errors( true );
+                $dom->loadHTML( '<?xml encoding="utf-8" ?>' . $m[0] );
+        
+                $xpath = new DOMXPath( $dom );
+                $header_ths = $xpath->query( '//th' );
+        
+                $sidebar_idx = -1;
+        
+                foreach ( $header_ths as $i => $th ) {
+                    if ( trim( $th->textContent ) === 'Sidebar Location' ) {
+                        $sidebar_idx = $i;
+                        $th->parentNode->removeChild( $th );
+                        break;
+                    }
+                }
+        
+                if ( $sidebar_idx > -1 ) {
+                    foreach ( $xpath->query( '//tr' ) as $row ) {
+                        $tds = $row->getElementsByTagName( 'td' );
+                        if ( $tds->length > $sidebar_idx ) {
+                            $row->removeChild( $tds->item( $sidebar_idx ) );
                         }
                     }
                 }
+        
+                $body = $dom->getElementsByTagName( 'body' )->item( 0 );
+                $html = '';
+        
+                foreach ( $body->childNodes as $child ) {
+                    $html .= $dom->saveHTML( $child );
+                }
+        
+                return $html;
+        
+            }, $desc );
+        
+        
+            /* -------------------------------------------------
+             * 4. Heading Normalization
+             * ------------------------------------------------- */
+        
+            $has_h2 = preg_match( '/<h2\b/i', $desc );
+        
+            $desc = preg_replace( '/<h6([^>]*)>/i', '<h5$1>', $desc );
+            $desc = preg_replace( '/<\/h6>/i', '</h5>', $desc );
+        
+            $desc = preg_replace( '/<h5([^>]*)>/i', '<h4$1>', $desc );
+            $desc = preg_replace( '/<\/h5>/i', '</h4>', $desc );
+        
+            $desc = preg_replace( '/<h4([^>]*)>/i', '<h3$1>', $desc );
+            $desc = preg_replace( '/<\/h4>/i', '</h3>', $desc );
+        
+            if ( $has_h2 ) {
+                $desc = preg_replace( '/<h3([^>]*)>/i', '<h4$1>', $desc );
+                $desc = preg_replace( '/<\/h3>/i', '</h4>', $desc );
+        
+                $desc = preg_replace( '/<h2([^>]*)>/i', '<h3$1>', $desc );
+                $desc = preg_replace( '/<\/h2>/i', '</h3>', $desc );
             }
-
-            $body = $dom->getElementsByTagName( 'body' )->item( 0 );
-            $new  = '';
-            foreach ( $body->childNodes as $child ) {
-                $new .= $dom->saveHTML( $child );
-            }
-            return $new;
-        }, $desc );
-
-        // Step 7: Normalize headings – aim for top level = <h3>
-    	$has_h2 = preg_match( '/<h2\b/i', $desc );
-
-    	// Always shift deeper headings first (safe order)
-    	$desc = preg_replace( '/<h6([^>]*)>/i', '<h5$1>', $desc );
-    	$desc = preg_replace( '/<\/h6>/i', '</h5>', $desc );
-
-    	$desc = preg_replace( '/<h5([^>]*)>/i', '<h4$1>', $desc );
-    	$desc = preg_replace( '/<\/h5>/i', '</h4>', $desc );
-
-    	$desc = preg_replace( '/<h4([^>]*)>/i', '<h3$1>', $desc );
-    	$desc = preg_replace( '/<\/h4>/i', '</h3>', $desc );
-
-    	if ( $has_h2 ) {
-        	// Real top-level h2 exists → demote everything one level
-        	$desc = preg_replace( '/<h3([^>]*)>/i', '<h4$1>', $desc );
-        	$desc = preg_replace( '/<\/h3>/i', '</h4>', $desc );
-
-        	$desc = preg_replace( '/<h2([^>]*)>/i', '<h3$1>', $desc );
-        	$desc = preg_replace( '/<\/h2>/i', '</h3>', $desc );
-    	}
-    	// else: promotion happened (h4 → h3, h3 → h4) — good for CVs that start with h3/h4
-
-    	// Also catch rogue h1 → treat as top level
-    	$desc = preg_replace( '/<h1([^>]*)>/i', '<h3$1>', $desc );
-    	$desc = preg_replace( '/<\/h1>/i', '</h3>', $desc );
-
-        return $desc;
-    }
+        
+            $desc = preg_replace( '/<h1([^>]*)>/i', '<h3$1>', $desc );
+            $desc = preg_replace( '/<\/h1>/i', '</h3>', $desc );
+        
+            return $desc;
+        }
 
     
     /* -----------------------------------------------------------------

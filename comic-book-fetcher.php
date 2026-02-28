@@ -127,17 +127,15 @@ function comic_book_api_settings_page() {
 add_action('admin_menu', 'comic_book_api_settings_page');
 
 function render_api_settings_page() {
-    // Save settings
+    // Save API credentials
     if (isset($_POST['submit']) && check_admin_referer('save_api_settings')) {
         update_option('metron_api_username', sanitize_text_field($_POST['metron_api_username']));
         update_option('metron_api_password', sanitize_text_field($_POST['metron_api_password']));
         update_option('comic_vine_api_key', sanitize_text_field($_POST['comic_vine_api_key']));
-
         // Clear all Metron transients
         global $wpdb;
         $wpdb->query("DELETE FROM $wpdb->options WHERE option_name LIKE '_transient_metron_%'");
         $wpdb->query("DELETE FROM $wpdb->options WHERE option_name LIKE '_transient_timeout_metron_%'");
-
         echo '<div class="updated"><p>Settings saved and all caches cleared.</p></div>';
     }
 
@@ -146,60 +144,69 @@ function render_api_settings_page() {
         global $wpdb;
         $patterns = [
             '_transient_metron:series_full:%',
-            '_transient_timeout_metron:series_full:%'  
+            '_transient_timeout_metron:series_full:%'
         ];
         foreach ($patterns as $like) {
             $wpdb->query($wpdb->prepare("DELETE FROM $wpdb->options WHERE option_name LIKE %s", $like));
         }
         echo '<div class="notice notice-success is-dismissible"><p>Series caches cleared!</p></div>';
     }
-    // NEW: Warm publisher caches
+
+    // Warm publisher caches – now supports custom IDs or top 5
     if (isset($_POST['warm_publisher_caches']) && check_admin_referer('warm_publisher_caches')) {
-        $service = new ComicDataService(new MetronClient()); // assuming your client init
+        $service = new ComicDataService(new MetronClient());
+
+        // Custom IDs from input (comma-separated or single)
+        $custom_input = trim(sanitize_text_field($_POST['custom_publisher_ids'] ?? ''));
+        $publisher_ids = [];
+
+        if ($custom_input !== '') {
+            $ids = array_map('intval', array_filter(explode(',', $custom_input), 'is_numeric'));
+            $publisher_ids = array_unique(array_filter($ids, fn($id) => $id > 0));
+        }
+
+        // If no custom IDs provided → use top 5 defaults
+        if (empty($publisher_ids)) { 
+            $publisher_ids = [1, 2, 3, 4, 5]; // e.g. Marvel=1?, DC=2?, Image=3?, Dark Horse=4?, IDW=5? Adjust as needed based on actual IDs in your system.
+        }
+
         $warm_count = 0;
         $errors = [];
 
-        // Get full publishers list (your existing method already caches this)
-        $publishers_data = $service->get_publishers('', 1, 9999, true, 'all'); // bypass cache + large per_page to get all
-        $publishers = $publishers_data['items'] ?? [];
+        foreach ($publisher_ids as $pub_id) {
+            try {
+                // Warm series list
+                $service->get_series($pub_id, 1, 50, '', 'all', true); // force_api = true
 
-        if (empty($publishers)) {
-            echo '<div class="notice notice-error"><p>Could not fetch publishers list. Check API credentials.</p></div>';
-        } else {
-            foreach ($publishers as $pub) {
-                $pub_id = (int) ($pub['id'] ?? 0);
-                if ($pub_id < 1) continue;
-
-                try {
-                    // Warm series list for this publisher
-                    $service->get_series($pub_id, 1, 50, '', 'all', true); // force_api = true to refresh
-                    $warm_count++;
-
-                    // Optional: warm first page of issues for the top 5 series per publisher (to avoid overload)
-                    $series_data = $service->get_series($pub_id, 1, 5, '', 'all', false);
-                    foreach ($series_data['items'] as $s) {
-                         $sid = (int)($s['series_id'] ?? 0);
-                         if ($sid) $service->get_series_issues($sid, 1, '');
+                // Optional: warm first page of issues for top 5 series per publisher
+                $series_data = $service->get_series($pub_id, 1, 5, '', 'all', false);
+                foreach ($series_data['items'] ?? [] as $s) {
+                    $sid = (int)($s['series_id'] ?? 0);
+                    if ($sid > 0) {
+                        $service->get_series_issues($sid, 1, '');
                     }
-                } catch (Exception $e) {
-                    $errors[] = "Publisher {$pub_id}: " . $e->getMessage();
                 }
-            }
 
-            $msg = "<p><strong>Success!</strong> Warmed caches for {$warm_count} publishers.</p>";
-            if (!empty($errors)) {
-                $msg .= '<p><strong>Errors:</strong><br>' . implode('<br>', array_map('esc_html', $errors)) . '</p>';
+                $warm_count++;
+            } catch (Exception $e) {
+                $errors[] = "Publisher ID $pub_id: " . $e->getMessage();
             }
-            echo '<div class="notice notice-success is-dismissible">' . $msg . '</div>';
         }
+
+        $msg = "<p><strong>Success!</strong> Warmed caches for $warm_count publisher" . ($warm_count === 1 ? '' : 's') . ".</p>";
+        if (!empty($errors)) {
+            $msg .= '<p><strong>Errors:</strong><br>' . implode('<br>', array_map('esc_html', $errors)) . '</p>';
+        }
+        echo '<div class="notice notice-success is-dismissible">' . $msg . '</div>';
     }
+
+    // HTML output
     ?>
     <div class="wrap">
         <h1>Comic Books API Settings</h1>
 
         <form method="post">
             <?php wp_nonce_field('save_api_settings'); ?>
-
             <h2>Metron API</h2>
             <table class="form-table">
                 <tr>
@@ -228,14 +235,13 @@ function render_api_settings_page() {
         <hr style="margin: 3rem 0;">
 
         <h2>Cache Management</h2>
-
         <form method="post" style="display:inline;">
             <?php wp_nonce_field('clear_series_cache'); ?>
             <p>
                 <input type="submit" name="clear_series_cache" class="button button-secondary" value="Clear Series Cache"
                        onclick="return confirm('Are you sure? This will force re-download of all series lists.');" />
                 <span style="margin-left:10px; color:#666; font-style:italic;">
-                    Clears only <code>metron:series_full:*</code> and filtered series caches.
+                    Clears only <code>metron:series_full:*</code> caches.
                 </span>
             </p>
         </form>
@@ -246,15 +252,22 @@ function render_api_settings_page() {
 
         <form method="post">
             <?php wp_nonce_field('warm_publisher_caches'); ?>
+
+            <p>
+                <label for="custom_publisher_ids"><strong>Publisher IDs to warm (comma-separated or single ID):</strong></label><br>
+                <input type="text" id="custom_publisher_ids" name="custom_publisher_ids" placeholder="e.g. 1,2,57 or leave blank for top 5" class="regular-text" style="width:400px;" />
+            </p>
+
             <p>
                 <input type="submit" name="warm_publisher_caches" class="button button-primary"
-                       value="Warm All Publisher & Series Caches Now"
-                       onclick="return confirm('This will make many API calls to Metron to pre-cache publishers and their series lists. It may take several minutes depending on rate limits. Continue?');" />
+                       value="Warm Selected / Top 5 Publishers"
+                       onclick="return confirm('This will make API calls to pre-cache series & some issues. May take 30–120 seconds depending on IDs. Continue?');" />
+
                 <span style="margin-left:15px; color:#555; font-style:italic;">
-                    Pre-fetches and caches series lists for all ~161 publishers (helps avoid slow first loads).
+                    If field empty → warms Marvel, DC, Image, Dark Horse, IDW (top 5 defaults).
                 </span>
             </p>
-        </form>       
+        </form>
 
     </div>
     <?php

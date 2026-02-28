@@ -264,7 +264,7 @@
 
 /* publisher information */
 .publisher-image {
-  flex: 0 0 140px;              
+  flex: 0 0 120px;              
   height: 100%;               
   display: flex;
   align-items: center;         
@@ -278,7 +278,7 @@
 /* The image itself */
 .publisher-image img {
   max-width: 100%;
-  max-height: 100%;
+  max-height: 160px;
   object-fit: contain;        
   display: block;
 }
@@ -293,7 +293,7 @@
   text-align: left;
 }
 .publisher-info .publisher-image {
-  max-height: 180px;
+  max-height: 160px;
 }
 .publisher-info h2 {
   margin-bottom: 1rem;

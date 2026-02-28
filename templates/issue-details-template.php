@@ -55,7 +55,8 @@
 
     // Optional: more fallbacks
     $issue_number = $issue['number'] ?? '??';
-    $issue_title  = trim( ( $series['name'] ?? 'Series' ) . ' #' . $issue_number ); 
+    $series_name = $series['series']['name'] ?? 'Series';
+    $issue_title = trim( $series_name . ' #' . $issue_number );
 
     ?>
        
