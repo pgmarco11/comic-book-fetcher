@@ -144,20 +144,6 @@ function comicbooks_enqueue_scripts() {
 }
 add_action('wp_enqueue_scripts', 'comicbooks_enqueue_scripts');
 
-
-/** ==================================================================
- *  AJAX HANDLER FOR SCHEDULING CACHE WARM-UP
- * ================================================================== */
-add_action('wp_ajax_schedule_warm_series_cache', function() {
-    check_ajax_referer('comicbooks_fetchers_data', 'nonce');
-    $publisher_id = intval($_POST['publisher_id'] ?? 0);
-    if ($publisher_id > 0) {
-        $renderer = new ComicRenderer();
-        $renderer->schedule_cache_warm($publisher_id);
-    }
-    wp_send_json_success();  
-});
-
 /** ==================================================================
  *  ADMIN SETTINGS PAGE
  * ================================================================== */

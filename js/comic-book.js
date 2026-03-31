@@ -20,8 +20,7 @@ jQuery(document).ready(function($){
             if ($list.hasClass('server-rendered') && hasContent) {
                 console.log('Server content detected — hiding spinner immediately');
                 $list.addClass('loaded');
-                $('#loading-spinner').addClass('hidden').css({ display: 'none', opacity: 0 });
-                lazyLoadImages();
+                $('#loading-spinner').addClass('hidden').css({ display: 'none', opacity: 0 });             
         
                 // Render pagination if missing
                 const total = parseInt($list.attr('data-total')) || 0;
@@ -975,7 +974,7 @@ jQuery(document).ready(function($){
         // If it's the current page → do nothing (just # href)
         if ($link.hasClass('active') || $link.attr('href') === '#') {
             e.preventDefault();
-            eturn;
+            return;
         }  
         if (e.ctrlKey || e.metaKey || e.which === 2) {
             // Let browser open in new tab / normal navigation
@@ -1229,9 +1228,7 @@ jQuery(document).ready(function($){
 
     if(urlLetter){
         updateActiveLetter(urlLetter);
-    }
-    
-    lazyLoadImages();
+    }   
 
     // Check if server already rendered issues
     const titleId = urlParams.get('title_id');
@@ -1246,20 +1243,10 @@ jQuery(document).ready(function($){
         // If server already rendered, just clean up
         if ($('#issues-list .issues-list').children().length > 0) {     
             $('#issues-list').addClass('loaded');
-            updateIssuesUrl(titleId, issuePage, issueSearch);
-            lazyLoadImages();
+            updateIssuesUrl(titleId, issuePage, issueSearch);      
         } else {
             fetchIssues(titleId, issuePage, issueSearch);
         }
-    }
-    
-    // After initial render, warm cache if empty
-    if (currentPublisherId) {
-        console.log('Scheduling background cache warm for publisher:', currentPublisherId);
-        $.post(comicbooks_fetchers_data.ajax_url, {
-            action: 'schedule_warm_series_cache', // new action
-            publisher_id: currentPublisherId,
-            nonce: comicbooks_fetchers_data.nonce
-        });
-    }
+    }   
+
 });

@@ -42,7 +42,7 @@ class ComicRenderer {
     public function get_series(
         $publisher_id,
         $page      = 1,
-        $per_page  = 50,
+        $per_page  = 100,
         $search    = '',
         $letter    = 'all',
         $force_api = false
@@ -68,48 +68,8 @@ class ComicRenderer {
         
         return $map;
     }
-
-/*
-    // === Scheduled CACHE WARM-UP ===
-    public function schedule_cache_warm($publisher_id) {
-        $hook = "warm_series_cache_{$publisher_id}";
-        if (!wp_next_scheduled($hook)) {
-            wp_schedule_single_event(time() + 10, $hook, [$publisher_id]);   
-        }
-    }
-
-    public function ajax_warm_series_cache() {
-        
-        check_ajax_referer('comicbooks_fetchers_data', 'nonce');
-    
-        $errors = [];
-        $service = new ComicDataService(new MetronClient());
-    
-        $publisher_info = $service->get_enriched_publishers(1, 50, 'all', true);
    
-    
-        foreach ($publisher_info['items'] as $index => $pub) {
-            $pub_id = $pub['id'];
-    
-            try {
-                // Only full series for first publisher, batch-aware
-                if ($index === 0) {
-                    $service->get_series($pub_id, 1, 50, '', 'all', true, 5);                        
-                }
-                sleep(3); // 3 seconds delay between publishers to avoid rate limits      
-    
-            } catch (Exception $e) {
-                $errors[] = "Publisher ID $pub_id: " . $e->getMessage();
-            }
-        }
-    
-        if (!empty($errors)) {
-            error_log("Cache warm errors: " . implode(', ', $errors));
-        }
-    
-        wp_send_json_success(['errors' => $errors]);
-    }
-*/
+
     // === RENDER MAIN LIST PAGE ===
     public function render_template($initial_data = []) {
         $items = $initial_data['items'] ?? [];
@@ -204,16 +164,6 @@ class ComicRenderer {
         wp_cache_set( $cache_key, $status );
         
         return $status;
-    }
-
-    /* -----------------------------------------------------------------
-    / *  BATCH SERIES IMAGES (first issue)
-    / * ----------------------------------------------------------------- */
-    public function get_series_images( $series_ids ) {
-        if ( empty( $series_ids ) || ! is_array( $series_ids ) ) {
-            return [];
-        }
-        return $this->data_service->get_series_images( $series_ids );
     }
 
     /**

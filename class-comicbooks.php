@@ -254,7 +254,7 @@ class Comicbooks {
 
         if ( $data === false ) {
             $client = $this->data_service->get_client();              
-            $url    = $client->api_base . "series/$title_id/issue_list/?per_page=100";
+            $url    = $client->api_base . "series/$title_id/issue_list/?per_page=1";
             $data   = $client->api_get( $url );
             if ( $data && ! empty( $data['results'] ) ) {
                 set_transient( $cache_key, $data, $client->dataset_ttl * 4 );
@@ -278,20 +278,30 @@ class Comicbooks {
 
         $client = $this->data_service->get_client();                  
         $images = [];
+        $missing = [];  
 
-        foreach ( $series_ids as $sid ) {
-            $ck   = "metron:issue_list_full:$sid";
-            $data = get_transient( $ck );
-
-            if ( $data === false ) {
-                $url  = $client->api_base . "series/$sid/issue_list/?per_page=100";
-                $data = $client->api_get( $url );
-                if ( $data && ! empty( $data['results'] ) ) {
-                    set_transient( $ck, $data, $client->dataset_ttl * 4 );
-                }
+        foreach ($series_ids as $sid) {
+            $ck = "metron:issue_list_full:$sid";
+            $data = get_transient($ck);
+        
+            if ($data !== false && !empty($data['results'][0]['image'])) {
+                $images[$sid] = $data['results'][0]['image'];
+            } else {
+                $missing[] = $sid;
             }
-            $images[ $sid ] = $data['results'][0]['image'] ?? '';
         }
+        
+        foreach ($missing as $sid) {
+            $url  = $client->api_base . "series/$sid/issue_list/?page=1&page_size=1";
+            $data = $client->api_get($url);
+        
+            $img = $data['results'][0]['image'] ?? '';
+        
+            $images[$sid] = $img;
+        
+            set_transient($ck, $data, $client->dataset_ttl * 4);
+        }
+
 
         wp_send_json_success( [ 'images' => $images ] );
     }

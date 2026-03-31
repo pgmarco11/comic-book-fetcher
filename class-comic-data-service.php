@@ -98,25 +98,11 @@ class ComicDataService {
         $slice = array_slice( $full, $start, $per_page );        
         $result = [];
 
-        if (empty($publisher_id) || $publisher_id <= 0) {
-            $result = [
-                'items' => $slice,
-                'total' => $total,
-            ];  
-        } else {
-            $info = $this->get_publisher_info( $publisher_id );
-            $result = [
-                'items' => array_map( function ( $p ) use ( $info ) {
-                    return array_merge( $p, [
-                        'image'   => $info['image'] ?? PUBLISHER_PLACEHOLDER_IMAGE_URL,
-                        'founded' => $info['founded'] ?? '',
-                        'desc'    => $info['desc'] ?? '',
-                    ] );
-                }, $slice ),
-                'total' => $total,
-            ];
-        }  
-           
+   
+        $result = [
+            'items' => $slice,
+            'total' => $total,
+        ];           
         return $result;
     }
 
@@ -146,29 +132,12 @@ class ComicDataService {
                 'founded' => $info['founded'] ?? '',
                 'desc'    => $info['desc'] ?? '',
             ];
-        }
-
-        $result = [];
-    
-        if (empty($publisher_id) || $publisher_id <= 0) {
-            $result = [
-                'items' => $items,
-                'total' => $raw['total'] ?? 0,
-            ];
-        } else {
-            $info = $this->get_publisher_info( $publisher_id );
-            $result = [
-                'items' => array_map( function ( $p ) use ( $info ) {
-                    return array_merge( $p, [
-                        'image'   => $info['image'] ?? PUBLISHER_PLACEHOLDER_IMAGE_URL,
-                        'founded' => $info['founded'] ?? '',
-                        'desc'    => $info['desc'] ?? '',
-                    ] );
-                }, $slice ),
-                'total' => $total,
-            ];
-        }
-    
+        }       
+        
+        $result = [
+            'items' => $items,
+            'total' => $raw['total'] ?? 0,
+        ];    
         // Cache for 12 hours (same as before)
         set_transient( $key, $result, 12 * HOUR_IN_SECONDS );        
         return $result;
@@ -208,44 +177,42 @@ class ComicDataService {
      * ----------------------------------------------------------------- */
     public function get_series(
         $publisher_id,
-        $page      = 1,
-        $per_page  = 50,
-        $search    = '',
-        $letter    = 'all',
+        $page = 1,
+        $per_page = 100,
+        $search = '',
+        $letter = 'all',
         $force_api = false,
-        $batch_size = 5  // number of pages to fetch per run
+        $batch_size = 5
     ) {
         $cache_key = "metron:series_full:$publisher_id";
-        $full      = get_transient($cache_key) ?: [];
+        $full = get_transient($cache_key) ?: [];
     
-        // Track which API page we last fetched
         $last_page_key = "metron:series_last_page:$publisher_id";
-        $last_api_page = get_transient($last_page_key) ?: 1;
+        $api_page = get_transient($last_page_key) ?: 1;
     
-        // Only fetch from API if forced or no cache yet
         if ($force_api || empty($full)) {
-            $api_page = $last_api_page ?? $page ?? 1;
+    
             $pages_fetched = 0;
     
             do {
                 $url = $this->client->api_base . "publisher/$publisher_id/series_list/?page={$api_page}&page_size=100";
                 $response = $this->client->api_get($url);
-
-                if (!$response || isset($response['detail']) && str_contains($response['detail'], 'Invalid page')) {                    
-                    error_log("Publisher series_list: Invalid page or end reached for publisher {$publisher_id} on page {$api_page}");
-                }
-
-                if (empty($response['results'])) {
+    
+                if (
+                    !$response ||
+                    empty($response['results']) ||
+                    (isset($response['detail']) && str_contains($response['detail'], 'Invalid page'))
+                ) {
                     break;
                 }
     
                 foreach ($response['results'] as $item) {
                     $full[] = [
-                        'series_id'         => $item['id'],
-                        'name'              => $item['series'],
-                        'volume'            => $item['volume'] ?? '1',
-                        'issue_count'       => $item['issue_count'] ?? 0,
-                        'year_began'        => $item['year_began'] ?? 'N/A',
+                        'series_id'   => $item['id'],
+                        'name'        => $item['series'],
+                        'volume'      => $item['volume'] ?? '1',
+                        'issue_count' => $item['issue_count'] ?? 0,
+                        'year_began'  => $item['year_began'] ?? 'N/A',  
                         'first_issue_image' => $item['first_issue_image'] ?? '',
                     ];
                 }
@@ -253,38 +220,53 @@ class ComicDataService {
                 $api_page++;
                 $pages_fetched++;
     
-                // Small delay to avoid hitting API rate limits
-               sleep(1); // 1 second
+                // reduce delay massively
+                usleep(200000); // 0.2s
     
             } while (!empty($response['next']) && $pages_fetched < $batch_size);
     
-            // Save cache and last API page for next batch
             set_transient($cache_key, $full, 30 * DAY_IN_SECONDS);
             set_transient($last_page_key, $api_page, 12 * HOUR_IN_SECONDS);
         }
     
-        // Filter series if requested
+        // --- filtering ---
         $filtered = $full;
+
+        if (!is_array($filtered)) {
+            $filtered = [];
+        }
+
+        // search filter
         if ($search) {
             $search = strtolower(trim($search));
-            $filtered = array_filter($filtered, fn($s) => strpos(strtolower($s['name']), $search) !== false);
+            $filtered = array_filter($filtered, fn($s) =>
+                strpos(strtolower($s['name']), $search) !== false
+            );
         }
+
+        // letter filter
         if ($letter !== 'all') {
             $filtered = array_filter($filtered, function($s) use ($letter) {
                 $first = strtoupper(substr($s['name'], 0, 1));
-                return $letter === '#' ? !ctype_alpha($first) : $first === strtoupper($letter);
+                return $letter === '#'
+                    ? !ctype_alpha($first)
+                    : $first === strtoupper($letter);
             });
         }
-    
+
+        // reindex
         $filtered = array_values($filtered);
+
         $total = count($filtered);
         $offset = ($page - 1) * $per_page;
-        $paged = array_slice($filtered, $offset, $per_page);
-    
+        
+        // FIRST: paginate
+        $paged = array_slice($filtered, $offset, $per_page);              
+        // RETURN the modified dataset
         return [
-            'items'    => $paged,
-            'total'    => $total,
-            'page'     => $page,
+            'items' => $paged,
+            'total' => $total,
+            'page' => $page,
             'per_page' => $per_page,
         ];
     }
@@ -319,8 +301,6 @@ class ComicDataService {
                 $url = $this->client->api_base . "series/{$title_id}/issue_list/?page={$page_fetch}&page_size=100";
                 $response = $this->client->api_get($url);
     
-                error_log("Fetching issues for series {$title_id}, API page {$page_fetch} - " . (isset($response['error']) ? 'ERROR' : count($response['results'] ?? []) . ' issues'));
-    
                 if (isset($response['error']) || empty($response['results']) || !is_array($response['results'])) {
                     break;
                 }
@@ -328,7 +308,7 @@ class ComicDataService {
                 $all = array_merge($all, $response['results']);
                 $page_fetch++;
     
-            } while (!empty($response['next']) && $page_fetch < 50); // safety limit
+            } while (!empty($response['next']) && $page_fetch < 10); // safety limit
     
             // Sort by issue number
             usort($all, function($a, $b) {
@@ -458,37 +438,6 @@ class ComicDataService {
         return $issue_data;
     }
  
-    /* -----------------------------------------------------------------
-     *  BATCH SERIES IMAGES (first issue image)
-     * ----------------------------------------------------------------- */
-    public function get_series_images( array $series_ids ) {
-        $images       = [];
-        $prefix       = 'metron:issue_list_full:';
-        $missing      = [];
-
-        foreach ( $series_ids as $id ) {
-            $key = $prefix . $id;
-            $cached = get_transient( $key );
-            if ( $cached !== false && ! empty( $cached['results'][0]['image'] ) ) {
-                $images[ $id ] = $cached['results'][0]['image'];
-            } else {
-                $missing[] = $id;
-            }
-        }
-
-        foreach ( $missing as $id ) {
-            $url  = $this->client->api_base . "series/$id/issue_list/?per_page=100";
-            $data = $this->client->api_get( $url );
-
-            $img = $data['results'][0]['image'] ?? PUBLISHER_PLACEHOLDER_IMAGE_URL;
-            $images[ $id ] = $img;
-
-            // Use safe TTL
-            set_transient( $prefix . $id, $data, $this->get_dataset_ttl() * 2 );
-        }
-
-        return $images;
-    }
 
     /* -----------------------------------------------------------------
      *  COMIC VINE + METRON merged issue data
