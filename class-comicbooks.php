@@ -65,7 +65,7 @@ class Comicbooks {
         $letter   = isset( $_POST['letter'] ) && $_POST['letter'] !== '' ? sanitize_text_field( $_POST['letter'] ) : 'all';
         $per_page = 10;
 
-        $publisher_data = $this->data_service->get_publishers( $name, $page, $per_page, false, $letter );
+        $publisher_data = $this->data_service->get_publishers( $name, $page, $per_page, $letter. false );
 
         if ( empty( $publisher_data['items'] ) ) {
             wp_send_json_success( [
@@ -86,7 +86,7 @@ class Comicbooks {
                     'desc'    => $info['desc'] ?? '',
                     'founded' => $info['founded'] ?? '',
                 ];
-                usleep( 300000 ); // respect rate limits
+               sleep(2); // respect rate limits
             }
         }
         unset( $item );
@@ -142,110 +142,102 @@ class Comicbooks {
         wp_send_json_success( $info );
     }
 
-    /* -----------------------------------------------------------------
-    *  AJAX – Issues (for a series) – FAST VERSION
+    /** -----------------------------------------------------------------
+    * AJAX – Issues (for a series) – CLEAN VERSION
     * ----------------------------------------------------------------- */
     public function ajax_load_issues() {
-        check_ajax_referer( 'comicbooks_fetchers_data', 'nonce' );
-
-        $title_id = isset( $_POST['title_id'] ) ? intval( $_POST['title_id'] ) : 0;
-        $page     = isset( $_POST['page'] ) ? max( 1, intval( $_POST['page'] ) ) : 1;
-        $search   = isset( $_POST['search'] )
-            ? strtolower( trim( (string) wp_strip_all_tags( $_POST['search'] ) ) )
-            : '';
-
-        $cache_key = "metron:issue_list_html:{$title_id}:{$page}:{$search}";
-        $cached    = get_transient( $cache_key );
-        if ( $cached !== false ) {
-            wp_send_json_success( $cached );
+        check_ajax_referer('comicbooks_fetchers_data', 'nonce');
+    
+        $title_id = isset($_POST['title_id']) ? intval($_POST['title_id']) : 0;
+        $page     = isset($_POST['page']) ? max(1, intval($_POST['page'])) : 1;
+        $search   = isset($_POST['search']) ? strtolower(trim(wp_strip_all_tags($_POST['search']))) : '';
+    
+        if (!$title_id) {
+            wp_send_json_error(['message' => 'No title_id provided']);
         }
-
-        $data = $this->data_service->get_series_issues( $title_id, $page, $search );
-        if ( is_array( $data ) && isset( $data['error'] ) ) {
-            wp_send_json_error( [ 'message' => 'No issues available: ' . $data['error'] ] );
+    
+        $comic_renderer = new ComicRenderer();
+        $data = $comic_renderer->get_series_issues($title_id, $page, $search);
+    
+        if (isset($data['error'])) {
+            wp_send_json_error($data);
         }
-
-        $series = $data['series'] ?? [];
-        $series['name'] = $data['series']['name'] ?? 'Unknown';
-        $issue_list_data = $data['issue_list'] ?? [];      
-        $all_issues      = $issue_list_data['results'] ?? []; 
-        $total_issues    = $issue_list_data['count'] ?? 0;
-        $per_page        = 10;
-        $total_pages     = ceil( $total_issues / $per_page ); 
-
-        $template = defined( 'COMICBOOKS_FETCHER_PATH' )
-            ? COMICBOOKS_FETCHER_PATH . 'templates/issue-item-template.php'
-            : trailingslashit( WP_PLUGIN_DIR ) . 'comic-book-fetcher/templates/issue-item-template.php';
-
-        if ( ! file_exists( $template ) ) {
-            wp_send_json_error( [ 'message' => 'Issue template file not found' ] );
-        }
-
+    
+        // Render the exact same HTML as the template
         ob_start();
-
-        if ( empty( $all_issues ) || ! is_array( $all_issues ) ) {
-            echo '<p class="no-results">No issues found for this series.</p>';
-        } else {
-            echo '<ul class="issues-list">';
-
-            $metron_ids = array_column( $all_issues, 'id' );
-
-            // REMOVED: get_comicvine_issue_info_batch() – NO LONGER CALLED HERE
-            // REMOVED: get_collection_status() – NO LONGER CALLED HERE
-            
-            // Only pass empty arrays to template
-            $cv_info_batch = [];
-            $collection_status = [];
-
-            foreach ( $all_issues as $issue ) {
-                if ( empty( $issue['id'] ) ) continue;
-                include $template;
-            }
-
-            echo '</ul>';
-        }
-
-        $issues_html = ob_get_clean();
-
-        $response = [
-            'issues'       => $issues_html,
+        $series = $data['series'] ?? [];
+        $all_issues = $data['issue_list']['results'] ?? [];
+        $total_issues = (int) ($data['issue_list']['count'] ?? 0);
+    
+        if (!empty($all_issues)) :
+            ?>
+            <ul class="issues-list">
+                <?php 
+                foreach ($all_issues as $issue) :
+                    if (empty($issue['id'])) continue;
+                    $metron_id = $issue['id'];
+                    // If you have CV data preloaded, pass it here if needed
+                    include plugin_dir_path(__FILE__) . 'templates/issue-item-template.php';
+                endforeach; 
+                ?>
+            </ul>
+            <?php
+        else :
+            ?>
+            <p class="no-results">
+                <?php if (!empty($search)) : ?>
+                    No issues matching "<?php echo esc_html($search); ?>".
+                <?php else : ?>
+                    No issues found.
+                <?php endif; ?>
+            </p>
+            <?php
+        endif;
+    
+        $html = ob_get_clean();
+    
+        wp_send_json_success([
+            'issues'       => $html,           // Full HTML fragment
+            'page'         => $page,
             'total_issues' => $total_issues,
-            'current_page' => $page,
-            'total_pages'  => $total_pages,
-            'per_page'     => $per_page,
-            'metron_ids'   => array_column( $all_issues, 'id' ),
-        ];
-
-        set_transient( $cache_key, $response, 2 * WEEK_IN_SECONDS );
-        wp_send_json_success( $response );
+            'total_pages'  => ceil($total_issues / 10),
+            'search'       => $search
+        ]);
     }
 
     /* -----------------------------------------------------------------
     *  AJAX – Load Comic Vine data (non-blocking)
     * ----------------------------------------------------------------- */
     public function ajax_load_comic_vine_batch() {
-        check_ajax_referer( 'comicbooks_fetchers_data', 'nonce' );
-
-        $metron_ids = isset( $_POST['metron_ids'] ) 
-            ? array_map( 'intval', explode( ',', $_POST['metron_ids'] ) )
+        check_ajax_referer('comicbooks_fetchers_data', 'nonce');
+    
+        $metron_ids = isset($_POST['metron_ids'])
+            ? array_map('intval', explode(',', $_POST['metron_ids']))
             : [];
-        
-        if ( empty( $metron_ids ) ) {
-            wp_send_json_error( [ 'message' => 'No IDs provided' ] );
+    
+        if (empty($metron_ids)) {
+            wp_send_json_error(['message'=>'No IDs provided']);
         }
+    
+        $cv_info_batch = [];
+    
+        // Fetch CV data for the requested IDs using series-level cache
+        foreach ($metron_ids as $mid) {
 
-        // Fetch CV data
-        $cv_info_batch = $this->data_service->get_comicvine_issue_info_batch( $metron_ids );
-
-        // Fetch collection status if logged in
+            $cv_info_batch[$mid] = get_transient("cv_issue_full_{$mid}");
+        
+            if ($cv_info_batch[$mid] === false) {
+                $cv_info_batch[$mid] = null; // fallback
+            }
+        }
         $collection_status = is_user_logged_in()
-            ? ComicRenderer::get_collection_status( $metron_ids )
+            ? ComicRenderer::get_collection_status($metron_ids)
             : [];
-
-        wp_send_json_success( [
-            'cv_data' => $cv_info_batch,
+    
+        wp_send_json_success([
+            'cv_data'           => $cv_info_batch,
             'collection_status' => $collection_status,
-        ] );
+        ]);
     }
 
     /* -----------------------------------------------------------------
@@ -262,7 +254,7 @@ class Comicbooks {
 
         if ( $data === false ) {
             $client = $this->data_service->get_client();              
-            $url    = $client->api_base . "series/$title_id/issue_list/?per_page=1";
+            $url    = $client->api_base . "series/$title_id/issue_list/?per_page=100";
             $data   = $client->api_get( $url );
             if ( $data && ! empty( $data['results'] ) ) {
                 set_transient( $cache_key, $data, $client->dataset_ttl * 4 );
@@ -292,7 +284,7 @@ class Comicbooks {
             $data = get_transient( $ck );
 
             if ( $data === false ) {
-                $url  = $client->api_base . "series/$sid/issue_list/?per_page=1";
+                $url  = $client->api_base . "series/$sid/issue_list/?per_page=100";
                 $data = $client->api_get( $url );
                 if ( $data && ! empty( $data['results'] ) ) {
                     set_transient( $ck, $data, $client->dataset_ttl * 4 );

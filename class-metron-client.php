@@ -18,11 +18,60 @@
     public $cache_ttl = 24 * 3600;
     public $dataset_ttl = 2 * WEEK_IN_SECONDS;
 
+    /** 
+     * Helper functions to enforce a delay between API calls to respect rate limits.
+    */
+    private function metron_request_lock() {
+
+        $lock_key = 'metron_request_lock';
+    
+        while ( get_transient( $lock_key ) ) {
+            usleep(200000); // wait 0.2s
+        }
+    
+        set_transient( $lock_key, 1, 5 );
+    }
+    private function metron_rate_limit() {
+
+        $key = 'metron_last_request_time';
+    
+        $last = get_transient( $key );
+        $now  = microtime(true);
+    
+        $min_interval = 3.2; // 20 requests/min safe buffer
+    
+        if ( $last ) {
+            $elapsed = $now - (float) $last;
+    
+            if ( $elapsed < $min_interval ) {
+    
+                $sleep_seconds = $min_interval - $elapsed;
+    
+                // Convert to microseconds safely
+                $sleep_micro = (int) round( $sleep_seconds * 1000000 );
+    
+                if ( $sleep_micro > 0 ) {
+                    usleep( $sleep_micro );
+                }
+            }
+        }
+    
+        set_transient( $key, microtime(true), 10 );
+        
+    }
+
 
     public function api_get($url, $retries = 3, $backoff = 1) {
+
         $cache_key = 'metron:api:' . md5($url);
         $cached = get_transient($cache_key);
         if ($cached !== false) return $cached;
+
+        //Prevent concurrent requests
+        $this->metron_request_lock();
+
+        //Enforce 20/min limit
+        $this->metron_rate_limit();
     
         $username = get_option('metron_api_username', '');
         $password = get_option('metron_api_password', '');
@@ -36,7 +85,10 @@
         $retries = is_array($retries) ? 3 : (int)$retries;
     
         for ($attempt = 1; $attempt <= $retries; $attempt++) {
-            error_log("api_get: Attempt $attempt/$retries for $url");
+            if($attempt > 2) {
+                error_log("api_get: Attempt $attempt/$retries for $url");
+            }   
+            
             $response = wp_remote_get($url, [
                 'headers' => [
                     'User-Agent' => 'ComicBookFetcher/1.0 (+https://thecollectiblespot.com)',
@@ -64,7 +116,7 @@
                 error_log("api_get: WARN: Rate limit hit (429) for $url, attempt $attempt/$retries, sleeping $retry_after seconds");
                 if ($attempt < $retries) {
                     sleep($retry_after);
-                    $backoff *= 2;
+                    $backoff *= 3;
                     continue;
                 }
                 return ['error' => 'Rate limit exceeded'];

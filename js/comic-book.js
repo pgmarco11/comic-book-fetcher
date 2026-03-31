@@ -269,17 +269,17 @@ jQuery(document).ready(function($){
         lazyLoadImages();
     
         // Preload next page only when we actually rendered the current one
-        //const totalPages = Math.ceil(total / perPage);
-        // if (requestedPage < totalPages && comicbooks_fetchers_data.preload_enabled) {
-        //     if (typeof debugLog === 'function') debugLog(`Preloading next page ${requestedPage + 1}`);
-        //     preloadData(
-        //         isPublisher ? 'publishers' : 'books',
-        //         currentPublisherId,
-        //         requestedPage + 1,
-        //         search,
-        //         letter
-        //     );
-        // }
+        const totalPages = Math.ceil(total / perPage);
+        if (requestedPage < totalPages && comicbooks_fetchers_data.preload_enabled) {
+             if (typeof debugLog === 'function') debugLog(`Preloading next page ${requestedPage + 1}`);
+             preloadData(
+                 isPublisher ? 'publishers' : 'books',
+                 currentPublisherId,
+                 requestedPage + 1,
+                 search,
+                 letter
+             );
+        }
     }
 
     // ===================================================================

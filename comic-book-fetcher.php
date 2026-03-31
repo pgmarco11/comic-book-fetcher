@@ -46,10 +46,15 @@ function comicbooks_enqueue_scripts() {
     global $post;
 
     $load_comic_assets = false;
+    $load_category_archive = false;
 
     // Load on specific pages
     if (is_page(['comic-catalog', 'issues', 'issue'])) {
         $load_comic_assets = true;
+    }
+
+    if ( is_category( 'collection' ) ) { 
+        $load_category_archive = true;
     }
 
     // Load on collection posts
@@ -59,6 +64,14 @@ function comicbooks_enqueue_scripts() {
             $load_comic_assets = true;
         }
     }
+
+    wp_enqueue_script(
+        'comic-utils',
+        COMICBOOKS_PLUGIN_URL . 'js/comic-utils.js',
+        ['toastify-js'], 
+        '1.0.1',
+        true
+    );
 
     // === COMIC ASSETS ===
     if ($load_comic_assets) {
@@ -72,7 +85,7 @@ function comicbooks_enqueue_scripts() {
         wp_enqueue_script(
             'comicbook-script',
             COMICBOOKS_PLUGIN_URL . 'js/comic-book.js',
-            ['jquery'],
+            ['jquery', 'comic-utils'],
             '1.0.0',
             true
         );
@@ -83,6 +96,26 @@ function comicbooks_enqueue_scripts() {
             'placeholder' => PUBLISHER_PLACEHOLDER_IMAGE_URL,
             'per_page'    => 10,
         ]);
+    }
+
+    if ( $load_category_archive ) {
+     
+        wp_enqueue_script(
+            'comic-collection-script',
+            COMICBOOKS_PLUGIN_URL . 'js/comic-collection.js',
+            ['jquery', 'comic-utils'], 
+            '1.0.0',
+            true
+        );
+     
+        wp_localize_script( 
+            'comic-collection-script',
+            'comicbooks_fetchers_data',
+            [
+                'ajax_url' => admin_url( 'admin-ajax.php' ),
+                'nonce'    => wp_create_nonce( 'comicbooks_fetchers_data' ),
+            ]
+        );
     }
 
     // === WISHLIST ASSETS (always load) ===
@@ -111,7 +144,21 @@ function comicbooks_enqueue_scripts() {
 }
 add_action('wp_enqueue_scripts', 'comicbooks_enqueue_scripts');
 
-/* ==================================================================
+
+/** ==================================================================
+ *  AJAX HANDLER FOR SCHEDULING CACHE WARM-UP
+ * ================================================================== */
+add_action('wp_ajax_schedule_warm_series_cache', function() {
+    check_ajax_referer('comicbooks_fetchers_data', 'nonce');
+    $publisher_id = intval($_POST['publisher_id'] ?? 0);
+    if ($publisher_id > 0) {
+        $renderer = new ComicRenderer();
+        $renderer->schedule_cache_warm($publisher_id);
+    }
+    wp_send_json_success();  
+});
+
+/** ==================================================================
  *  ADMIN SETTINGS PAGE
  * ================================================================== */
 function comic_book_api_settings_page() {
@@ -155,44 +202,37 @@ function render_api_settings_page() {
     // Warm publisher caches – now supports custom IDs or top 5
     if (isset($_POST['warm_publisher_caches']) && check_admin_referer('warm_publisher_caches')) {
         $service = new ComicDataService(new MetronClient());
-
-        // Custom IDs from input (comma-separated or single)
+    
+        // Custom IDs from input (comma-separated)
         $custom_input = trim(sanitize_text_field($_POST['custom_publisher_ids'] ?? ''));
         $publisher_ids = [];
-
+    
         if ($custom_input !== '') {
             $ids = array_map('intval', array_filter(explode(',', $custom_input), 'is_numeric'));
             $publisher_ids = array_unique(array_filter($ids, fn($id) => $id > 0));
         }
-
-        // If no custom IDs provided → use top 5 defaults
+    
+        // Default publishers if none provided
         if (empty($publisher_ids)) { 
-            $publisher_ids = [1, 2, 3, 4, 5]; // e.g. Marvel=1?, DC=2?, Image=3?, Dark Horse=4?, IDW=5? Adjust as needed based on actual IDs in your system.
+            $publisher_ids = [2, 3]; // DC=2, Dark Horse=3
         }
-
+    
         $warm_count = 0;
-        $errors = [];
-
+        $errors = []; 
+    
         foreach ($publisher_ids as $pub_id) {
-            try {
-                // Warm series list
-                $service->get_series($pub_id, 1, 50, '', 'all', true); // force_api = true
-
-                // Optional: warm first page of issues for top 5 series per publisher
-                $series_data = $service->get_series($pub_id, 1, 5, '', 'all', false);
-                foreach ($series_data['items'] ?? [] as $s) {
-                    $sid = (int)($s['series_id'] ?? 0);
-                    if ($sid > 0) {
-                        $service->get_series_issues($sid, 1, '');
-                    }
-                }
+            try {                    
+                // Batch-aware fetch: will fetch series in 5-page increments
+                $service->get_series($pub_id, 1, 50, '', 'all', true, 5);   
+                
+                sleep(3); // 3 seconds delay between publishers to avoid rate limits
 
                 $warm_count++;
             } catch (Exception $e) {
                 $errors[] = "Publisher ID $pub_id: " . $e->getMessage();
             }
         }
-
+    
         $msg = "<p><strong>Success!</strong> Warmed caches for $warm_count publisher" . ($warm_count === 1 ? '' : 's') . ".</p>";
         if (!empty($errors)) {
             $msg .= '<p><strong>Errors:</strong><br>' . implode('<br>', array_map('esc_html', $errors)) . '</p>';
@@ -238,10 +278,10 @@ function render_api_settings_page() {
         <form method="post" style="display:inline;">
             <?php wp_nonce_field('clear_series_cache'); ?>
             <p>
-                <input type="submit" name="clear_series_cache" class="button button-secondary" value="Clear Series Cache"
+                <input type="submit" name="clear_series_cache" class="button button-secondary" value="Clear all series cache"
                        onclick="return confirm('Are you sure? This will force re-download of all series lists.');" />
                 <span style="margin-left:10px; color:#666; font-style:italic;">
-                    Clears only <code>metron:series_full:*</code> caches.
+                    Clears all publishers series <code>metron:series_full:*</code> caches.
                 </span>
             </p>
         </form>
@@ -255,16 +295,16 @@ function render_api_settings_page() {
 
             <p>
                 <label for="custom_publisher_ids"><strong>Publisher IDs to warm (comma-separated or single ID):</strong></label><br>
-                <input type="text" id="custom_publisher_ids" name="custom_publisher_ids" placeholder="e.g. 1,2,57 or leave blank for top 5" class="regular-text" style="width:400px;" />
+                <input type="text" id="custom_publisher_ids" name="custom_publisher_ids" placeholder="e.g. 1,2,57 or leave blank for DC & Dark Horse" class="regular-text" style="width:400px;" />
             </p>
 
             <p>
                 <input type="submit" name="warm_publisher_caches" class="button button-primary"
-                       value="Warm Selected / Top 5 Publishers"
+                       value="Warm Selected / DC & Dark Horse"
                        onclick="return confirm('This will make API calls to pre-cache series & some issues. May take 30–120 seconds depending on IDs. Continue?');" />
 
                 <span style="margin-left:15px; color:#555; font-style:italic;">
-                    If field empty → warms Marvel, DC, Image, Dark Horse, IDW (top 5 defaults).
+                    If field empty → warms DC & Dark Horse.
                 </span>
             </p>
         </form>
@@ -273,12 +313,3 @@ function render_api_settings_page() {
     <?php
 }
 
-add_action('wp_ajax_schedule_warm_series_cache', function() {
-    check_ajax_referer('comicbooks_fetchers_data', 'nonce');
-    $publisher_id = intval($_POST['publisher_id'] ?? 0);
-    if ($publisher_id > 0) {
-        $renderer = new ComicRenderer();
-        $renderer->schedule_cache_warm($publisher_id);
-    }
-    wp_send_json_success();  
-});

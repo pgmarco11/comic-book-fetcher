@@ -791,8 +791,6 @@ img.lazy-placeholder,
 
 .issue-section p {
   margin: 0;
-  font-size: 0.95em;
-  line-height: 1.5;
 }
 
 .description-block p {
@@ -924,7 +922,7 @@ img.lazy-placeholder,
     font-size: 1.25rem;
     line-height: 1.5rem;
 }
-add-to-collection {
+.add-to-collection {
     background-color: #007bff;
     color: #fff;
 }  

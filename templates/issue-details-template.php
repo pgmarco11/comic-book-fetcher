@@ -26,16 +26,14 @@
     // ───────────────────────────────────────────────────────────── 
 
     $cv_series_id = $this->data_service->get_metron_cv_id( $issue_id ); 
+    $cv_issue = $cv_series_id ? $this->data_service->get_comicvine_issue_info( $cv_series_id, $issue_id ) : [];
 
-
-    $cv_issue = $cv_series_id 
-        ? $this->data_service->get_comicvine_issue_info( $cv_series_id, $issue_id ) 
-        : [];
-
-    $description =$this->data_service->clean_cv_description(
+    $description = $this->data_service->clean_cv_description(
         $cv_issue['description'] ?? $issue['description'] ?? $issue['desc'] ?? ''
     );  
 
+
+    $metron_cv_id = $cv_issue['id'] ?? '';
     $creators = $cv_issue['person_credits'] ?? $issue['credits'] ?? [];
     $creator_infos = array_map( function( $p ) {
         $name = $p['name'] ?? $p['creator'] ?? 'Unknown';
@@ -47,8 +45,14 @@
 
     $creator_info_string = implode( "\n", $creator_infos );
 
-    $genre_sources = ! empty( $series['genres'] ) ? $series['genres'] : ( $cv_issue['concept_credits'] ?? [] );
-    $genre_string = implode( ', ', array_column( $genre_sources, 'name' ) );
+    if ( is_array($series['genres']) && !empty($series['genres']) ) {
+        $genre_sources = array_column($series['genres'], 'name');
+    } elseif ( !empty($cv_issue['concept_credits']) ) {
+        $genre_sources = array_column($cv_issue['concept_credits'], 'name');
+    } else {
+        $genre_sources = [];
+    }
+    $genre_string = implode(', ', $genre_sources);
 
     $date_raw = $cv_issue['cover_date'] ?? $issue['cover_date'] ?? null;
     $cover_date_display = $date_raw ? date( 'F Y', strtotime( $date_raw ) ) : 'Unknown';
@@ -149,11 +153,11 @@
                                                         data-title="<?php echo esc_attr($issue_title); ?>"
                                                         data-genres="<?php echo esc_attr($genre_string); ?>"
                                                         data-genre-origin="<?php echo empty($series['genres']) ? 'cv' : 'metron'; ?>"
-                                                        data-description="<?php echo esc_attr($description); ?>"
+                                                        data-description="<?php echo esc_attr($description ?: 'No description available'); ?>"
                                                         data-issue-id="<?php echo esc_attr($issue_id); ?>"
                                                         data-title-id="<?php echo esc_attr($title_id); ?>"
                                                         data-publisher="<?php echo esc_attr($series['publisher']['name'] ?? 'Unknown'); ?>"
-                                                        data-creators="<?php echo esc_attr($creator_info_string); ?>"
+                                                        data-creators="<?php echo esc_attr($creator_info_string ?: '—'); ?>"
                                                         data-date="<?php echo esc_attr($date_raw); ?>"
                                                         data-volume="<?php echo esc_attr($series['volume'] ?? ''); ?>"
                                                         data-issue-number="<?php echo esc_attr($issue['number']); ?>"
@@ -195,6 +199,8 @@
                                         <?php
                                             if (!empty($description)) {
                                                 echo wp_kses_post($description);
+                                            } else {
+                                                echo '<p>No summary available.</p>';
                                             }
                                         ?>
                                     </div>
