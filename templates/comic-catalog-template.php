@@ -61,7 +61,8 @@ $is_publisher = $type === 'publishers';
                         <div class="comic-title" data-series-id="<?php echo esc_attr($item['series_id']); ?>">                     
                             <a href="/comic-catalog/issues/?title_id=<?php echo esc_attr($item['series_id']); ?>&page=1">
                                 <div class="comic-image">
-                                    <img src="<?php echo esc_url(PUBLISHER_PLACEHOLDER_IMAGE_URL); ?>"
+                                    <?php $first_image = $item['first_issue_image'] ?? PUBLISHER_PLACEHOLDER_IMAGE_URL; ?>
+                                    <img src="<?php echo esc_url($first_image); ?>"
                                         data-src="<?php echo esc_url($item['first_issue_image'] ?? ''); ?>"
                                         alt="<?php echo esc_attr($item['name']); ?>"
                                         loading="lazy"

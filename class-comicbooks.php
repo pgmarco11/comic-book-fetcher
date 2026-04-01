@@ -24,10 +24,12 @@ class Comicbooks {
         // -----------------------------------------------------------------
         // 2. Register AJAX actions
         // -----------------------------------------------------------------
-        add_action( 'template_redirect', [ $this, 'check_collection_redirect' ] );
 
         add_action('wp_ajax_load_publishers', [$this, 'ajax_load_publishers']);
         add_action('wp_ajax_nopriv_load_publishers', [$this, 'ajax_load_publishers']);
+        
+        add_action( 'wp_ajax_load_publisher_info',     [ $this, 'ajax_load_publisher_info' ] );
+        add_action( 'wp_ajax_nopriv_load_publisher_info',[ $this, 'ajax_load_publisher_info' ] );
 
         add_action('wp_ajax_load_book', [$this, 'ajax_load_book']);
         add_action('wp_ajax_nopriv_load_book', [$this, 'ajax_load_book']);
@@ -36,10 +38,7 @@ class Comicbooks {
         add_action( 'wp_ajax_nopriv_load_issues',      [ $this, 'ajax_load_issues' ] );
 
         add_action( 'wp_ajax_load_comic_vine_batch',   [ $this, 'ajax_load_comic_vine_batch' ] );
-        add_action( 'wp_ajax_nopriv_load_comic_vine_batch', [ $this, 'ajax_load_comic_vine_batch' ] );
-
-        add_action( 'wp_ajax_load_series_image',       [ $this, 'ajax_load_series_image' ] );
-        add_action( 'wp_ajax_nopriv_load_series_image',[ $this, 'ajax_load_series_image' ] );
+        add_action( 'wp_ajax_nopriv_load_comic_vine_batch', [ $this, 'ajax_load_comic_vine_batch' ] );    
 
         add_action( 'wp_ajax_load_series_images_batch',   [ $this, 'ajax_load_series_images_batch' ] );
         add_action( 'wp_ajax_nopriv_load_series_images_batch',[ $this, 'ajax_load_series_images_batch' ] );
@@ -47,8 +46,8 @@ class Comicbooks {
         add_action( 'wp_ajax_load_publisher_images_batch',[ $this, 'ajax_load_publisher_images_batch' ] );
         add_action( 'wp_ajax_nopriv_load_publisher_images_batch',[ $this, 'ajax_load_publisher_images_batch' ] );
 
-        add_action( 'wp_ajax_load_publisher_info',     [ $this, 'ajax_load_publisher_info' ] );
-        add_action( 'wp_ajax_nopriv_load_publisher_info',[ $this, 'ajax_load_publisher_info' ] );
+        add_action( 'template_redirect', [ $this, 'check_collection_redirect' ] );
+
     }
 
     
@@ -238,31 +237,6 @@ class Comicbooks {
             'cv_data'           => $cv_info_batch,
             'collection_status' => $collection_status,
         ]);
-    }
-
-    /* -----------------------------------------------------------------
-     *  AJAX – Single series image
-     * ----------------------------------------------------------------- */
-    public function ajax_load_series_image() {
-        $title_id = intval( $_POST['series_id'] ?? 0 );
-        if ( ! $title_id ) {
-            wp_send_json_error( [ 'message' => 'Missing series ID' ] );
-        }
-
-        $cache_key = "metron:issue_list_full:$title_id";
-        $data      = get_transient( $cache_key );
-
-        if ( $data === false ) {
-            $client = $this->data_service->get_client();              
-            $url    = $client->api_base . "series/$title_id/issue_list/?per_page=1";
-            $data   = $client->api_get( $url );
-            if ( $data && ! empty( $data['results'] ) ) {
-                set_transient( $cache_key, $data, $client->dataset_ttl * 4 );
-            }
-        }
-
-        $image = $data['results'][0]['image'] ?? '';
-        wp_send_json_success( [ 'image' => $image ] );
     }
 
     /* -----------------------------------------------------------------

@@ -5,10 +5,6 @@
  * 
  */
 
-if (!defined('ABSPATH')) {
-    exit;
-}
-
 // Safety checks
 if (empty($issue) || empty($issue['id']) || empty($series)) {
     return;
@@ -16,13 +12,30 @@ if (empty($issue) || empty($issue['id']) || empty($series)) {
 
 $metron_id     = (int) ($issue['id'] ?? 0);
 $title_id      = (int) ($title_id ?? 0);
-//change issue data structure to match what the template expects for CV info (if available)    
-$cv_issue      = $cv_issue ?? [];           // from batch
-$collection_status = $collection_status ?? [];
 
 if (!$metron_id || !$title_id) {
     return;
 }
+
+//change issue data structure to match what the template expects for CV info (if available)    
+$cv_issue  = $cv_info_batch[$metron_id] ?? [];        // from batch
+
+// If batch is missing key data, enrich with single fetch
+if (empty($cv_issue['person_credits']) || empty($cv_issue['description'])) {
+
+    $cv_series_id = $comic_renderer->get_metron_cv_id($title_id);
+
+    if ($cv_series_id) {
+        $cv_single = $comic_renderer->get_comicvine_issue_info($cv_series_id, $metron_id);
+
+        if (!empty($cv_single)) {
+            // Ensure $cv_issue is an array before merging
+            $cv_issue = array_replace_recursive($cv_single, is_array($cv_issue) ? $cv_issue : []);
+        }
+    }
+}
+
+$collection_status = $collection_status ?? [];      // from pre-fetch (if user logged in)
 
 // Basic issue data (comes from cached /issue_list/)
 $issue_number   = esc_html($issue['number'] ?? 'N/A');
@@ -39,34 +52,49 @@ $formatted_date = (!empty($cover_date) && strtotime($cover_date))
 $series_name    = esc_html($series['name'] ?? 'Unknown Series');
 $issue_title    = "#{$issue_number} — {$series_name}";
 
-// CV-enriched data (from batch – may be empty on first load)
-$description = $cv_issue['description'] 
+// Description (CV → Metron → fallback)
+$description = $comic_renderer->clean_cv_description(
+    $cv_issue['description'] 
     ?? $issue['description'] 
     ?? $issue['desc'] 
-    ?? 'No description available.';
+    ?? 'No description available.'
+);
 
 $highlights  = $cv_issue['_highlights'] ?? [];
 
 // Creators (CV preferred)
 $creators = $cv_issue['person_credits'] ?? $issue['credits'] ?? [];
 $creator_infos = [];
+
 foreach ($creators as $p) {
     $name = $p['name'] ?? $p['creator'] ?? 'Unknown';
-    $role = is_array($p['role'] ?? null) 
-        ? implode(', ', array_column($p['role'], 'name')) 
+    $role = is_array($p['role'] ?? null)
+        ? implode(', ', array_column($p['role'], 'name'))
         : ($p['role'] ?? 'N/A');
+
     $creator_infos[] = "$name – $role";
 }
+
 $creator_info_string = implode("\n", $creator_infos);
 
-// Genres
-$genre_sources = [];
 if (!empty($series['genres']) && is_array($series['genres'])) {
+     
     $genre_sources = array_column($series['genres'], 'name');
+    
 } elseif (!empty($cv_issue['concept_credits'])) {
+     
     $genre_sources = array_column($cv_issue['concept_credits'], 'name');
+    
+} else {
+ 
+    $genre_sources = [];
 }
-$genre_string = implode(', ', $genre_sources);
+    
+$genre_string = implode(', ', $genre_sources);   
+
+
+// Volume (always from series / Metron)
+$volume = $series['volume'] ?? '';
 
 // Collection status (pre-fetched)
 $in_collection = false;
@@ -115,19 +143,19 @@ $metron_cv_id = $cv_issue['id'] ?? $issue['cv_id'] ?? '';
     <?php if (is_user_logged_in()): ?>
         <div class="d-flex flex-nowrap align-items-end gap-3">
             <button 
-                class="add-to-collection <?php echo $in_collection ? 'in-collection' : ''; ?>" 
-                style="<?php echo $in_collection ? 'background-color: red; color: white;' : ''; ?>"
-                data-title="<?php echo esc_attr($issue_title); ?>"
-                data-genres="<?php echo esc_attr($genre_string); ?>"
-                data-description="<?php echo esc_attr(wp_strip_all_tags($description)); ?>"
-                data-issue-id="<?php echo esc_attr($metron_id); ?>"
-                data-title-id="<?php echo esc_attr($title_id); ?>"
-                data-publisher="<?php echo esc_attr($series['publisher']['name'] ?? 'Unknown'); ?>"
-                data-creators="<?php echo esc_attr($creator_info_string); ?>"
-                data-date="<?php echo esc_attr($cover_date); ?>"
-                data-volume="<?php echo esc_attr($series['volume'] ?? ''); ?>"
-                data-issue-number="<?php echo esc_attr($issue_number); ?>"
-                data-image-url="<?php echo esc_url($image_url); ?>"
+                    class="add-to-collection <?php echo $in_collection ? 'in-collection' : ''; ?>" 
+                    style="<?php echo $in_collection ? 'background-color: red; color: white;' : ''; ?>"
+                    data-title="<?php echo esc_attr($issue_title); ?>"
+                    data-genres="<?php echo esc_attr($genre_string); ?>"
+                    data-description="<?php echo esc_attr(wp_strip_all_tags($description)); ?>"
+                    data-issue-id="<?php echo esc_attr($metron_id); ?>"
+                    data-title-id="<?php echo esc_attr($title_id); ?>"
+                    data-publisher="<?php echo esc_attr($series['publisher']['name'] ?? 'Unknown'); ?>"
+                    data-creators="<?php echo esc_attr($creator_info_string); ?>"
+                    data-date="<?php echo esc_attr($cover_date); ?>"
+                    data-volume="<?php echo esc_attr($volume); ?>"
+                    data-issue-number="<?php echo esc_attr($issue_number); ?>"
+                    data-image-url="<?php echo esc_url($image_url); ?>"
                 <?php if ($in_collection): ?>
                     data-post-id="<?php echo esc_attr($collection_post_id); ?>"
                     data-action="remove"

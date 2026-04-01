@@ -50,25 +50,14 @@ class ComicRenderer {
         return $this->data_service->get_series( $publisher_id, $page, $per_page, $search, $letter, $force_api );
     }
     
-    /** -----------------------------------------------------------------
-     *  SERIES ISSUES
+    /** --------------------------------------------------------------
+     *  SERIES ISSUES * Issue information
      * ----------------------------------------------------------------- */
-    public function get_series_issues( $title_id, $page = 1, $search = '' ) {
-        $data = $this->data_service->get_series_issues( $title_id, $page, $search );
-    
-        // ADD DEBUG
-        error_log("get_series_issues($title_id, $page, '$search') => " . print_r($data, true));
-    
+    public function get_series_issues( $title_id, $page = 1, $search = '' ) {    
+        $data = $this->data_service->get_series_issues( $title_id, $page, $search );       
         return $data;
     }
-
-    public function build_cv_map_for_series( $series_id, $page = 1) {
-
-        $map = $this->data_service->build_cv_map_for_series( $series_id, $page );
-        
-        return $map;
-    }
-   
+  
 
     // === RENDER MAIN LIST PAGE ===
     public function render_template($initial_data = []) {
@@ -108,22 +97,36 @@ class ComicRenderer {
         }
     }
 
+    public function get_single_issue( $title_id, $issue_id ) {
+        if ( empty( $title_id ) || empty( $issue_id ) || $title_id <= 0 || $issue_id <= 0 ) {
+            return null;
+        }
+        return $this->data_service->get_single_issue( $title_id, $issue_id );
+    }
+
+    public function get_metron_cv_id( $metron_id ) {
+        if ( empty( $metron_id ) || $metron_id <= 0 ) {
+            return null;
+        }
+        return $this->data_service->get_metron_cv_id( $metron_id );
+    }
+
+    public function get_comicvine_issue_info( $cv_id ) {
+        if ( ! $cv_id ) {
+            return null;
+        }     
+        return $this->data_service->get_comicvine_issue_info( $cv_id );
+    }
+
+    public function build_cv_map_for_series( $series_id, $page = 1) {
+
+        $map = $this->data_service->build_cv_map_for_series( $series_id, $page );
+        
+        return $map;
+    }
     public function clean_cv_description($desc) {
         return $this->data_service->clean_cv_description($desc);
     }
-
-    public function render_issue_details() {    
-        $title_id = isset( $_GET['title_id'] ) ? (int) $_GET['title_id'] : 0;
-        $issue_id = isset( $_GET['issue_id'] ) ? (int) $_GET['issue_id'] : 0;
-    
-        if ( ! $title_id || ! $issue_id ) {
-            echo '<p>Required parameters missing (series or issue ID).</p>';
-            return;
-        } 
-    
-        // Pass everything to your template
-        include plugin_dir_path( __FILE__ ) . 'templates/issue-details-template.php';
-    }    
    
 
     /* -----------------------------------------------------------------

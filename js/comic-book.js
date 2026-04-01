@@ -241,8 +241,8 @@ jQuery(document).ready(function($){
                                 <div class="comic-image">
                                     <img src="${comicbooks_fetchers_data.placeholder}"
                                         data-src="${item.first_issue_image || ''}"
-                                        alt="${item.name}"
-                                        loading="lazy"
+                                        alt="${item.name}"   
+                                        loading="lazy"                                 
                                         class="lazy-placeholder">
                                 </div>
                                 <div class="comic-info">
@@ -345,7 +345,8 @@ jQuery(document).ready(function($){
     }
 
     let lazyLoadObserver = null;
-    const BATCH_SIZE = 3; // Load 3 images at a time
+    const BATCH_SIZE = 5; // Load 5 images at a time
+    const BATCH_DELAY = 0; // smaller delay to group nearby entries without noticeable lag
     const seriesBatch = new Set();
     const publisherBatch = new Set();
     let batchTimeout = null;
@@ -354,7 +355,12 @@ jQuery(document).ready(function($){
         if (batchTimeout) return; // Already processing
     
         batchTimeout = setTimeout(() => {
-            const seriesIds = Array.from(seriesBatch).slice(0, BATCH_SIZE);
+            const visibleImages = Array.from(document.querySelectorAll('.comic-title img[data-src]'));
+
+            const seriesIds = visibleImages
+                .map(img => img.closest('.comic-title')?.dataset.seriesId)
+                .filter(id => seriesBatch.has(id))
+                .slice(0, BATCH_SIZE);
             const publisherIds = Array.from(publisherBatch).slice(0, BATCH_SIZE);
     
             // Remove processed IDs
@@ -411,7 +417,7 @@ jQuery(document).ready(function($){
             if (seriesBatch.size > 0 || publisherBatch.size > 0) {
                 processBatch();
             }
-        }, 50); // Small delay to group nearby entries
+        }, BATCH_DELAY); // Small delay to group nearby entries
     }
     
     function lazyLoadImages() {
@@ -460,15 +466,12 @@ jQuery(document).ready(function($){
                 }
             });
         }, {
-            rootMargin: '400px 0px 400px 0px', // Start loading 200px before viewport
+            rootMargin: '200px 0px', // Start loading 200px before viewport
             threshold: 0.01
         });
     
         images.forEach(img => lazyLoadObserver.observe(img));
     } 
-
-    // Initialize
-    document.addEventListener('DOMContentLoaded', lazyLoadImages);
 
     // Fetch publishers
     function fetchPublishers(name = '', page, letter = 'all', retries = 3) {

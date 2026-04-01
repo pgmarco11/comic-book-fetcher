@@ -1,66 +1,93 @@
-    <?php
+<?php
+/**
+ * Issue Details Template – Optimized
+ * 
+ */
 
-    $issue = $this->data_service->get_single_issue( $title_id, $issue_id );
-    if ( ! $issue ) {
-        echo '<p>Issue not found or does not belong to this series.</p>';
-        return;
-    }    
+    $cache_key = "metron:issue:{$title_id}_{$issue_id}";
+    $issue = get_transient($cache_key);
+    
+    if ($issue === false) {
 
-    $series_cache_key = "metron:issue:{$title_id}_{$issue_id}";     
-    $series = get_transient( $series_cache_key );
-
-    if ( false === $series ) {
-        $url_series = $this->client->api_base . "series/{$title_id}/";
-        $series = $this->client->api_get( $url_series );
-
-        if ( isset( $series['error'] ) || empty( $series['name'] ) ) {
-            echo '<p>Series not found.</p>';
+        if (!$comic_renderer) {
+            echo '<p>Error: Comic renderer is not initialized.</p>';
             return;
         }
 
-        set_transient( $series_cache_key, $series, MONTH_IN_SECONDS );  // series rarely changes
+        $issue = $comic_renderer->get_single_issue($title_id, $issue_id); 
+    
+        if (!$issue) {
+            echo '<p>Issue not found or does not belong to this series.</p>';
+            return;
+        }
+    
+        set_transient($cache_key, $issue, DAY_IN_SECONDS);
     }
+
+    
+    // Normalize structure
+    $series    = $issue['series'] ?? [];
+    $publisher = $issue['publisher'] ?? [];   
+  
 
     // ─────────────────────────────────────────────────────────────
     //  ComicVine enrichment (same as before)
     // ───────────────────────────────────────────────────────────── 
 
-    $cv_series_id = $this->data_service->get_metron_cv_id( $issue_id ); 
-    $cv_issue = $cv_series_id ? $this->data_service->get_comicvine_issue_info( $cv_series_id, $issue_id ) : [];
+    $cv_series_id = $comic_renderer->get_metron_cv_id($title_id);
+    $cv_issue = $cv_series_id
+    ? $comic_renderer->get_comicvine_issue_info($cv_series_id, $issue_id)
+    : [];
 
-    $description = $this->data_service->clean_cv_description(
-        $cv_issue['description'] ?? $issue['description'] ?? $issue['desc'] ?? ''
-    );  
+    // Description (CV → Metron → fallback)
+    $description = $comic_renderer->clean_cv_description(
+        $cv_issue['description'] 
+        ?? $issue['description'] 
+        ?? $issue['desc'] 
+        ?? 'No description available.'
+    );
 
 
     $metron_cv_id = $cv_issue['id'] ?? '';
+
+    // Creators
     $creators = $cv_issue['person_credits'] ?? $issue['credits'] ?? [];
-    $creator_infos = array_map( function( $p ) {
+
+    $creator_infos = [];
+    
+    foreach ($creators as $p) {
         $name = $p['name'] ?? $p['creator'] ?? 'Unknown';
-        $role = is_array( $p['role'] ?? [] )
-            ? implode( ', ', array_column( $p['role'], 'name' ) )
-            : ( $p['role'] ?? 'N/A' );
-        return "$name – $role";
-    }, $creators );
+    
+        $role = is_array($p['role'] ?? null)
+            ? implode(', ', array_column($p['role'], 'name'))
+            : ($p['role'] ?? 'N/A');
+    
+        $creator_infos[] = "$name – $role";
+    }
+    
+    $creator_info_string = implode("\n", $creator_infos);
 
-    $creator_info_string = implode( "\n", $creator_infos );
 
-    if ( is_array($series['genres']) && !empty($series['genres']) ) {
+    // Genres (Metron -> CV concepts)
+    if (!empty($series['genres'])) {
         $genre_sources = array_column($series['genres'], 'name');
-    } elseif ( !empty($cv_issue['concept_credits']) ) {
+    } elseif (!empty($cv_issue['concept_credits'])) {
         $genre_sources = array_column($cv_issue['concept_credits'], 'name');
     } else {
         $genre_sources = [];
     }
-    $genre_string = implode(', ', $genre_sources);
 
-    $date_raw = $cv_issue['cover_date'] ?? $issue['cover_date'] ?? null;
-    $cover_date_display = $date_raw ? date( 'F Y', strtotime( $date_raw ) ) : 'Unknown';
+    $genre_string = implode(', ', $genre_sources);   
 
     // Optional: more fallbacks
-    $issue_number = $issue['number'] ?? '??';
-    $series_name = $series['series']['name'] ?? 'Series';
-    $issue_title = trim( $series_name . ' #' . $issue_number );
+    $series_name   = $series['name'] ?? 'Series';
+    $issue_number  = $issue['number'] ?? '??';
+    $issue_title   = trim($series_name . ' #' . $issue_number);
+    
+    $date_raw = $issue['cover_date'] ?? null; 
+    $cover_date_display = $date_raw ? date('F Y', strtotime($date_raw)) : 'Unknown';
+
+    $volume = $series['volume'] ?? '';
 
     ?>
        
@@ -72,32 +99,29 @@
                             <nav class="category-breadcrumbs">
                                 <a href="<?php echo esc_url(home_url('/comic-catalog')); ?>">Publishers</a>
                                 <span class="separator">&#10148;</span>
-                                <span class="category"><a href="<?php echo esc_url(home_url('/comic-catalog/?publisher_id=' . $series['publisher']['id'])); ?>">
+                                <span class="category"><a href="<?php echo esc_url(home_url('/comic-catalog/?publisher_id=' . $publisher['id'])); ?>">
 
-                                    <?php echo esc_html($series['publisher']['name']); ?>
+                                    <?php echo esc_html($publisher['name']); ?>
 
                                 </a></span>
                                 <span class="separator">&#10148;</span>
                                 <span class="category">
                                     <a href="<?php echo esc_url(home_url('/comic-catalog/issues/?title_id=' . $title_id)); ?>">
-                                    <?php echo esc_html($series['series']['name'] ?? 'Comic Series'); ?></a>
+                                    <?php echo esc_html($series['name'] ?? 'Comic Series'); ?></a>
                                 </span>
                                 <span class="current-category"><?php echo '&nbsp; # ' . esc_html($issue['number'] ?? 'N/A'); ?></div>
                             </nav>
                             <h1 class="page-title">
                                 <?php
-                                $issue_title = esc_html($series['series']['name'] ?? 'Comic Series') . ' #' . esc_html($issue['number'] ?? 'N/A');
+                                $issue_title = esc_html($series['name'] ?? 'Comic Series') . ' #' . esc_html($issue['number'] ?? 'N/A');
                                 ?>
                                 <span><?php echo $issue_title; ?></span>
                             </h1>
                         </header>
                         <div class="issue-details-header">
                             <div>
-                                <p><?php echo esc_html($series['publisher']['name'] ?? 'N/A'); ?>&nbsp;&nbsp;/&nbsp;
-                                <?php
-                                    $date_raw = $cv_issue['cover_date'] ?? $issue['cover_date'] ?? null;
-                                    echo $date_raw ? esc_html(date('F Y', strtotime($date_raw))) : 'Unknown';
-                                ?>
+                                <p><?php echo esc_html($publisher['name'] ?? 'N/A'); ?>&nbsp;&nbsp;/&nbsp;
+                                <?php echo esc_html($cover_date_display); ?>
                                 </p>
                             </div>
                         </div>
@@ -147,19 +171,18 @@
                                             <div class="d-flex flex-wrap align-items-end gap-3">
                                                 <!-- Collection Button -->
                                                 <div class="text-center">
-                                                    <button
+                                                <button
                                                         class="add-to-collection <?php echo $in_collection ? 'in-collection' : ''; ?>"
                                                         style="<?php echo $in_collection ? 'background-color: red; color: white;' : ''; ?>"
-                                                        data-title="<?php echo esc_attr($issue_title); ?>"
-                                                        data-genres="<?php echo esc_attr($genre_string); ?>"
-                                                        data-genre-origin="<?php echo empty($series['genres']) ? 'cv' : 'metron'; ?>"
-                                                        data-description="<?php echo esc_attr($description ?: 'No description available'); ?>"
+                                                        data-title="<?php echo esc_attr($issue_title); ?>"                                                    
+                                                        data-description="<?php echo esc_attr(wp_strip_all_tags($description)); ?>"
                                                         data-issue-id="<?php echo esc_attr($issue_id); ?>"
                                                         data-title-id="<?php echo esc_attr($title_id); ?>"
-                                                        data-publisher="<?php echo esc_attr($series['publisher']['name'] ?? 'Unknown'); ?>"
-                                                        data-creators="<?php echo esc_attr($creator_info_string ?: '—'); ?>"
+                                                        data-creators="<?php echo esc_attr($creator_info_string ?: ''); ?>"
                                                         data-date="<?php echo esc_attr($date_raw); ?>"
-                                                        data-volume="<?php echo esc_attr($series['volume'] ?? ''); ?>"
+                                                        data-genres="<?php echo esc_attr($genre_string); ?>"
+                                                        data-publisher="<?php echo esc_attr($publisher['name'] ?? 'Unknown'); ?>"
+                                                        data-volume="<?php echo esc_attr($volume); ?>"
                                                         data-issue-number="<?php echo esc_attr($issue['number']); ?>"
                                                         data-image-url="<?php echo esc_url($issue['image']); ?>"
                                                         <?php if ($in_collection): ?>

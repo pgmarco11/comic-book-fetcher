@@ -31,9 +31,7 @@ class ComicDataService {
         return isset( $this->client->dataset_ttl )
             ? (int) $this->client->dataset_ttl
             : self::DEFAULT_DATASET_TTL;
-    }
-    
-
+    }   
 
     /**-----------------------------------------------------------------
      *  PUBLISHERS – full list (cached once a week)
@@ -45,7 +43,7 @@ class ComicDataService {
         $letter      = 'all',
         $bypass_cache = false
     ) {
-        $transient_key = 'metron:publishers:full:v1'; // versioned
+        $transient_key = 'metron:publishers:full:v2'; // versioned
 
         $full = $bypass_cache ? false : get_transient($transient_key);
     
@@ -365,8 +363,7 @@ class ComicDataService {
         $total_pages    = max(1, ceil($total_filtered / $per_page));
     
         // Graceful handling for page > total
-        if ($current_page > $total_pages && $total_filtered > 0) {
-            error_log("get_series_issues: Requested page {$current_page} > total_pages {$total_pages} for series {$title_id} (total issues: {$total_filtered})");
+        if ($current_page > $total_pages && $total_filtered > 0) {          
             $paged_issues = [];
         }
     
@@ -708,9 +705,7 @@ class ComicDataService {
         }
     
         $url  = $this->client->api_base . "series/{$series_id}/issue_list/?page={$page}&page_size=100";
-        $data = $this->client->api_get( $url );
-
-        error_log("cv_map: " . print_r($data, true) );
+        $data = $this->client->api_get( $url ); 
     
         if ( empty( $data['results'] ) ) {
             return [];
