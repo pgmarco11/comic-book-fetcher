@@ -1,44 +1,153 @@
-
+/* =========================
+   WISHLIST GRID
+========================= */
 ul.user-wishlist {
-    padding: .25rem !important;
-    background-color: var(--wp--preset--color--black);
-    margin: 1rem 0 2rem;
-  }
-  ul.user-wishlist li {
-    border-width: 2px 1px 0 1px;
-    padding: .75rem 1rem !important;
-    border-style: solid;
-    border-color: solid var(--wp--preset--color--primary);
-    margin: 0 !important;
-    background-color: var(--wp--preset--color--white);
-  }
-  .add-to-wishlist,
-  .remove-from-wishlist {
-    border-radius: 6px;
-    text-decoration: none;
-    cursor: pointer;
-    border: none;
-    transition: background-color 0.3s ease;
-    font-family: Bangers, cursive;
-    font-weight: 500;
-    letter-spacing: .05rem;
-    margin: 0 .75rem 0 0;
-    outline: 1px solid #000;
-    padding: .5rem 1rem;
-    text-transform: uppercase;
-    font-size: 1.25rem;
-    line-height: 1.5rem;
-  }
-  .add-to-wishlist,
-  .remove-from-wishlist {
-    background-color: #007bff;
-    color: #fff;
-  }  
-  .add-to-wishlist:hover,
-  .remove-from-wishlist:hover {
-    background-color: #0056b3;
-  }
-  .add-to-wishlist.in-wishlist {
-    background-color: red;
-    color: white; 
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 3rem;
+  margin: 1rem 0 2rem;
+  list-style: none;
+
+  position: relative;
+}
+
+/* dashed comic border */
+ul.user-wishlist::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* =========================
+   CARD
+========================= */
+ul.user-wishlist li {
+  overflow: hidden;
+  position: relative;
+  background: #fff;
+  border: 3px solid #000;
+  border-radius: 12px;
+  padding: 1rem !important;
+  align-items:center;
+  box-shadow:
+    6px 6px 0 var(--wp--preset--color--navy-blue),
+    10px 10px 20px rgba(0,0,0,0.25);
+
+  transition: transform .25s ease, box-shadow .25s ease;
+
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* HALFTONE */
+ul.user-wishlist li::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-radial-gradient(
+    circle,
+    rgba(255,173,36,0.25) 0px,
+    rgba(255,173,36,0.25) 2px,
+    transparent 2px,
+    transparent 8px
+  );
+  opacity: 0.15;
+  pointer-events: none;
+}
+
+/* RIBBON */
+ul.user-wishlist li::after {
+  content: "WISH LIST";
+  position: absolute;
+  top: 10px;
+  right: -35px;
+  background: var(--wp--preset--color--primary);
+  color: #fff;
+  font-family: 'Bangers', cursive;
+  padding: 4px 35px;
+  transform: rotate(45deg);
+  font-size: 0.8rem;
+  letter-spacing: 1px;
+  border: 2px solid #000;
+}
+
+/* HOVER */
+ul.user-wishlist li:hover {
+  transform: translate(-6px, -6px) scale(1.02);
+
+  box-shadow:
+    10px 10px 0 #ffad24,
+    16px 16px 30px rgba(0,0,0,0.35);
+}
+
+/* =========================
+   IMAGE
+========================= */
+ul.user-wishlist img {
+ max-width: 250px;
+ max-height: 340px;
+  object-fit: cover;
+  background: #fff;
+  border: 2px solid #000;
+  box-shadow: inset 0 0 0 2px #fff;
+  padding: 4px;
+  transition: transform .3s ease;
+}
+
+ul.user-wishlist li:hover img {
+  transform: scale(1.05);
+}
+
+/* =========================
+   TITLE
+========================= */
+ul.user-wishlist strong {
+  display: block;
+  font-family: 'Bangers', cursive;
+  font-size: 1.4rem;
+  letter-spacing: 1px;
+  color: var(--wp--preset--color--secondary);
+}
+
+/* =========================
+   META TEXT
+========================= */
+ul.user-wishlist small {
+  display: block;
+  font-size: 0.9rem;
+}
+
+/* =========================
+   BUTTONS
+========================= */
+.user-wishlist .add-to-wishlist,
+.user-wishlist .remove-from-wishlist {
+  border: 2px solid #000;
+  background: #ffad24;
+  color: #000;
+  box-shadow: 3px 3px 0 #000;
+  font-family: 'Bangers', cursive;
+  letter-spacing: 1px;
+  padding: .5rem 1rem;
+  text-transform: uppercase;
+  transition: all .2s ease;
+}
+
+.user-wishlist .add-to-wishlist:hover,
+.user-wishlist .remove-from-wishlist:hover {
+  background: #fff;
+  transform: translate(-2px, -2px);
+  box-shadow: 5px 5px 0 #000;
+}
+
+/* REMOVE = red variant */
+.user-wishlist .remove-from-wishlist {
+  background: #d9534f;
+  color: #fff;
+}
+
+.user-wishlist .remove-from-wishlist:hover {
+  background: var(--wp--preset--color--deep-red);
 }

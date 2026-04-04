@@ -53,16 +53,13 @@ function comicbooks_enqueue_scripts() {
         $load_comic_assets = true;
     }
 
-    if ( is_category( 'collection' ) ) { 
+    if ( is_post_type_archive('collection') || is_tax('publisher') || is_tax('comic_genre') ) { 
         $load_category_archive = true;
     }
 
     // Load on collection posts
-    if (is_singular('post') && $post) {
-        $collection_cat = get_category_by_slug('collection');
-        if ($collection_cat && (has_category($collection_cat->term_id, $post) || post_is_in_descendant_category($collection_cat->term_id, $post))) {
-            $load_comic_assets = true;
-        }
+    if (is_singular('collection') && $post) {    
+            $load_comic_assets = true;     
     }
 
     wp_enqueue_script(
@@ -156,8 +153,26 @@ function comic_book_api_settings_page() {
         'render_api_settings_page',
         'dashicons-book'
     );
+    // Publishers submenu
+    add_submenu_page(
+            'comicbooks-settings',                 // parent slug
+            'Publishers',                          // page title
+            'Publishers',                          // menu title
+            'manage_options',
+            'edit-tags.php?taxonomy=publisher&post_type=collection'
+    );    
+    // Genres submenu
+    add_submenu_page(
+            'comicbooks-settings',
+            'Genres',
+            'Genres',
+            'manage_options',
+            'edit-tags.php?taxonomy=comic_genre&post_type=collection'
+    );
+    
 }
 add_action('admin_menu', 'comic_book_api_settings_page');
+
 
 function render_api_settings_page() {
     // Save API credentials

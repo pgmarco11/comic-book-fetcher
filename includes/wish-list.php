@@ -87,8 +87,8 @@ function mwp_display_user_wishlist() {
     ob_start(); ?>
     <ul class="user-wishlist" style="list-style:none;padding:0;">
         <?php foreach ($wishlist as $item): ?>
-            <li style="margin-bottom:15px;display:flex;align-items:center;gap:10px;">
-                <img src="<?php echo esc_url($item['image_url']); ?>" alt="" style="width:50px;height:50px;object-fit:cover;">
+            <li style="margin-bottom:15px;">
+                <img src="<?php echo esc_url($item['image_url']); ?>" alt="" style="object-fit:cover;">
                 <div style="flex:1;">
                     <a href="<?php echo esc_url($item['item_url']); ?>" target="_blank"><strong><?php echo esc_html($item['title']); ?></strong></a>
                     <?php if ($item['volume']): ?>
