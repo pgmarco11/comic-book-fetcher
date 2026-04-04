@@ -93,9 +93,6 @@ function comicbooks_enqueue_scripts() {
             'placeholder' => PUBLISHER_PLACEHOLDER_IMAGE_URL,
             'per_page'    => 10,
         ]);
-    }
-
-    if ( $load_category_archive ) {
      
         wp_enqueue_script(
             'comic-collection-script',

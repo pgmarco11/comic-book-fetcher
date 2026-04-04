@@ -61,97 +61,164 @@ function register_collection_post_type() {
 }
 add_action('init', 'register_collection_post_type', 0);
 
-/**
- * Register Custom Taxonomies
- */
-function register_comic_taxonomies() {
+if (!taxonomy_exists('publisher')) {
+    /**
+     * Register Custom Taxonomies
+     */
+    function register_comic_taxonomies() {
 
-    // ======================
-    // Publisher Taxonomy
-    // ======================
-    $publisher_labels = [
-        'name'          => 'Publishers',
-        'singular_name' => 'Publisher',
-        'menu_name'     => 'Publishers',
-        'search_items'  => 'Search Publishers',
-        'popular_items' => 'Popular Publishers',
-        'all_items'     => 'All Publishers',
-        'edit_item'     => 'Edit Publisher',
-        'update_item'   => 'Update Publisher',
-        'add_new_item'  => 'Add New Publisher',
-        'new_item_name' => 'New Publisher Name',
-        'not_found'     => 'No publishers found.',
-        'no_terms'      => 'No publishers',
-    ];
+        // ======================
+        // Publisher Taxonomy
+        // ======================
+        $publisher_labels = [
+            'name'          => 'Publishers',
+            'singular_name' => 'Publisher',
+            'menu_name'     => 'Publishers',
+            'search_items'  => 'Search Publishers',
+            'popular_items' => 'Popular Publishers',
+            'all_items'     => 'All Publishers',
+            'edit_item'     => 'Edit Publisher',
+            'update_item'   => 'Update Publisher',
+            'add_new_item'  => 'Add New Publisher',
+            'new_item_name' => 'New Publisher Name',
+            'not_found'     => 'No publishers found.',
+            'no_terms'      => 'No publishers',
+        ];
 
-    register_taxonomy('publisher', 'collection', [
-        'labels'            => $publisher_labels,
-        'hierarchical'      => true,
-        'public'            => true,
-        'show_ui'           => true,
-        'show_admin_column' => true,
-        'show_in_nav_menus' => false,
-        'show_tagcloud'     => false,
-        'show_in_rest'      => true,
-        'query_var'         => true,
-        'rewrite'           => ['slug' => 'publisher'],
-    ]);
+        register_taxonomy('publisher', 'collection', [
+            'labels'            => $publisher_labels,
+            'hierarchical'      => true,
+            'public'            => true,
+            'show_ui'           => true,
+            'show_admin_column' => true,
+            'show_in_nav_menus' => false,
+            'show_tagcloud'     => false,
+            'show_in_rest'      => true,
+            'query_var'         => true,
+            'rewrite'           => ['slug' => 'publisher'],
+        ]);
+        register_taxonomy_for_object_type('publisher', 'collection');
 
-    // ======================
-    // Genre Taxonomy
-    // ======================
-    $genre_labels = [
-        'name'              => 'Genres',
-        'singular_name'     => 'Genre',
-        'menu_name'         => 'Genres',
-        'search_items'      => 'Search Genres',
-        'popular_items'     => 'Popular Genres',
-        'all_items'         => 'All Genres',
-        'edit_item'         => 'Edit Genre',
-        'update_item'       => 'Update Genre',
-        'add_new_item'      => 'Add New Genre',
-        'new_item_name'     => 'New Genre Name',
-        'parent_item'       => 'Parent Genre',
-        'parent_item_colon' => 'Parent Genre:',
-        'not_found'         => 'No genres found.',
-    ];
+        // ======================
+        // Genre Taxonomy
+        // ======================
+        $genre_labels = [
+            'name'              => 'Genres',
+            'singular_name'     => 'Genre',
+            'menu_name'         => 'Genres',
+            'search_items'      => 'Search Genres',
+            'popular_items'     => 'Popular Genres',
+            'all_items'         => 'All Genres',
+            'edit_item'         => 'Edit Genre',
+            'update_item'       => 'Update Genre',
+            'add_new_item'      => 'Add New Genre',
+            'new_item_name'     => 'New Genre Name',
+            'parent_item'       => 'Parent Genre',
+            'parent_item_colon' => 'Parent Genre:',
+            'not_found'         => 'No genres found.',
+        ];
 
-    register_taxonomy('comic_genre', 'collection', [
-        'labels'            => $genre_labels,
-        'hierarchical'      => true,
-        'public'            => true,
-        'show_ui'           => true,
-        'show_admin_column' => true,
-        'show_in_nav_menus' => false,
-        'show_tagcloud'     => false,
-        'show_in_rest'      => true,
-        'query_var'         => true,
-        'rewrite'           => ['slug' => 'genre'],
-    ]);
+        register_taxonomy('comic_genre', 'collection', [
+            'labels'            => $genre_labels,
+            'hierarchical'      => true,
+            'public'            => true,
+            'show_ui'           => true,
+            'show_admin_column' => true,
+            'show_in_nav_menus' => false,
+            'show_tagcloud'     => false,
+            'show_in_rest'      => true,
+            'query_var'         => true,
+            'rewrite'           => ['slug' => 'genre'],
+        ]);
+        register_taxonomy_for_object_type('comic_genre', 'collection');
+    }
+    add_action('init', 'register_comic_taxonomies');
 }
-add_action('init', 'register_comic_taxonomies');
 
-/**
- * Only show top-level publishers in checklist
- */
-add_filter('wp_terms_checklist_args', function ($args, $post_id) {
+function normalize_comic_title(string $title): string {
 
-    if ($args['taxonomy'] !== 'publisher') {
-        return $args;
+    // Remove issue numbers like #1, #001, etc.
+    $title = preg_replace('/^\s*#?\d+\s*[-–—]\s*/u', '', $title);  
+
+    // Remove volume indicators (Vol. 1, Volume 2, v3)
+    $title = preg_replace('/\b(vol(ume)?|v)\.?\s*\d+\b/i', '', $title);
+
+    // Remove years in parentheses (1999), (2021-)
+    $title = preg_replace('/\(\s*\d{4}.*?\)/', '', $title);
+
+    // Remove extra separators
+    $title = preg_replace('/[-–:]\s*$/', '', $title);
+
+    // Normalize whitespace
+    $title = trim(preg_replace('/\s+/', ' ', $title));     
+
+    return $title;
+}
+
+function ensure_publisher_terms(string $publisher_name) {
+
+    $publisher = term_exists($publisher_name, 'publisher');
+
+    if (!$publisher) {
+        $publisher = wp_insert_term($publisher_name, 'publisher');
     }
 
-    $args['walker'] = new class extends Walker_Category_Checklist {
-        function walk($elements, $max_depth, ...$args) {
-            $elements = array_filter($elements, function ($term) {
-                return $term->parent == 0;
-            });
-            return parent::walk($elements, $max_depth, ...$args);
+    if (is_wp_error($publisher)) {
+        return false;
+    }
+
+    $publisher_id = is_array($publisher) ? $publisher['term_id'] : $publisher;
+
+    // Ensure "All Publisher"
+    $all_slug = 'all-' . sanitize_title($publisher_name);
+    $all_term = term_exists($all_slug, 'publisher');
+
+    if (!$all_term) {
+        $all_term = wp_insert_term('All ' . $publisher_name, 'publisher', [
+            'slug'   => $all_slug,
+            'parent' => $publisher_id,
+        ]);
+    }
+
+    $all_id = is_array($all_term) ? $all_term['term_id'] : $all_term;
+
+    return [
+        'publisher_id' => $publisher_id,
+        'all_id'       => $all_id,
+    ];
+}
+
+function ensure_title_term(string $normalized_title, int $publisher_id) {
+
+    $slug = sanitize_title($normalized_title);
+
+    // Check if term exists under this parent
+    $existing = get_terms([
+        'taxonomy'   => 'publisher',
+        'hide_empty' => false,
+        'slug'       => $slug,
+        'parent'     => $publisher_id,
+    ]);
+
+    if (!empty($existing)) {
+        foreach ($existing as $term) {
+            if ((int)$term->parent === $publisher_id) {
+                return $term->term_id;
+            }
         }
-    };
+    }
 
-    return $args;
+    $term = wp_insert_term($normalized_title, 'publisher', [
+        'slug'   => $slug,
+        'parent' => $publisher_id,
+    ]);
 
-}, 10, 2);
+    if (is_wp_error($term)) {
+        return false;
+    }
+
+    return $term['term_id'];
+}
 
 /**
  * AJAX: Add Comic to Collection
@@ -187,11 +254,13 @@ function handle_add_comic_to_collection() {
         wp_send_json_error('Missing required data.');
     }
 
+    $normalized_title = normalize_comic_title($title);
+
     $post_id = wp_insert_post([
         'post_type'    => 'collection',
-        'post_title'   => $title,
+        'post_title'   => $normalized_title,
         'post_content' => $description,
-        'post_status'  => 'private',
+        'post_status'  => 'publish',
         'post_author'  => $user_id,
     ]);
 
@@ -219,12 +288,33 @@ function handle_add_comic_to_collection() {
 
     // Taxonomies
     if (!empty($publisher)) {
-        wp_set_object_terms($post_id, $publisher, 'publisher');
+    
+        // Ensure publisher + All term
+        $terms = ensure_publisher_terms($publisher);
+    
+        if ($terms) {
+    
+            $publisher_id = $terms['publisher_id'];
+            $all_id       = $terms['all_id'];
+    
+            // Create/get title under publisher
+            $title_term_id = ensure_title_term($normalized_title, $publisher_id);
+    
+            $assign_terms = [$publisher_id, $all_id];
+    
+            if ($title_term_id) {
+                $assign_terms[] = $title_term_id;
+            }
+    
+            wp_set_object_terms($post_id, array_map('intval', $assign_terms), 'publisher', false);
+            wp_update_term_count_now($assign_terms, 'publisher');
+        }
     }
 
     if (!empty($genres_raw)) {
         $genres_array = array_map('trim', explode(',', $genres_raw));
         wp_set_object_terms($post_id, $genres_array, 'comic_genre');
+        wp_update_term_count_now($genres_array, 'comic_genre');
     }
 
     // Defaults
@@ -315,3 +405,60 @@ add_action('created_publisher', function ($term_id, $tt_id) {
         'parent' => $term_id,
     ]);
 }, 10, 2);
+
+/**
+ * Only show top-level publishers in checklist
+ */
+add_filter('wp_terms_checklist_args', function ($args, $post_id) {
+
+    if ($args['taxonomy'] !== 'publisher') return $args;
+
+    $args['walker'] = new class extends Walker_Category_Checklist {
+        function walk($elements, $max_depth, ...$args) {
+
+            $elements = array_filter($elements, function ($term) {
+                // Only top-level + hide "all-*"
+                return $term->parent == 0 && strpos($term->slug, 'all-') !== 0;
+            });
+
+            return parent::walk($elements, $max_depth, ...$args);
+        }
+    };
+
+    return $args;
+
+}, 10, 2);
+
+add_action('wp_ajax_check_collection_status_batch', function() {
+    check_ajax_referer('comicbooks_fetchers_data', 'security');
+    if (!is_user_logged_in()) wp_send_json_error('Not logged in.');
+
+    $user_id = get_current_user_id();
+    $issue_ids = array_map('intval', (array)($_POST['issue_ids'] ?? []));
+
+    if (empty($issue_ids)) wp_send_json_success([]);
+
+    $in_collection = [];
+
+    foreach ($issue_ids as $issue_id) {
+        $posts = get_posts([
+            'post_type'   => 'collection',
+            'meta_query'  => [
+                [
+                    'key'     => 'issue_id',
+                    'value'   => $issue_id,
+                    'compare' => '=',
+                ],
+            ],
+            'author'      => $user_id,
+            'fields'      => 'ids',
+            'posts_per_page' => 1
+        ]);
+
+        if (!empty($posts)) {
+            $in_collection[] = $issue_id;
+        }
+    }
+
+    wp_send_json_success($in_collection);
+});
