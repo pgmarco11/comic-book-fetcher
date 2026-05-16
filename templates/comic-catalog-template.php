@@ -23,10 +23,41 @@ $is_publisher = $type === 'publishers';
         <div class="<?php echo $is_publisher ? 'publishers' : 'book'; ?>-wrapper">
 
             <?php if ( empty( $items ) ) : ?>
-                
-                <p>No publishers found for page <?php echo $page; ?>. <a href="?letter=all">Go to page 1</a> or <button onclick="location.reload()">Retry</button>. Cache warming...</p>
+
+                <?php
+                $is_publisher = $type === 'publishers';
+                $what         = $is_publisher ? 'publishers' : 'series';
+
+                // Build a human-readable description of the active filter
+                if ( ! empty( $search ) ) {
+                    $filter_desc = 'matching "' . esc_html( $search ) . '"';
+                } elseif ( ! empty( $letter ) && $letter !== 'all' ) {
+                    $filter_desc = 'starting with "' . esc_html( strtoupper( $letter ) ) . '"';
+                } else {
+                    $filter_desc = '';
+                }
+
+                // Build a reset link that makes sense
+                if ( ! empty( $selected_publisher ) && ! $is_publisher ) {
+                    $reset_url = add_query_arg([
+                        'publisher_id' => $selected_publisher,
+                        'letter'       => 'all',
+                        'page'         => 1,
+                    ]);
+                    $reset_label = 'View all series for this publisher';
+                } else {
+                    $reset_url   = add_query_arg([ 'letter' => 'all', 'page' => 1 ]);
+                    $reset_label = 'View all ' . $what;
+                }
+                ?>
+
+                <p class="empty-state">
+                    No <?php echo $what; ?> found<?php echo $filter_desc ? ' ' . $filter_desc : ''; ?>.
+                    <a href="<?php echo esc_url( $reset_url ); ?>"><?php echo esc_html( $reset_label ); ?></a>
+                </p>
 
             <?php else : ?>
+                
                 <?php
                 $showing = count( $items );
                 $of      = $total;
@@ -40,8 +71,8 @@ $is_publisher = $type === 'publishers';
                 ?>
                 <p>Showing <?php echo $showing; ?> of <?php echo $of; ?> <?php echo $what . $extra; ?></p>
 
-                <?php foreach ( $items as $item ) : 
-
+                <?php foreach ( $items as $item ) :                     
+                     echo print_r($item, true);
                     if ( $is_publisher ) : ?>
                         <div class="publisher-item" data-publisher-id="<?php echo esc_attr( $item['id'] ); ?>">
                             <a href="/comic-catalog/?publisher_id=<?php echo esc_attr($item['id']); ?>&letter=all&page=1">
@@ -61,12 +92,14 @@ $is_publisher = $type === 'publishers';
                         <div class="comic-title" data-series-id="<?php echo esc_attr($item['series_id']); ?>">                     
                             <a href="/comic-catalog/issues/?title_id=<?php echo esc_attr($item['series_id']); ?>&page=1">
                                 <div class="comic-image">
-                                    <?php $first_image = $item['first_issue_image'] ?? PUBLISHER_PLACEHOLDER_IMAGE_URL; ?>
-                                    <img src="<?php echo esc_url($first_image); ?>"
-                                        data-src="<?php echo esc_url($item['first_issue_image'] ?? ''); ?>"
-                                        alt="<?php echo esc_attr($item['name']); ?>"
-                                        loading="lazy"
-                                        class="lazy-placeholder">
+                                <img 
+                                    src="<?php echo esc_url( COMICBOOKS_PLUGIN_URL . 'images/placeholder.png' ); ?>"
+                                    data-series-id="<?php echo esc_attr($item['series_id']); ?>"
+                                    alt="<?php echo esc_attr($item['name']); ?>"
+                                    loading="lazy"
+                                    class="lazy-placeholder"
+                                    width="220"
+                                    height="330">
                                 </div>
                                 <div class="comic-info">
                                     <div class="comic-title-name"><?php echo esc_html($item['name']); ?></div>
@@ -82,5 +115,36 @@ $is_publisher = $type === 'publishers';
                 <?php endforeach; ?>
             <?php endif; ?>
         </div>
-    </div>
+    </div>    
+
+    <?php if ($total_pages > 1): ?>
+        <div class="pagination-wrapper">
+            <p>Page <?php echo $page; ?> of <?php echo $total_pages; ?></p>
+
+            <?php if ($page > 1): ?>
+                <a href="<?php echo esc_url(add_query_arg('page', $page - 1)); ?>"
+                    class="page-btn"
+                    data-page="<?php echo $page - 1; ?>"
+                    data-letter="<?php echo esc_attr($letter); ?>">
+                        Previous
+                    </a>
+            <?php endif; ?>
+
+            <?php for ($i = max(1, $page - 2); $i <= min($total_pages, $page + 2); $i++): ?>
+                <a href="<?php echo esc_url(add_query_arg('page', $i)); ?>"
+                    class="page-btn <?php echo $i === $page ? 'active' : ''; ?>"
+                    data-page="<?php echo $i; ?>"
+                    data-letter="<?php echo esc_attr($letter); ?>">
+                        <?php echo $i; ?>
+                    </a>
+            <?php endfor; ?>
+
+            <?php if ($page < $total_pages): ?>
+                <a href="<?php echo esc_url(add_query_arg('page', $page + 1)); ?>" class="page-btn">
+                    Next
+                </a>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
+
 </div>

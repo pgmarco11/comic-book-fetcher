@@ -180,22 +180,25 @@ class ComicDataService {
         $search = '',
         $letter = 'all',
         $force_api = false,
-        $batch_size = 5
+        $batch_size = 100
     ) {
+        $complete_key = "metron:series_complete:$publisher_id";
+        $is_complete = get_transient($complete_key);
+
         $cache_key = "metron:series_full:$publisher_id";
         $full = get_transient($cache_key) ?: [];
     
         $last_page_key = "metron:series_last_page:$publisher_id";
         $api_page = get_transient($last_page_key) ?: 1;
     
-        if ($force_api || empty($full)) {
+        if ($force_api || empty($full) || !$is_complete) {
     
             $pages_fetched = 0;
     
             do {
                 $url = $this->client->api_base . "publisher/$publisher_id/series_list/?page={$api_page}&page_size=100";
                 $response = $this->client->api_get($url);
-    
+                
                 if (
                     !$response ||
                     empty($response['results']) ||
@@ -205,13 +208,12 @@ class ComicDataService {
                 }
     
                 foreach ($response['results'] as $item) {
-                    $full[] = [
+                    $full[$item['id']] = [
                         'series_id'   => $item['id'],
                         'name'        => $item['series'],
                         'volume'      => $item['volume'] ?? '1',
                         'issue_count' => $item['issue_count'] ?? 0,
-                        'year_began'  => $item['year_began'] ?? 'N/A',  
-                        'first_issue_image' => $item['first_issue_image'] ?? '',
+                        'year_began'  => $item['year_began'] ?? 'N/A',
                     ];
                 }
     
@@ -222,9 +224,13 @@ class ComicDataService {
                 usleep(200000); // 0.2s
     
             } while (!empty($response['next']) && $pages_fetched < $batch_size);
+
+            if (empty($response['next'])) {
+                set_transient($complete_key, true, 30 * DAY_IN_SECONDS);
+            }
     
             set_transient($cache_key, $full, 30 * DAY_IN_SECONDS);
-            set_transient($last_page_key, $api_page, 12 * HOUR_IN_SECONDS);
+            set_transient($last_page_key, $api_page, 30 * DAY_IN_SECONDS);
         }
     
         // --- filtering ---
@@ -244,8 +250,16 @@ class ComicDataService {
 
         // letter filter
         if ($letter !== 'all') {
-            $filtered = array_filter($filtered, function($s) use ($letter) {
-                $first = strtoupper(substr($s['name'], 0, 1));
+
+            $filtered = array_filter($filtered, function($item) use ($letter) {
+        
+                $title = trim($item['name']);
+        
+                // Remove leading articles
+                $title = preg_replace('/^(The|A|An)\s+/i', '', $title);
+        
+                $first = strtoupper(mb_substr($title, 0, 1));
+        
                 return $letter === '#'
                     ? !ctype_alpha($first)
                     : $first === strtoupper($letter);
@@ -256,10 +270,14 @@ class ComicDataService {
         $filtered = array_values($filtered);
 
         $total = count($filtered);
-        $offset = ($page - 1) * $per_page;
         
         // FIRST: paginate
-        $paged = array_slice($filtered, $offset, $per_page);              
+        $paged = array_slice(
+            $filtered,
+            ($page - 1) * $per_page,
+            $per_page
+        );
+
         // RETURN the modified dataset
         return [
             'items' => $paged,

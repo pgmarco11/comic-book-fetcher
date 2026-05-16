@@ -66,7 +66,7 @@ function comicbooks_enqueue_scripts() {
         'comic-utils',
         COMICBOOKS_PLUGIN_URL . 'js/comic-utils.js',
         ['toastify-js'], 
-        '1.0.1',
+        COMICBOOKS_PLUGIN_DIR . 'js/comic-utils.js',
         true
     );
 
@@ -76,18 +76,18 @@ function comicbooks_enqueue_scripts() {
             'comicbook-style',
             COMICBOOKS_PLUGIN_URL . 'css/comic-book.css',
             [],
-            '1.0.0'
+            filemtime( COMICBOOKS_PLUGIN_DIR . 'css/comic-book.css' )
         );
 
         wp_enqueue_script(
             'comicbook-script',
             COMICBOOKS_PLUGIN_URL . 'js/comic-book.js',
             ['jquery', 'comic-utils'],
-            '1.0.0',
+            filemtime( COMICBOOKS_PLUGIN_DIR . 'js/comic-book.js' ),
             true
         );
 
-        wp_localize_script('comicbook-script', 'comicbooks_fetchers_data', [
+        wp_localize_script('comicbook-script', 'comic_collection_data', [
             'ajax_url'    => admin_url('admin-ajax.php'),
             'nonce'       => wp_create_nonce('comicbooks_fetchers_data'),
             'placeholder' => PUBLISHER_PLACEHOLDER_IMAGE_URL,
@@ -98,7 +98,7 @@ function comicbooks_enqueue_scripts() {
             'comic-collection-script',
             COMICBOOKS_PLUGIN_URL . 'js/comic-collection.js',
             ['jquery', 'comic-utils'], 
-            '1.0.0',
+            COMICBOOKS_PLUGIN_DIR . 'js/comic-collection.js',
             true
         );
      
@@ -120,7 +120,7 @@ function comicbooks_enqueue_scripts() {
         'wishlist-script',
         COMICBOOKS_PLUGIN_URL . 'js/wishlist.js',
         ['jquery'],
-        '1.0.0',
+        COMICBOOKS_PLUGIN_DIR . 'js/wishlist.js',
         true
     );
 
@@ -128,7 +128,7 @@ function comicbooks_enqueue_scripts() {
         'wishlist-style',
         COMICBOOKS_PLUGIN_URL . 'css/wishlist.css',
         [],
-        '1.0.0'
+        filemtime( COMICBOOKS_PLUGIN_DIR . 'css/wishlist.css' )
     );
 
     wp_localize_script('wishlist-script', 'wishlist_ajax_obj', [

@@ -34,24 +34,43 @@
     //  ComicVine enrichment (same as before)
     // ───────────────────────────────────────────────────────────── 
 
-    $cv_series_id = $comic_renderer->get_metron_cv_id($title_id);
-    $cv_issue = $cv_series_id
-    ? $comic_renderer->get_comicvine_issue_info($cv_series_id, $issue_id)
-    : [];
+    $cv_issue_id = $issue['cv_id']
+        ?? $comic_renderer->get_metron_cv_id( $title_id )
+        ?? null;
 
-    // Description (CV → Metron → fallback)
-    $description = $comic_renderer->clean_cv_description(
-        $cv_issue['description'] 
-        ?? $issue['description'] 
-        ?? $issue['desc'] 
-        ?? 'No description available.'
+    $cv_issue = $cv_issue_id
+        ? $comic_renderer->get_comicvine_issue_info( $cv_issue_id )
+        : [];
+
+    // CV uses its own IDs; passing a Metron ID can return a wrong issue.
+    $metron_issue_number = $issue['number'] ?? null;
+    $cv_issue_number     = $cv_issue['issue_number'] ?? null;
+    
+    $cv_data_is_valid = (
+        !empty($cv_issue) &&
+        $metron_issue_number !== null &&
+        (string) $cv_issue_number === (string) $metron_issue_number
     );
+    
+    if ( ! $cv_data_is_valid ) {
+        $cv_issue = [];
+    }
+    
+    // Description: CV (only if valid match) → Metron → fallback
+    $raw_description =
+        ( $cv_data_is_valid ? ( $cv_issue['description'] ?? '' ) : '' )
+        ?: ( $issue['description'] ?? '' )
+        ?: ( $issue['desc']        ?? '' )
+        ?: 'No description available.';
+    
+    $description = $comic_renderer->clean_cv_description( $raw_description );
 
-
-    $metron_cv_id = $cv_issue['id'] ?? '';
+    $metron_cv_id = $cv_data_is_valid ? ( $cv_issue['id'] ?? '' ) : '';
 
     // Creators
-    $creators = $cv_issue['person_credits'] ?? $issue['credits'] ?? [];
+    $creators = $cv_data_is_valid
+    ? ( $cv_issue['person_credits'] ?? $issue['credits'] ?? [] )
+    : ( $issue['credits'] ?? [] );
 
     $creator_infos = [];
     

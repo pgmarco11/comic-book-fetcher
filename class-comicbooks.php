@@ -243,41 +243,51 @@ class Comicbooks {
      *  AJAX – Batch series images
      * ----------------------------------------------------------------- */
     public function ajax_load_series_images_batch() {
-        check_ajax_referer( 'comicbooks_fetchers_data', 'nonce' );
-
-        $series_ids = isset( $_POST['series_ids'] ) ? array_map( 'intval', (array) $_POST['series_ids'] ) : [];
-        if ( empty( $series_ids ) ) {
-            wp_send_json_error( [ 'message' => 'No series IDs provided' ] );
+        check_ajax_referer('comicbooks_fetchers_data', 'nonce');
+    
+        $series_ids = isset($_POST['series_ids'])
+            ? array_map('intval', (array) $_POST['series_ids'])
+            : [];
+    
+        if (empty($series_ids)) {
+            wp_send_json_error(['message' => 'No series IDs provided']);
         }
-
-        $client = $this->data_service->get_client();                  
+    
+        $client = $this->data_service->get_client();
         $images = [];
-        $missing = [];  
-
+    
         foreach ($series_ids as $sid) {
-            $ck = "metron:issue_list_full:$sid";
-            $data = get_transient($ck);
-        
-            if ($data !== false && !empty($data['results'][0]['image'])) {
-                $images[$sid] = $data['results'][0]['image'];
-            } else {
-                $missing[] = $sid;
+    
+            $cache_key = "metron:series_image:$sid";
+            $cached = get_transient($cache_key);
+    
+            // ✅ Use cached image if valid
+            if ($cached !== false && !empty($cached)) {
+                $images[$sid] = $cached;
+                continue;
             }
-        }
-        
-        foreach ($missing as $sid) {
+    
+            // 🚀 Fetch ONLY first issue
             $url  = $client->api_base . "series/$sid/issue_list/?page=1&page_size=1";
             $data = $client->api_get($url);
-        
-            $img = $data['results'][0]['image'] ?? '';
-        
+    
+            $img = '';
+    
+            if (
+                !empty($data['results']) &&
+                isset($data['results'][0]['image']) &&
+                !empty($data['results'][0]['image'])
+            ) {
+                $img = $data['results'][0]['image'];
+            }
+    
+            //Store ONLY the image (not full payload)
+            set_transient($cache_key, $img, 7 * DAY_IN_SECONDS);
+    
             $images[$sid] = $img;
-        
-            set_transient($ck, $data, $client->dataset_ttl * 4);
         }
-
-
-        wp_send_json_success( [ 'images' => $images ] );
+    
+        wp_send_json_success(['images' => $images]);
     }
 
     /* -----------------------------------------------------------------

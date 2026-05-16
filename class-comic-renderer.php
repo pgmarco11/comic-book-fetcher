@@ -61,32 +61,55 @@ class ComicRenderer {
 
     // === RENDER MAIN LIST PAGE ===
     public function render_template($initial_data = []) {
-        $items = $initial_data['items'] ?? [];
-        $total = $initial_data['total'] ?? 0;
-        $type = $initial_data['type'];
-        $page = $initial_data['page'] ?? 1; // Default to 1 if not set
-        $per_page = $initial_data['per_page'] ?? 10; // Default to 10 if not set
-        $letter = $initial_data['letter'] ?? 'all';
+        $items            = $initial_data['items']        ?? [];
+        $total            = $initial_data['total']        ?? 0;
+        $type             = $initial_data['type']         ?? '';
+        $page             = $initial_data['page']         ?? 1;
+        $per_page         = $initial_data['per_page']     ?? 10;
+        $letter           = $initial_data['letter']       ?? 'all';
         $selected_publisher = $initial_data['publisher_id'] ?? 0;
-      
-        // Hydrate JS
-        wp_localize_script('comicbook-script', 'comicbooks_fetchers_data', [
-            'items' => $items,
-            'total' => $total,
-            'type' => $type,
-            'per_page' => $per_page,
-            'page' => $page,
-            'letter' => $letter,
-            'publisher_id' => $selected_publisher,
-            'search' => $initial_data['search'] ?? '', // ← ADD THIS
-            'ajax_url' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('comicbooks_fetchers_data'),
-            'placeholder' => PUBLISHER_PLACEHOLDER_IMAGE_URL ?? '',
-            'preload_enabled' => false,
-        ]);
+        $search           = $initial_data['search']       ?? '';
 
-        
+    
+        wp_add_inline_script(
+            'comicbook-script',
+            'window.comicbooks_fetchers_data = Object.assign(window.comicbooks_fetchers_data || {}, '
+                . wp_json_encode([
+                    'items'           => $items,
+                    'total'           => $total,
+                    'type'            => $type,
+                    'per_page'        => $per_page,
+                    'page'            => $page,
+                    'letter'          => $letter,
+                    'publisher_id'    => $selected_publisher,
+                    'search'          => $search,
+                    'preload_enabled' => false,
+                ]) . ');',
+            'before'
+        );
 
+
+        // "No data at all" — no filters applied yet, let JS bootstrap the first fetch
+        $has_filters = $search || $selected_publisher || ( $letter && $letter !== 'all' );
+        $data_was_fetched = isset( $initial_data['items'] ); // key exists = a real query ran
+
+        if ( ! $data_was_fetched && ! $has_filters ) {
+            // Nothing fetched and no filters → show spinner, JS will fetch
+            if ( defined('DOING_AJAX') && DOING_AJAX ) ob_start();
+            ?>
+            <div id="loading-spinner" class="spinner-overlay" aria-live="polite" aria-label="Loading content">
+                <div class="spinner"></div>
+                <p>Loading...</p>
+            </div>
+            <div id="book-container"></div>
+            <?php
+            if ( defined('DOING_AJAX') && DOING_AJAX ) {
+                wp_send_json_success(['html' => ob_get_clean()]);
+            }
+            return;
+        }
+
+        // Normal render with data
         if (defined('DOING_AJAX') && DOING_AJAX) ob_start();
 
         extract($initial_data);
