@@ -141,12 +141,7 @@
 
   .comic-title > div:not(.comic-image) {
     flex-grow: 1;
-  }
-  
-  .comic-title:hover {
-    background: var(--wp--preset--color--golden-yellow);
-    transform: translateX(5px);
-  }
+  } 
 
   .comic-title-name {
     font-size: 1.1rem;
@@ -172,7 +167,7 @@
 
   .comic-image img {
     width: 100px;
-    height: auto;
+    height: 150px;
     border-radius: 4px;
     object-fit: cover;
   }
@@ -222,6 +217,13 @@
   box-shadow: 2px 2px 0 var(--wp--preset--color--deep-red);
 }
   
+.pagination-wrapper a.page-btn.active {
+  background-color: var(--wp--preset--color--deep-red);
+    box-shadow: 2px 2px 0 var(--wp--preset--color--royal-blue);
+    border-right: 1px solid var(--wp--preset--color--royal-blue);
+    border-bottom: 1px solid var(--wp--preset--color--royal-blue);
+}
+
 /* search */
 .search-wrapper {
   margin-bottom: 1rem;
@@ -451,29 +453,35 @@
 }
 
 .issue-link {
-  display: block;
+  display: flex;
   text-decoration: none;
   color: inherit;
   transition: background-color 0.2s;
+  align-items: center;
+  flex-wrap: wrap;
 }
-
-.issue-link:hover {
-  background-color: #f5f5f5; /* Light hover effect */
+.issue-link .flex-nowrap {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
 }
-
+.comic-title:hover,
 .issue-item:hover {
+  background: var(--wp--preset--color--golden-yellow);
+  transform: translateX(5px);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 img.lazy-placeholder,
 .issue-image {
-  background: #111;
+  background: transparent;
   transition: opacity 0.4s ease-in-out;
 }
 .issue-image {
-  width: 50px;
-  height: auto;
+  width: 91px;
+  height: 140px;
   object-fit: cover;
-  float: left;
+  flex-shrink: 0; 
   border-radius: 4px;
   margin-right: 15px;
 }
@@ -485,6 +493,7 @@ img.lazy-placeholder,
   flex: 1;
   font-size: 1rem;
   color: #333;
+  align-self: flex-start;
   text-align: left;
 }
 .issue-info h3 {
@@ -494,6 +503,7 @@ img.lazy-placeholder,
 .issue-info h4 {
   font-size: 1rem;
   font-weight: 600;
+  margin-bottom: 0;
 }
 .issue-info strong {
   color: #333;

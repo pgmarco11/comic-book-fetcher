@@ -69,7 +69,6 @@ class ComicRenderer {
         $letter           = $initial_data['letter']       ?? 'all';
         $selected_publisher = $initial_data['publisher_id'] ?? 0;
         $search           = $initial_data['search']       ?? '';
-
     
         wp_add_inline_script(
             'comicbook-script',
@@ -133,6 +132,7 @@ class ComicRenderer {
         }
         return $this->data_service->get_metron_cv_id( $metron_id );
     }
+    
 
     public function get_comicvine_issue_info( $cv_id ) {
         if ( ! $cv_id ) {
@@ -141,15 +141,18 @@ class ComicRenderer {
         return $this->data_service->get_comicvine_issue_info( $cv_id );
     }
 
-    public function build_cv_map_for_series( $series_id, $page = 1) {
+    // public function build_cv_map_for_series( $series_id, $page = 1) {
 
-        $map = $this->data_service->build_cv_map_for_series( $series_id, $page );
+    //     $map = $this->data_service->build_cv_map_for_series( $series_id, $page );
         
-        return $map;
-    }
+    //     return $map;
+    // }
+    
     public function clean_cv_description($desc) {
         return $this->data_service->clean_cv_description($desc);
     }
+
+
    
 
     /* -----------------------------------------------------------------
@@ -161,8 +164,7 @@ class ComicRenderer {
         }
     
         $user_id = get_current_user_id();
-        
-        // Cache the result to avoid repeated DB hits on same page load
+    
         $cache_key = 'user_collection:' . $user_id . ':' . md5( implode( ',', $metron_ids ) );
         $cached = wp_cache_get( $cache_key );
         if ( $cached !== false ) {
@@ -172,23 +174,37 @@ class ComicRenderer {
         $placeholders = implode( ',', array_fill( 0, count( $metron_ids ), '%d' ) );
     
         global $wpdb;
-        $table = $wpdb->prefix . 'comic_collection';
     
         // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders
         $sql = $wpdb->prepare(
-            "SELECT metron_id FROM `$table` WHERE user_id = %d AND metron_id IN ($placeholders)",
+            "SELECT p.ID, pm.meta_value AS issue_id
+             FROM {$wpdb->posts} p
+             INNER JOIN {$wpdb->postmeta} pm
+                     ON pm.post_id = p.ID AND pm.meta_key = 'issue_id'
+             WHERE p.post_type   = 'collection'
+               AND p.post_author = %d
+               AND p.post_status = 'publish'
+               AND pm.meta_value IN ($placeholders)",
             array_merge( [ $user_id ], $metron_ids )
         );
     
-        $owned = $wpdb->get_col( $sql ); // phpcs:ignore
+        $rows = $wpdb->get_results( $sql ); // phpcs:ignore
+    
+        $owned_map = [];
+        foreach ( (array) $rows as $row ) {
+            $owned_map[ (int) $row->issue_id ] = (int) $row->ID;
+        }
+    
         $status = [];
         foreach ( $metron_ids as $mid ) {
-            $status[ $mid ] = in_array( $mid, $owned, true );
+            $status[ $mid ] = [
+                'owned'   => isset( $owned_map[ $mid ] ),
+                'post_id' => $owned_map[ $mid ] ?? 0,
+            ];
         }
-        
-        // Cache for this page load
+    
         wp_cache_set( $cache_key, $status );
-        
+    
         return $status;
     }
 

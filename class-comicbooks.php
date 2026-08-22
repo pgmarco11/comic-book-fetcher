@@ -40,8 +40,14 @@ class Comicbooks {
         add_action( 'wp_ajax_load_comic_vine_batch',   [ $this, 'ajax_load_comic_vine_batch' ] );
         add_action( 'wp_ajax_nopriv_load_comic_vine_batch', [ $this, 'ajax_load_comic_vine_batch' ] );    
 
-        add_action( 'wp_ajax_load_series_images_batch',   [ $this, 'ajax_load_series_images_batch' ] );
-        add_action( 'wp_ajax_nopriv_load_series_images_batch',[ $this, 'ajax_load_series_images_batch' ] );
+       //add_action('wp_ajax_load_issue_images_batch', [$this, 'ajax_load_issue_images_batch']);
+       //add_action('wp_ajax_nopriv_load_issue_images_batch', [$this, 'ajax_load_issue_images_batch']);
+
+        add_action('wp_ajax_load_cv_issue_images_batch', [$this, 'ajax_load_cv_issue_images_batch']);
+        add_action('wp_ajax_nopriv_load_cv_issue_images_batch', [$this, 'ajax_load_cv_issue_images_batch']);
+
+       add_action( 'wp_ajax_load_series_images_batch',   [ $this, 'ajax_load_series_images_batch' ] );
+       add_action( 'wp_ajax_nopriv_load_series_images_batch',[ $this, 'ajax_load_series_images_batch' ] );
 
         add_action( 'wp_ajax_load_publisher_images_batch',[ $this, 'ajax_load_publisher_images_batch' ] );
         add_action( 'wp_ajax_nopriv_load_publisher_images_batch',[ $this, 'ajax_load_publisher_images_batch' ] );
@@ -64,7 +70,7 @@ class Comicbooks {
         $letter   = isset( $_POST['letter'] ) && $_POST['letter'] !== '' ? sanitize_text_field( $_POST['letter'] ) : 'all';
         $per_page = 10;
 
-        $publisher_data = $this->data_service->get_publishers( $name, $page, $per_page, $letter. false );
+        $publisher_data = $this->data_service->get_publishers( $name, $page, $per_page, $letter, false );
 
         if ( empty( $publisher_data['items'] ) ) {
             wp_send_json_success( [
@@ -75,7 +81,7 @@ class Comicbooks {
             ] );
         }
 
-        foreach ( $publisher_data['items'] as &$item ) {
+        foreach ( $publisher_data['items'] as $item ) {
             if ( ! empty( $item['id'] ) ) {
                 $info = $this->data_service->get_publisher_info( $item['id'] );
                 $item = [
@@ -113,12 +119,16 @@ class Comicbooks {
 
         $series_data = $this->data_service->get_series( $publisher_id, $page, $per_page, $name, $letter );
 
+        $is_total_exact = $series_data['is_total_exact'] ?? true;
+
         wp_send_json_success( [
-            'series'    => $series_data['items'],
-            'total'     => $series_data['total'],
-            'per_page'  => $series_data['per_page'],
-            'page'      => $page,
-            'max_pages' => ceil( $series_data['total'] / $per_page ),
+            'series'         => $series_data['items'],
+            'total'          => $series_data['total'],
+            'is_total_exact' => $series_data['is_total_exact'] ?? true,
+            'scan_complete'  => $series_data['scan_complete'] ?? true,
+            'per_page'       => $series_data['per_page'],
+            'page'           => $page,
+            'max_pages'      => ceil( $series_data['total'] / $per_page ),
         ] );
     }
 
@@ -164,10 +174,39 @@ class Comicbooks {
     
         // Render the exact same HTML as the template
         ob_start();
-        $series = $data['series'] ?? [];
-        $all_issues = $data['issue_list']['results'] ?? [];
-        $total_issues = (int) ($data['issue_list']['count'] ?? 0);
+        $series        = $data['series'] ?? [];
+        $all_issues    = $data['issue_list']['results'] ?? [];
+        $total_issues  = (int) ($data['issue_list']['count'] ?? 0);
+        $cv_info_batch    = []; 
+        $collection_status = [];
+
+        $metron_ids = !empty($all_issues) 
+        ? array_values(array_filter(array_column($all_issues, 'id'))) 
+        : [];
     
+        // Build cv_info_batch directly from issue data + transient cache
+        foreach ($all_issues as $issue) {
+            $mid = (int)($issue['id'] ?? 0);
+            if (!$mid) continue;
+        
+          
+            $cv_id_cached = get_transient("metron:issue_cv_id:{$mid}");
+            if ($cv_id_cached !== false) {
+                $cv_id = is_array($cv_id_cached) ? ($cv_id_cached['cv_id'] ?? null) : ($cv_id_cached ?: null);
+            } elseif (!empty($issue['cv_id'])) {
+                $cv_id = (int)$issue['cv_id'];
+                set_transient("metron:issue_cv_id:{$mid}", ['cv_id' => $cv_id], 30 * DAY_IN_SECONDS);
+            } else {
+                $cv_id = null;
+            }  
+        
+            $cv_info_batch[$mid] = ['cv_id' => $cv_id];
+        }
+
+        if (is_user_logged_in()) {
+            $collection_status = ComicRenderer::get_collection_status($metron_ids);
+        }
+ 
         if (!empty($all_issues)) :
             ?>
             <ul class="issues-list">
@@ -193,11 +232,12 @@ class Comicbooks {
             <?php
         endif;
     
-        $html = ob_get_clean();
+        $html = ob_get_clean();    
     
         wp_send_json_success([
-            'issues'       => $html,           // Full HTML fragment
+            'issues'       => $html,
             'page'         => $page,
+            'current_page' => $page,
             'total_issues' => $total_issues,
             'total_pages'  => ceil($total_issues / 10),
             'search'       => $search
@@ -208,36 +248,65 @@ class Comicbooks {
     *  AJAX – Load Comic Vine data (non-blocking)
     * ----------------------------------------------------------------- */
     public function ajax_load_comic_vine_batch() {
-        check_ajax_referer('comicbooks_fetchers_data', 'nonce');
+        check_ajax_referer( 'comicbooks_fetchers_data', 'nonce' );
     
-        $metron_ids = isset($_POST['metron_ids'])
-            ? array_map('intval', explode(',', $_POST['metron_ids']))
+        $metron_ids = isset( $_POST['metron_ids'] )
+            ? array_values(
+                array_filter(
+                    array_map(
+                        'intval',
+                        explode( ',', sanitize_text_field( wp_unslash( $_POST['metron_ids'] ) ) )
+                    )
+                )
+            )
             : [];
     
-        if (empty($metron_ids)) {
-            wp_send_json_error(['message'=>'No IDs provided']);
+        if ( empty( $metron_ids ) ) {
+            wp_send_json_error( [ 'message' => 'No IDs provided' ] );
         }
     
         $cv_info_batch = [];
     
-        // Fetch CV data for the requested IDs using series-level cache
-        foreach ($metron_ids as $mid) {
-
-            $cv_info_batch[$mid] = get_transient("cv_issue_full_{$mid}");
-        
-            if ($cv_info_batch[$mid] === false) {
-                $cv_info_batch[$mid] = null; // fallback
+        foreach ( $metron_ids as $mid ) {
+            $cv_id = $this->data_service->get_metron_cv_id( $mid );
+    
+            if ( ! $cv_id ) {
+                $cv_info_batch[ $mid ] = null;
+                continue;
             }
-        }
-        $collection_status = is_user_logged_in()
-            ? ComicRenderer::get_collection_status($metron_ids)
+   
+            $cv_info_batch[ $mid ] = [
+                    'cv_id' => (int) $cv_id,
+             ];
+         
+        }  
+    
+        wp_send_json_success( [
+            'cv_data'           => $cv_info_batch
+        ] );
+    }
+
+    public function ajax_load_cv_issue_images_batch() {
+        check_ajax_referer('comicbooks_fetchers_data', 'nonce');
+    
+        $cv_ids = isset($_POST['cv_ids'])
+            ? array_filter( array_map( 'intval', (array) $_POST['cv_ids'] ) )
             : [];
     
-        wp_send_json_success([
-            'cv_data'           => $cv_info_batch,
-            'collection_status' => $collection_status,
-        ]);
+        if ( empty( $cv_ids ) ) {
+            wp_send_json_error(['message' => 'No CV IDs provided']);
+        }
+    
+        $images = [];
+        foreach ( $cv_ids as $cv_id ) {
+            // get_comicvine_issue_image() returns a string URL directly
+            $images[ $cv_id ] = $this->data_service->get_comicvine_issue_image( $cv_id );
+        }
+    
+        wp_send_json_success(['images' => $images]);
     }
+
+
 
     /* -----------------------------------------------------------------
      *  AJAX – Batch series images
@@ -249,46 +318,51 @@ class Comicbooks {
             ? array_map('intval', (array) $_POST['series_ids'])
             : [];
     
+        error_log('SERIES IMG BATCH: requested series_ids = ' . implode(',', $series_ids));
+    
         if (empty($series_ids)) {
             wp_send_json_error(['message' => 'No series IDs provided']);
         }
     
-        $client = $this->data_service->get_client();
         $images = [];
+        $uncached = [];
     
         foreach ($series_ids as $sid) {
-    
-            $cache_key = "metron:series_image:$sid";
-            $cached = get_transient($cache_key);
-    
-            // ✅ Use cached image if valid
+            $cached = get_transient("metron:series_image:$sid");
             if ($cached !== false && !empty($cached)) {
+                error_log("SERIES IMG BATCH: $sid served from cache: $cached");
                 $images[$sid] = $cached;
-                continue;
+            } else {
+                $uncached[$sid] = true;
             }
+        }
     
-            // 🚀 Fetch ONLY first issue
-            $url  = $client->api_base . "series/$sid/issue_list/?page=1&page_size=1";
-            $data = $client->api_get($url);
+        error_log('SERIES IMG BATCH: uncached ids = ' . implode(',', array_keys($uncached)));
     
-            $img = '';
+        if (!empty($uncached)) {
+            $series_to_cv_id = $this->data_service->get_known_cv_ids(array_keys($uncached));
+            error_log('SERIES IMG BATCH: series_to_cv_id from get_known_cv_ids = ' . print_r($series_to_cv_id, true));
     
-            if (
-                !empty($data['results']) &&
-                isset($data['results'][0]['image']) &&
-                !empty($data['results'][0]['image'])
-            ) {
-                $img = $data['results'][0]['image'];
+            $cv_images = $this->data_service->get_comicvine_first_issues_batch($series_to_cv_id);
+            error_log('SERIES IMG BATCH: cv_images returned = ' . print_r($cv_images, true));
+    
+            foreach ($uncached as $sid => $_) {
+                $img = $cv_images[$sid] ?? '';
+    
+                if (empty($img) && empty($series_to_cv_id[$sid])) {
+                    error_log("SERIES IMG BATCH: $sid has no cv_id at all — falling back to Metron issue_list");
+                    $img = $this->data_service->get_series_first_issue_image($sid);
+                    error_log("SERIES IMG BATCH: $sid Metron fallback image = " . ($img ?: 'EMPTY'));
+                }
+    
+                set_transient("metron:series_image:$sid", $img, 30 * DAY_IN_SECONDS);
+                $images[$sid] = $img;
             }
-    
-            //Store ONLY the image (not full payload)
-            set_transient($cache_key, $img, 7 * DAY_IN_SECONDS);
-    
-            $images[$sid] = $img;
         }
     
         wp_send_json_success(['images' => $images]);
     }
+
 
     /* -----------------------------------------------------------------
      *  AJAX – Batch publisher images

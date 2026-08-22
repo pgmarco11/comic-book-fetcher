@@ -8,55 +8,42 @@ window.DEBUG = true;
 jQuery(document).ready(function($){    
 
     setTimeout(() => {
-        const serverRenderedItems = document.querySelectorAll('.comic-title img[data-series-id]');
 
-        console.log("lazyLoadImages type:", typeof lazyLoadImages);
-        
-        if (serverRenderedItems.length > 0) {     
+        const serverRenderedItems = document.querySelectorAll(`
+            .comic-title img[data-series-id],
+            .issue-item img[data-issue-id]
+        `);
+    
+        console.log('Found lazy-load images:', serverRenderedItems.length);
+    
+        if (serverRenderedItems.length > 0) {
             lazyLoadImages();
         } else {
-            console.log("No server-rendered items found");
+            console.log('No lazy-load items found');
         }
+    
     }, 200);
 
     if (window.location.pathname.includes('/issues/')) {  
         setTimeout(() => {
-            const $list = $('#issues-list');             
-            const hasContent = $list.find('li.issue-item, .no-results, ul.issues-list').length > 0 || $list.text().trim().length > 50;
-    
-            console.log('Initial server-render check:', {
-                hasContent,
-                classes: $list.attr('class'),
-                spinnerDisplay: $('#loading-spinner').css('display')
-            });
+            const $list = $('#issues-list');
+            // Only check for real issue items — .no-results is not "server-rendered content"
+            const hasContent = $list.find('li.issue-item').length > 0;
     
             if ($list.hasClass('server-rendered') && hasContent) {
-                console.log('Server content detected — hiding spinner immediately');
                 $list.addClass('loaded');
-                $('#loading-spinner').addClass('hidden').css({ display: 'none', opacity: 0 });             
-        
-                // Render pagination if missing
+                $('#loading-spinner').addClass('hidden').css({ display: 'none', opacity: 0 });
                 const total = parseInt($list.attr('data-total')) || 0;
-                const page = parseInt($list.attr('data-page')) || 1;
+                const page  = parseInt($list.attr('data-page')) || 1;
                 const search = $('#issue-search').val() || '';
                 const titleId = new URLSearchParams(location.search).get('title_id');
                 if (total > 0 && titleId) {
                     renderIssuePagination(titleId, page, search, total);
                 }
-            } else {
-                console.log('No reliable server content — falling back to AJAX fetch');
-                $list.removeClass('server-rendered loaded');
-                const urlParams = new URLSearchParams(window.location.search);
-                const titleId = parseInt(urlParams.get('title_id'));
-                const page = parseInt(urlParams.get('page')) || 1;
-                const search = urlParams.get('search') || '';
-                if (titleId) {
-                    showSpinner();
-                    fetchIssues(titleId, page, search);
-                }
             }
-        }, 300);  // 300ms - adjust to 1000 if still failing
-    
+            // No else. The bottom sync block already calls fetchIssues at t=0 when needed.
+            // Calling it again here after SPA nav cleared the list is the double-fetch bug.
+        }, 300);
     }
       
     let currentPublisherId = null;
@@ -204,7 +191,7 @@ jQuery(document).ready(function($){
         $('#letter-buttons').toggle(show);
     }
 
-    function renderItems(items, type, page, total, search = '', letter = '', perPage) {
+    function renderItems(items, type, page, total, search = '', letter = '', perPage,  isTotalExact = true) {
         console.log("🔥 renderItems CALLED", {
             itemsCount: items?.length,
             type,
@@ -231,12 +218,14 @@ jQuery(document).ready(function($){
         );
             
         let html = `<div id="items-wrapper"><div class="${isPublisher ? 'publishers' : 'book'}-wrapper">`;
+
+        const totalLabel = `${total}${isTotalExact ? '' : '+'}`;
     
         if (!items || items.length === 0) {
             html += `<p>No ${isPublisher ? 'publishers' : 'series'} found.</p>`;
         } else {
-            html += `<p>Showing ${startIndex}–${endIndex} of ${total} ${isPublisher ? 'publishers' : 'series'}${search ? ` for "${search}"` : letter && letter !== 'all' ? ` starting with "${letter}"` : ''}</p>`;
-    
+            html += `<p>Showing ${startIndex}–${endIndex} of ${totalLabel} ${isPublisher ? 'publishers' : 'series'}${search ? ` for "${search}"` : letter && letter !== 'all' ? ` starting with "${letter}"` : ''}</p>`
+            
             items.forEach(item => {           
 
                 if (isPublisher) {
@@ -261,12 +250,12 @@ jQuery(document).ready(function($){
                             <a href="/comic-catalog/issues/?title_id=${item.series_id}&page=1">
                                 <div class="comic-image">
                                     <img src="${comicbooks_fetchers_data?.placeholder || '/wp-content/plugins/comic-book-fetcher/images/placeholder.png'}"
-                                        data-series-id="${item.series_id}"
+                                        data-series-id="${item.series_id}"                                    
                                         alt="${item.name}"   
                                         loading="lazy"                                 
                                         class="lazy-placeholder"
-                                        width="220"
-                                        height="330">
+                                        width="100"
+                                        height="150">
                                 </div>
                                 <div class="comic-info">
                                     <div class="comic-title-name">${item.name}</div>
@@ -283,7 +272,7 @@ jQuery(document).ready(function($){
         }
     
         html += '</div>';
-        html += renderPagination(requestedPage, Math.ceil(total / perPage), letter);
+        html += renderPagination(requestedPage, Math.ceil(total / perPage), letter, isTotalExact);
         html += '</div></div>';
     
         container.html(html);
@@ -309,34 +298,26 @@ jQuery(document).ready(function($){
     // ===================================================================
     // Render Pagination
     // ===================================================================
-    function renderPagination(page, totalPages, letter = 'all') {
-        if (totalPages <= 1) return '';
+    function renderPagination(page, totalPages, letter = 'all', isTotalExact = true) {
+        if (totalPages <= 1 && isTotalExact) return '';
     
         // Use current browser URL as base (safest way to preserve publisher_id, search, etc.)
         const currentUrl = new URL(window.location.href);
         const params = currentUrl.searchParams;
     
         let html = '<div class="pagination-wrapper">';
-        html += `<p>Page ${page} of ${totalPages}</p>`;
+        html += `<p>Page ${page} of ${totalPages}${isTotalExact ? '' : '+'}</p>`;
     
         // Helper: create link for any target page
         function getPageLink(targetPage) {
-            const newParams = new URLSearchParams(params); // copy current params
+            const newParams = new URLSearchParams(params);
             newParams.set('page', targetPage);
             newParams.set('letter', letter);
-        
-            // If you want to force-remove letter when it's 'all', keep the line above    
             return `${currentUrl.pathname}?${newParams.toString()}`;
         }
     
         if (page > 1) {
-            html += `
-                <a href="${getPageLink(page - 1)}"
-                   class="page-btn"
-                   data-page="${page - 1}"
-                   data-letter="${letter}">
-                    Previous
-                </a>`;
+            html += `<a href="${getPageLink(page - 1)}" class="page-btn" data-page="${page - 1}" data-letter="${letter}">Previous</a>`;
         }
     
         const start = Math.max(1, page - 2);
@@ -345,37 +326,103 @@ jQuery(document).ready(function($){
         for (let i = start; i <= end; i++) {
             const isActive = i === page;
             const href = isActive ? '#' : getPageLink(i);
-    
-            html += `
-                <a href="${href}"
-                   class="page-btn${isActive ? ' active' : ''}"
-                   data-page="${i}"
-                   data-letter="${letter}">
-                    ${i}
-                </a>`;
+            html += `<a href="${href}" class="page-btn${isActive ? ' active' : ''}" data-page="${i}" data-letter="${letter}">${i}</a>`;
         }
     
-        if (page < totalPages) {
-            html += `
-                <a href="${getPageLink(page + 1)}"
-                   class="page-btn"
-                   data-page="${page + 1}"
-                   data-letter="${letter}">
-                    Next
-                </a>`;
+        if (page < totalPages || !isTotalExact) {
+            html += `<a href="${getPageLink(page + 1)}" class="page-btn" data-page="${page + 1}" data-letter="${letter}">Next</a>`;
         }
     
         html += '</div>';
         return html;
     }
+
+    // ======================================================
+    // Series image batch queue
+    // Prevents one AJAX call per image
+    // ======================================================
+    const pendingSeriesImageMap = new Map();
+    let seriesImageBatchTimer = null;
+
+    function queueSeriesImage(img) {
+        const seriesId = img.dataset.seriesId;
+
+        if (!seriesId) return;
+        if (img.dataset.loaded === 'true') return;
+        if (img.dataset.loading === 'true') return;
+
+        img.dataset.loading = 'true';
+
+        if (!pendingSeriesImageMap.has(seriesId)) {
+            pendingSeriesImageMap.set(seriesId, []);
+        }
+
+        pendingSeriesImageMap.get(seriesId).push(img);
+
+        clearTimeout(seriesImageBatchTimer);
+
+        // Small delay lets multiple images enter viewport and get batched together
+        seriesImageBatchTimer = setTimeout(flushSeriesImageBatch, 400);
+    }
+
+    function flushSeriesImageBatch() {
+        if (!pendingSeriesImageMap.size) return;
+
+        const batch = new Map(pendingSeriesImageMap);
+        pendingSeriesImageMap.clear();
+
+        const seriesIds = Array.from(batch.keys());
+
+        $.post(comicbooks_fetchers_data.ajax_url, {
+            action: 'load_series_images_batch',
+            series_ids: seriesIds,
+            nonce: comicbooks_fetchers_data.nonce
+        }, response => {
+            const images = response?.data?.images || {};
+
+            seriesIds.forEach(seriesId => {
+                const imageUrl = images[seriesId] || '';
+
+                const imgs = batch.get(seriesId) || [];
+
+                imgs.forEach(img => {
+                    delete img.dataset.loading;
+
+                    if (!imageUrl) {
+                        return;
+                    }
+
+                    img.src = imageUrl;
+
+                    img.onload = () => {
+                        img.dataset.loaded = 'true';
+                    };
+                });
+            });
+        }).fail(() => {
+            seriesIds.forEach(seriesId => {
+                const imgs = batch.get(seriesId) || [];
+
+                imgs.forEach(img => {
+                    delete img.dataset.loading;
+                });
+            });
+        });
+    }
     
     function lazyLoadImages() {
 
-        const images = document.querySelectorAll(
-            'img[data-series-id]:not([data-loaded])'
-        );
+        const images = document.querySelectorAll(`
+            img[data-series-id]:not([data-loaded]),
+            img[data-issue-id]:not([data-loaded])
+        `);
     
-        if (!images.length) return;
+        console.log('lazyLoadImages found:', images.length);
+    
+        if (!images.length) {
+            console.warn('No lazy-loadable images found. Check for missing data-series-id or incorrect data-loaded.');
+            return;
+        }
     
         const observer = new IntersectionObserver((entries, obs) => {
     
@@ -383,26 +430,71 @@ jQuery(document).ready(function($){
     
                 if (!entry.isIntersecting) return;
     
-                const img = entry.target;
-                const seriesId = img.dataset.seriesId;
+                const img = entry.target; 
+                
+                /*
+                * SERIES IMAGES
+                */
+                if (img.dataset.seriesId) {
+                    queueSeriesImage(img);
+                    obs.unobserve(img);
+                    return;
+                }
     
-                $.post(comicbooks_fetchers_data.ajax_url, {
-                    action: 'load_series_images_batch',
-                    series_ids: [seriesId],
-                    nonce: comicbooks_fetchers_data.nonce
-                }, response => {
-    
-                    if (
-                        response.success &&
-                        response.data.images &&
-                        response.data.images[seriesId]
-                    ) {
-                        img.src = response.data.images[seriesId];
-                        img.dataset.loaded = 'true';
+                /*
+                 * ISSUE IMAGES
+                 */
+                if (img.dataset.issueId) {
+                    const issueId = img.dataset.issueId;
+                    const $item = img.closest('.issue-item');               
+                
+                    obs.unobserve(img);  
+                    
+                    const loadImageFromCvId = (cvId) => {
+                        if (!cvId) return;
+                        $.post(comicbooks_fetchers_data.ajax_url, {
+                            action: 'load_cv_issue_images_batch',
+                            cv_ids: [cvId],
+                            nonce: comicbooks_fetchers_data.nonce
+                        }, response => {
+                            if (
+                                response.success &&
+                                response.data.images &&
+                                response.data.images[cvId]
+                            ) {
+                                img.src = response.data.images[cvId];
+                                img.onload = () => { img.dataset.loaded = 'true'; };
+                            }
+                        });
+                    };
+                
+                    if (issueId) {
+                        // cv_id missing on the element — fetch it via the batch endpoint
+                        $.post(comicbooks_fetchers_data.ajax_url, {
+                            action: 'load_comic_vine_batch',
+                            nonce: comicbooks_fetchers_data.nonce,
+                            metron_ids: issueId
+                        }, response => {
+                            if (response.success && response.data.cv_data) {
+                                const cvData = response.data.cv_data[issueId];
+                                const resolvedCvId = cvData?.cv_id || cvData?.id || null;
+                                if (resolvedCvId) {
+                                    // Write it back to the DOM so subsequent calls have it
+                                    if ($item) {
+                                        $item.dataset.cvId = resolvedCvId;
+                                        // Also patch the buttons so collection/wishlist actions work
+                                        $item.querySelector('.add-to-collection')?.setAttribute('data-cv-issue-id', resolvedCvId);
+                                        $item.querySelector('.add-to-wishlist')?.setAttribute('data-cv-issue-id', resolvedCvId);
+                                    }
+                                    loadImageFromCvId(resolvedCvId);
+                                }
+                            }
+                        });
                     }
-                });
+                
+                    return;
+                }
     
-                obs.unobserve(img);
             });
     
         }, {
@@ -504,8 +596,9 @@ jQuery(document).ready(function($){
         if (cached) {
             allSeries = cached.series || [];
             const perPage = cached.perPage || cached.per_page || 10;
-            const total = cached.total || 0;          
-            renderItems(allSeries, 'books', page, total, name, letter, perPage);
+            const total = cached.total || 0;   
+            const isTotalExact = cached.isTotalExact !== false;       
+            renderItems(allSeries, 'books', page, total, name, letter, perPage, isTotalExact);
             showLetterButtons(true);
             updateActiveLetter(letter);
             hideSpinner();       
@@ -532,15 +625,24 @@ jQuery(document).ready(function($){
             success: response => {
                 console.log('REAL load_book response (page ' + page + '):', response);
                 if (response.success && response.data) {
+                    const scanComplete = response.data.scan_complete !== false;
+
+                    if (!scanComplete) {
+                        // Still scanning server-side — don't render, don't hide spinner, ask again shortly
+                        setTimeout(() => fetchBooks(publisherId, page, name, letter), 3500);
+                        return;
+                    }
+
                     allSeries = response.data.series || [];
                     const perPage = response.data.per_page || 10;
                     const total = response.data.total || 0;
+                    const isTotalExact = response.data.is_total_exact !== false;
         
-                    setCachedData(cacheKey, { series: allSeries, total, perPage });
-                    renderItems(allSeries, 'books', page, total, name, letter, perPage);
+                    setCachedData(cacheKey, { series: allSeries, total, perPage, isTotalExact });
+                    renderItems(allSeries, 'books', page, total, name, letter, perPage, isTotalExact);
                     showLetterButtons(true);
                     updateActiveLetter(letter);
-                    hideSpinner();        
+                    hideSpinner(); // only now   
                 } else {
                     console.error('Invalid response', response);
                 
@@ -582,65 +684,54 @@ jQuery(document).ready(function($){
     document.head.appendChild(styleSheet);
 
     function renderIssuePagination(titleId, page, search, totalIssues) {
+        const $wrapper = $('#pagination-wrapper');
+        if (!$wrapper.length) return;  // safety: element must exist in DOM
+
         if (!totalIssues || totalIssues < 1) {
-            $('#pagination-wrapper').empty();
+            $wrapper.empty();
             return;
         }
-    
-        const perPage = 10;
+
+        const perPage    = 10;
         const totalPages = Math.ceil(totalIssues / perPage);
-    
-        let html = '<div class="pagination-wrapper">';
-        html += `<p>Page ${page} of ${totalPages}</p>`;
-    
+        const start      = Math.max(1, page - 2);
+        const end        = Math.min(totalPages, page + 2);
+
         const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
-    
+
+        // Write directly into #pagination-wrapper — no extra <div class="pagination-wrapper"> wrapper
+        let html = `<p>Page ${page} of ${totalPages}</p>`;
+
         if (page > 1) {
             const prev = page - 1;
-            html += `
-                <a href="?title_id=${titleId}&page=${prev}${searchParam}"
-                   class="page-btn"
-                   data-page="${prev}"
-                   data-title-id="${titleId}"
-                   data-search="${search}">
-                    Previous
-                </a>`;
+            html += `<a href="?title_id=${titleId}&page=${prev}${searchParam}"
+                        class="page-btn"
+                        data-page="${prev}"
+                        data-title-id="${titleId}"
+                        data-search="${search}">Previous</a>`;
         }
-    
-        const start = Math.max(1, page - 2);
-        const end = Math.min(totalPages, page + 2);
-    
+
         for (let i = start; i <= end; i++) {
             const active = i === page ? ' active' : '';
-            const href = i === page ? '' : `?title_id=${titleId}&page=${i}${searchParam}`;
-    
-            html += `
-                <a href="${href}"
-                   class="page-btn${active}"
-                   data-page="${i}"
-                   data-title-id="${titleId}"
-                   data-search="${search}">
-                    ${i}
-                </a>`;
+            const href   = i === page ? '#' : `?title_id=${titleId}&page=${i}${searchParam}`;
+            html += `<a href="${href}"
+                        class="page-btn${active}"
+                        data-page="${i}"
+                        data-title-id="${titleId}"
+                        data-search="${search}">${i}</a>`;
         }
-    
-        if (page < totalPages) {
-            const next = page + 1;
-            html += `
-                <a href="?title_id=${titleId}&page=${next}${searchParam}"
-                   class="page-btn"
-                   data-page="${next}"
-                   data-title-id="${titleId}"
-                   data-search="${search}">
-                    Next
-                </a>`;
+
+        // Next = end + 1, not page + 1 — mirrors the PHP fix
+        if (end < totalPages) {
+            const next = end + 1;
+            html += `<a href="?title_id=${titleId}&page=${next}${searchParam}"
+                        class="page-btn"
+                        data-page="${next}"
+                        data-title-id="${titleId}"
+                        data-search="${search}">Next</a>`;
         }
-    
-        html += '</div>';
-    
-        $('#pagination-wrapper').html(html);
-    
-        // Still update URL for clean browser history
+
+        $wrapper.html(html);
         updateIssuesUrl(titleId, page, search);
     }
 
@@ -941,8 +1032,7 @@ jQuery(document).ready(function($){
             return;
         }
 
-        e.preventDefault(); 
-        showSpinner();
+        e.preventDefault();     
 
         const $btn = $(this);
     
@@ -1203,6 +1293,12 @@ jQuery(document).ready(function($){
     if (titleId && window.location.pathname.includes('/comic-catalog/issues/')) {
         console.log('Issues page detected – initializing');
         $('#issue-search').val(issueSearch);
-    }   
+    } 
+    if (window.__resumeScanOnLoad) {
+        const { publisherId, page, search, letter } = window.__resumeScanOnLoad;
+        currentPublisherId = publisherId;
+        showSpinner();
+        fetchBooks(publisherId, page, search, letter); // bypasses cache, resumes polling
+    }  
 
 });

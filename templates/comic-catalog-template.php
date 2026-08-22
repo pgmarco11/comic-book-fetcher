@@ -4,7 +4,9 @@
  * Used by ComicRenderer::render_template()
  * 100% identical to renderItems() output, except the empty‑state text.
  */
-
+$is_total_exact = $is_total_exact ?? true;
+$scan_complete  = $scan_complete  ?? true;   // default: assume complete unless told otherwise
+$showing        = count( $items ?? [] );
 $total_pages = $total > 0 ? ceil( $total / $per_page ) : 0;
 $is_publisher = $type === 'publishers';
 
@@ -22,7 +24,17 @@ $is_publisher = $type === 'publishers';
     <div id="items-wrapper">
         <div class="<?php echo $is_publisher ? 'publishers' : 'book'; ?>-wrapper">
 
-            <?php if ( empty( $items ) ) : ?>
+            <?php if ( empty( $items ) && empty( $scan_complete ) ) : ?>
+                <p class="scan-in-progress">Searching — this can take a moment for large publishers…</p>
+                <script>
+                    window.__resumeScanOnLoad = {
+                        publisherId: <?php echo (int) $selected_publisher; ?>,
+                        page: <?php echo (int) $page; ?>,
+                        search: <?php echo wp_json_encode( $search ); ?>,
+                        letter: <?php echo wp_json_encode( $letter ); ?>
+                    };
+                </script>
+            <?php elseif ( empty( $items ) ) : ?>
 
                 <?php
                 $is_publisher = $type === 'publishers';
@@ -58,8 +70,7 @@ $is_publisher = $type === 'publishers';
 
             <?php else : ?>
                 
-                <?php
-                $showing = count( $items );
+                <?php             
                 $of      = $total;
                 $what    = $is_publisher ? 'publishers' : 'series';
                 $extra   = '';
@@ -68,11 +79,19 @@ $is_publisher = $type === 'publishers';
                 } elseif ( $letter && $letter !== 'all' ) {
                     $extra = ' starting with "' . esc_html( $letter ) . '"';
                 }
+               
+                $series_image_url = ! empty( $item['image'] )
+                        ? $item['image']
+                        : COMICBOOKS_PLUGIN_URL . 'images/placeholder.png';
+                    
                 ?>
-                <p>Showing <?php echo $showing; ?> of <?php echo $of; ?> <?php echo $what . $extra; ?></p>
+                <p>
+                    Showing <?php echo $showing; ?> of
+                    <?php echo $of; ?><?php echo $is_total_exact ? '' : '+'; ?>
+                    <?php echo $what . $extra; ?>
+                </p>
 
-                <?php foreach ( $items as $item ) :                     
-                     echo print_r($item, true);
+                <?php foreach ( $items as $item ) :                        
                     if ( $is_publisher ) : ?>
                         <div class="publisher-item" data-publisher-id="<?php echo esc_attr( $item['id'] ); ?>">
                             <a href="/comic-catalog/?publisher_id=<?php echo esc_attr($item['id']); ?>&letter=all&page=1">
@@ -93,13 +112,13 @@ $is_publisher = $type === 'publishers';
                             <a href="/comic-catalog/issues/?title_id=<?php echo esc_attr($item['series_id']); ?>&page=1">
                                 <div class="comic-image">
                                 <img 
-                                    src="<?php echo esc_url( COMICBOOKS_PLUGIN_URL . 'images/placeholder.png' ); ?>"
-                                    data-series-id="<?php echo esc_attr($item['series_id']); ?>"
+                                    src="<?php echo esc_url( $series_image_url ); ?>"
                                     alt="<?php echo esc_attr($item['name']); ?>"
+                                    data-series-id="<?php echo esc_attr( $item['series_id'] ); ?>"          
                                     loading="lazy"
                                     class="lazy-placeholder"
-                                    width="220"
-                                    height="330">
+                                    width="100"
+                                    height="150">
                                 </div>
                                 <div class="comic-info">
                                     <div class="comic-title-name"><?php echo esc_html($item['name']); ?></div>
@@ -117,34 +136,32 @@ $is_publisher = $type === 'publishers';
         </div>
     </div>    
 
-    <?php if ($total_pages > 1): ?>
-        <div class="pagination-wrapper">
-            <p>Page <?php echo $page; ?> of <?php echo $total_pages; ?></p>
+    <?php if ($total_pages > 1 || (!$is_total_exact && $showing >= $per_page)): ?>
+    <div class="pagination-wrapper">
+        <p>
+            Page <?php echo $page; ?> of
+            <?php echo $total_pages; ?><?php echo $is_total_exact ? '' : '+'; ?>
+        </p>
 
-            <?php if ($page > 1): ?>
-                <a href="<?php echo esc_url(add_query_arg('page', $page - 1)); ?>"
-                    class="page-btn"
-                    data-page="<?php echo $page - 1; ?>"
-                    data-letter="<?php echo esc_attr($letter); ?>">
-                        Previous
-                    </a>
-            <?php endif; ?>
+        <?php if ($page > 1): ?>
+            <a href="<?php echo esc_url(add_query_arg('page', $page - 1)); ?>"
+                class="page-btn" data-page="<?php echo $page - 1; ?>"
+                data-letter="<?php echo esc_attr($letter); ?>">Previous</a>
+        <?php endif; ?>
 
-            <?php for ($i = max(1, $page - 2); $i <= min($total_pages, $page + 2); $i++): ?>
-                <a href="<?php echo esc_url(add_query_arg('page', $i)); ?>"
-                    class="page-btn <?php echo $i === $page ? 'active' : ''; ?>"
-                    data-page="<?php echo $i; ?>"
-                    data-letter="<?php echo esc_attr($letter); ?>">
-                        <?php echo $i; ?>
-                    </a>
-            <?php endfor; ?>
+        <?php for ($i = max(1, $page - 2); $i <= min($total_pages, $page + 2); $i++): ?>
+            <a href="<?php echo esc_url(add_query_arg('page', $i)); ?>"
+                class="page-btn <?php echo $i === $page ? 'active' : ''; ?>"
+                data-page="<?php echo $i; ?>"
+                data-letter="<?php echo esc_attr($letter); ?>"><?php echo $i; ?></a>
+        <?php endfor; ?>
 
-            <?php if ($page < $total_pages): ?>
-                <a href="<?php echo esc_url(add_query_arg('page', $page + 1)); ?>" class="page-btn">
-                    Next
-                </a>
-            <?php endif; ?>
-        </div>
-    <?php endif; ?>
+        <?php if ($page < $total_pages || !$is_total_exact): ?>
+            <a href="<?php echo esc_url(add_query_arg('page', $page + 1)); ?>" class="page-btn">
+                Next
+            </a>
+        <?php endif; ?>
+    </div>
+<?php endif; ?>
 
 </div>

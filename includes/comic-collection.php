@@ -221,111 +221,417 @@ function ensure_title_term(string $normalized_title, int $publisher_id) {
 }
 
 /**
+ * Fetch basic Comic Vine issue data directly, without calling Metron /issue/?cv_id.
+ * This avoids extra Metron API calls when adding one issue to collection.
+ */
+function tcs_get_comicvine_issue_basic( int $cv_id ): array {
+
+    if ( $cv_id <= 0 ) {
+        return [];
+    }
+
+    $cache_key = "tcs:cv_issue_basic:{$cv_id}";
+    $cached = get_transient( $cache_key );
+
+    if ( $cached !== false && is_array( $cached ) ) {
+        return $cached;
+    }
+
+    $cv_key = get_option( 'comic_vine_api_key', '' );
+
+    if ( empty( $cv_key ) ) {
+        return [];
+    }
+
+    $url = add_query_arg(
+        [
+            'api_key'    => $cv_key,
+            'format'     => 'json',
+            'field_list' => 'id,name,issue_number,cover_date,description,deck,image,person_credits,concept_credits',
+        ],
+        "https://comicvine.gamespot.com/api/issue/4000-{$cv_id}/"
+    );
+
+    $response = wp_remote_get(
+        $url,
+        [
+            'timeout' => 30,
+            'headers' => [
+                'User-Agent' => 'ComicBookFetcher/1.1 (+' . get_site_url() . ')',
+            ],
+        ]
+    );
+
+    if ( is_wp_error( $response ) ) {
+        error_log( 'Comic Vine issue lookup failed for cv_id ' . $cv_id . ': ' . $response->get_error_message() );
+        return [];
+    }
+
+    $body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+    if ( empty( $body['results'] ) || ! is_array( $body['results'] ) ) {
+        return [];
+    }
+
+    $result = $body['results'];
+    $result['cv_id'] = $cv_id;
+
+    set_transient( $cache_key, $result, 30 * DAY_IN_SECONDS );
+
+    return $result;
+}
+
+
+/**
+ * Format creator/person credits into the text string your collection meta expects.
+ */
+function tcs_format_creator_credits( array $creators ): string {
+
+    if ( empty( $creators ) ) {
+        return '';
+    }
+
+    $creator_infos = [];
+
+    foreach ( $creators as $person ) {
+        if ( ! is_array( $person ) ) {
+            continue;
+        }
+
+        $name = $person['name'] ?? $person['creator'] ?? '';
+
+        if ( empty( $name ) ) {
+            continue;
+        }
+
+        $role = $person['role'] ?? $person['roles'] ?? '';
+
+        if ( is_array( $role ) ) {
+            if ( isset( $role[0] ) && is_array( $role[0] ) ) {
+                $role = implode( ', ', array_filter( array_column( $role, 'name' ) ) );
+            } else {
+                $role = implode( ', ', array_filter( $role ) );
+            }
+        }
+
+        $role = $role ?: 'N/A';
+
+        $creator_infos[] = "{$name} – {$role}";
+    }
+
+    return implode( "\n", $creator_infos );
+}
+
+
+/**
+ * Pull a usable image URL from Comic Vine image array.
+ */
+function tcs_get_cv_image_url( array $cv_issue ): string {
+
+    if ( empty( $cv_issue['image'] ) || ! is_array( $cv_issue['image'] ) ) {
+        return '';
+    }
+
+    return $cv_issue['image']['small_url']
+        ?? $cv_issue['image']['medium_url']
+        ?? $cv_issue['image']['super_url']
+        ?? $cv_issue['image']['original_url']
+        ?? '';
+}
+
+/**
  * AJAX: Add Comic to Collection
  */
 add_action('wp_ajax_add_comic_to_collection', 'handle_add_comic_to_collection');
 
+/**
+ * AJAX: Add Comic to Collection
+ */
+add_action( 'wp_ajax_add_comic_to_collection', 'handle_add_comic_to_collection' );
+
 function handle_add_comic_to_collection() {
 
-    if (!check_ajax_referer('comicbooks_fetchers_data', 'security', false)) {
-        wp_send_json_error('Invalid nonce.');
+    if ( ! check_ajax_referer( 'comicbooks_fetchers_data', 'security', false ) ) {
+        wp_send_json_error( 'Invalid nonce.' );
     }
 
     $user_id = get_current_user_id();
-    if (!$user_id) {
-        wp_send_json_error('Not logged in.');
+
+    if ( ! $user_id ) {
+        wp_send_json_error( 'Not logged in.' );
     }
 
-    $data = wp_unslash($_POST['data'] ?? []);
+    $data = wp_unslash( $_POST['data'] ?? [] );
 
-    $title        = sanitize_text_field($data['title'] ?? '');
-    $issue_id     = intval($data['issueId'] ?? 0);
-    $title_id     = intval($data['titleId'] ?? 0);
-    $issue_number = sanitize_text_field($data['issueNumber'] ?? '');
-    $volume       = intval($data['volume'] ?? 1);
-    $publisher    = sanitize_text_field($data['publisher'] ?? '');
-    $image_url    = esc_url_raw($data['imageUrl'] ?? '');
-    $cover_date   = sanitize_text_field($data['date'] ?? '');
-    $description  = wp_kses_post($data['description'] ?? '');
-    $genres_raw   = sanitize_text_field($data['genres'] ?? '');
-    $creators     = sanitize_text_field($data['creators'] ?? '');
-
-    if (!$title || !$issue_id) {
-        wp_send_json_error('Missing required data.');
+    if ( ! is_array( $data ) ) {
+        wp_send_json_error( 'Invalid data.' );
     }
 
-    $normalized_title = normalize_comic_title($title);
+    /*
+     * These names match jQuery btn.data():
+     * data-issue-id      => issueId
+     * data-title-id      => titleId
+     * data-issue-number  => issueNumber
+     * data-image-url     => imageUrl
+     * data-cv-issue-id   => cvIssueId
+     */
+    $issue_id     = intval( $data['issueId'] ?? 0 );
+    $title_id     = intval( $data['titleId'] ?? 0 );
+    $cv_issue_id  = intval( $data['cvIssueId'] ?? 0 );
 
-    $post_id = wp_insert_post([
+    $fallback_title        = sanitize_text_field( $data['title'] ?? '' );
+    $fallback_issue_number = sanitize_text_field( $data['issueNumber'] ?? '' );
+    $fallback_volume       = intval( $data['volume'] ?? 1 );
+    $fallback_publisher    = sanitize_text_field( $data['publisher'] ?? '' );
+    $fallback_image_url    = esc_url_raw( $data['imageUrl'] ?? '' );
+    $fallback_cover_date   = sanitize_text_field( $data['date'] ?? '' );
+
+    if ( ! $issue_id || ! $title_id ) {
+        wp_send_json_error( 'Missing required issue_id or title_id.' );
+    }
+
+    if ( ! class_exists( 'ComicRenderer' ) ) {
+        wp_send_json_error( 'ComicRenderer class not found.' );
+    }
+
+    $comic_renderer = new ComicRenderer();
+
+    /*
+     * Fetch full Metron issue data ONLY after the user clicks Add.
+     * This is one issue, not every issue on the page.
+     */
+    $issue = $comic_renderer->get_single_issue( $title_id, $issue_id );
+
+    if ( empty( $issue ) || ! is_array( $issue ) ) {
+        wp_send_json_error( 'Could not load issue data.' );
+    }
+
+    $series = $issue['series'] ?? [];
+
+    /*
+     * Prefer Metron's cv_id if present.
+     * Fall back to button value if it exists.
+     */
+    $cv_issue_id = intval( $issue['cv_id'] ?? $cv_issue_id );
+
+    /*
+     * Start with Metron data.
+     */
+    $issue_number = sanitize_text_field(
+        $issue['number']
+        ?? $fallback_issue_number
+        ?? ''
+    );
+
+    $series_name = sanitize_text_field(
+        $series['name']
+        ?? $fallback_title
+        ?? 'Unknown Series'
+    );
+
+    $title = $issue_number
+        ? "#{$issue_number} — {$series_name}"
+        : $series_name;
+
+    $volume = intval(
+        $series['volume']
+        ?? $fallback_volume
+        ?? 1
+    );
+
+    $publisher = sanitize_text_field(
+        $series['publisher']['name']
+        ?? $fallback_publisher
+        ?? ''
+    );
+
+    $cover_date = sanitize_text_field(
+        $issue['cover_date']
+        ?? $fallback_cover_date
+        ?? ''
+    );
+
+    $description_raw =
+        $issue['description']
+        ?? $issue['desc']
+        ?? '';
+
+    $creators_array = [];
+
+    if ( ! empty( $issue['credits'] ) && is_array( $issue['credits'] ) ) {
+        $creators_array = $issue['credits'];
+    }
+
+    /*
+     * Only call Comic Vine if Metron does not already give us enough.
+     * This does NOT call Metron /issue/?cv_id.
+     */
+    $needs_cv =
+        $cv_issue_id > 0 &&
+        (
+            empty( $description_raw ) ||
+            empty( $creators_array )
+        );
+
+    $cv_issue = [];
+
+    if ( $needs_cv ) {
+        $cv_issue = tcs_get_comicvine_issue_basic( $cv_issue_id );
+
+        if ( empty( $description_raw ) ) {
+            $description_raw =
+                $cv_issue['description']
+                ?? $cv_issue['deck']
+                ?? '';
+        }
+
+        if ( empty( $creators_array ) && ! empty( $cv_issue['person_credits'] ) && is_array( $cv_issue['person_credits'] ) ) {
+            $creators_array = $cv_issue['person_credits'];
+        }
+    }
+
+    $description = $comic_renderer->clean_cv_description(
+        $description_raw ?: 'No description available.'
+    );
+
+    $creators = tcs_format_creator_credits( $creators_array );
+
+    /*
+     * Genres: prefer Metron series genres.
+     * Fall back to Comic Vine concepts only if we already fetched CV data.
+     */
+    $genres_array = [];
+
+    if ( ! empty( $series['genres'] ) && is_array( $series['genres'] ) ) {
+        $genres_array = array_filter( array_column( $series['genres'], 'name' ) );
+    } elseif ( ! empty( $cv_issue['concept_credits'] ) && is_array( $cv_issue['concept_credits'] ) ) {
+        $genres_array = array_filter( array_column( $cv_issue['concept_credits'], 'name' ) );
+    } elseif ( ! empty( $data['genres'] ) ) {
+        $genres_array = array_map( 'trim', explode( ',', sanitize_text_field( $data['genres'] ) ) );
+    }
+
+    $genres_raw = implode( ', ', array_filter( $genres_array ) );
+
+    /*
+     * Image: prefer button image if it is not empty.
+     * Then Metron issue image.
+     * Then Comic Vine image if we already fetched CV.
+     */
+    $image_url = $fallback_image_url;
+
+    if ( empty( $image_url ) && ! empty( $issue['image'] ) ) {
+        $image_url = esc_url_raw( $issue['image'] );
+    }
+
+    if ( empty( $image_url ) && ! empty( $cv_issue ) ) {
+        $image_url = esc_url_raw( tcs_get_cv_image_url( $cv_issue ) );
+    }
+
+    if ( empty( $title ) || ! $issue_id ) {
+        wp_send_json_error( 'Missing required data.' );
+    }
+
+    /*
+     * Optional duplicate guard:
+     * Prevent adding the same issue twice for the same user.
+     */
+    $existing = get_posts( [
+        'post_type'      => 'collection',
+        'author'         => $user_id,
+        'posts_per_page' => 1,
+        'fields'         => 'ids',
+        'meta_query'     => [
+            [
+                'key'     => 'issue_id',
+                'value'   => $issue_id,
+                'compare' => '=',
+            ],
+        ],
+    ] );
+
+    if ( ! empty( $existing ) ) {
+        wp_send_json_success( [
+            'post_id' => (int) $existing[0],
+            'message' => 'Comic is already in your collection.',
+        ] );
+    }
+
+    $normalized_title = normalize_comic_title( $title );
+
+    $post_id = wp_insert_post( [
         'post_type'    => 'collection',
         'post_title'   => $normalized_title,
         'post_content' => $description,
         'post_status'  => 'publish',
         'post_author'  => $user_id,
-    ]);
+    ] );
 
-    if (is_wp_error($post_id)) {
-        wp_send_json_error('Post creation failed.');
+    if ( is_wp_error( $post_id ) ) {
+        wp_send_json_error( 'Post creation failed.' );
     }
 
     // Meta
-    update_post_meta($post_id, 'issue_id', $issue_id);
-    update_post_meta($post_id, 'title_id', $title_id);
-    update_post_meta($post_id, 'issue_number', $issue_number);
-    update_post_meta($post_id, 'volume', $volume);
-    update_post_meta($post_id, 'date_published', $cover_date);
-    update_post_meta($post_id, 'creators', $creators);
-    update_post_meta($post_id, 'cover_image_url', $image_url);
+    update_post_meta( $post_id, 'issue_id', $issue_id );
+    update_post_meta( $post_id, 'cv_issue_id', $cv_issue_id );
+    update_post_meta( $post_id, 'title_id', $title_id );
+    update_post_meta( $post_id, 'issue_number', $issue_number );
+    update_post_meta( $post_id, 'volume', $volume );
+    update_post_meta( $post_id, 'date_published', $cover_date );
+    update_post_meta( $post_id, 'creators', $creators );
+    update_post_meta( $post_id, 'cover_image_url', $image_url );
 
     // Year + Era
-    if (!empty($cover_date)) {
-        $year = intval(date('Y', strtotime($cover_date)));
-        if ($year > 0) {
-            update_post_meta($post_id, 'year', $year);
-            update_post_meta($post_id, 'era', get_comic_era($year));
+    if ( ! empty( $cover_date ) && strtotime( $cover_date ) ) {
+        $year = intval( date( 'Y', strtotime( $cover_date ) ) );
+
+        if ( $year > 0 ) {
+            update_post_meta( $post_id, 'year', $year );
+            update_post_meta( $post_id, 'era', get_comic_era( $year ) );
         }
     }
 
     // Taxonomies
-    if (!empty($publisher)) {
-    
-        // Ensure publisher + All term
-        $terms = ensure_publisher_terms($publisher);
-    
-        if ($terms) {
-    
+    if ( ! empty( $publisher ) ) {
+
+        $terms = ensure_publisher_terms( $publisher );
+
+        if ( $terms ) {
+
             $publisher_id = $terms['publisher_id'];
             $all_id       = $terms['all_id'];
-    
-            // Create/get title under publisher
-            $title_term_id = ensure_title_term($normalized_title, $publisher_id);
-    
-            $assign_terms = [$publisher_id, $all_id];
-    
-            if ($title_term_id) {
+
+            $title_term_id = ensure_title_term( $normalized_title, $publisher_id );
+
+            $assign_terms = [ $publisher_id, $all_id ];
+
+            if ( $title_term_id ) {
                 $assign_terms[] = $title_term_id;
             }
-    
-            wp_set_object_terms($post_id, array_map('intval', $assign_terms), 'publisher', false);
-            wp_update_term_count_now($assign_terms, 'publisher');
+
+            wp_set_object_terms( $post_id, array_map( 'intval', $assign_terms ), 'publisher', false );
+            wp_update_term_count_now( $assign_terms, 'publisher' );
         }
     }
 
-    if (!empty($genres_raw)) {
-        $genres_array = array_map('trim', explode(',', $genres_raw));
-        wp_set_object_terms($post_id, $genres_array, 'comic_genre');
-        wp_update_term_count_now($genres_array, 'comic_genre');
+    if ( ! empty( $genres_raw ) ) {
+        $genres_array = array_map( 'trim', explode( ',', $genres_raw ) );
+        $genres_array = array_filter( $genres_array );
+
+        if ( ! empty( $genres_array ) ) {
+            wp_set_object_terms( $post_id, $genres_array, 'comic_genre' );
+            wp_update_term_count_now( $genres_array, 'comic_genre' );
+        }
     }
 
     // Defaults
-    update_post_meta($post_id, 'qty', 1);
-    update_post_meta($post_id, 'price', '0.00');
-    update_post_meta($post_id, 'condition', '9.4 (NEAR MINT)');
+    update_post_meta( $post_id, 'qty', 1 );
+    update_post_meta( $post_id, 'price', '0.00' );
+    update_post_meta( $post_id, 'condition', '9.4 (NEAR MINT)' );
 
-    wp_send_json_success([
+    wp_send_json_success( [
         'post_id' => $post_id,
         'message' => 'Comic added to your private collection.',
-    ]);
+    ] );
 }
 
 /**

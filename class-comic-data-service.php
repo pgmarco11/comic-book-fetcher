@@ -64,7 +64,7 @@ class ComicDataService {
                 }
     
                 foreach ($data['results'] as $p) {
-                    $full[] = ['id' => $p['id'], 'name' => $p['name']];
+                    $full[] = [ 'id' => $p['id'], 'name' => $p['name'] ];
                 }
                 $api_page++;
                 sleep(2); // respectful delay
@@ -123,6 +123,15 @@ class ComicDataService {
         $items = [];
         foreach ( $raw['items'] ?? [] as $pub ) {
             $info    = $this->get_publisher_info( $pub['id'] );
+
+            if ( empty( $info['founded'] ) ) {
+                $info['founded'] = 'Unknown';
+            }
+        
+            if ( empty( $info['desc'] ) ) {
+                $info['desc'] = 'No description available.';
+            }   
+
             $items[] = [
                 'id'      => $info['id'] ?? $pub['id'],
                 'name'    => $info['name'] ?? $pub['name'],
@@ -130,7 +139,8 @@ class ComicDataService {
                 'founded' => $info['founded'] ?? '',
                 'desc'    => $info['desc'] ?? '',
             ];
-        }       
+        }  
+        
         
         $result = [
             'items' => $items,
@@ -142,266 +152,754 @@ class ComicDataService {
     }
 
     /* -----------------------------------------------------------------
-     *  PUBLISHER INFO (single record)
-     * ----------------------------------------------------------------- */
+    *  PUBLISHER INFO (single record)
+    * ----------------------------------------------------------------- */
     public function get_publisher_info( $publisher_id ) {
+
         $key    = "metron_publisher_$publisher_id";
         $cached = get_transient( $key );
+
         if ( $cached !== false ) {
             return $cached;
         }
 
+        // -----------------------------
+        // METRON PRIMARY SOURCE
+        // -----------------------------
         $url  = $this->client->api_base . "publisher/$publisher_id/";
-        $data = $this->client->api_get( $url );
+        $data = $this->client->api_get( $url ); 
 
-        if ( ! $data || empty( $data['name'] ) ) {
+        if ( ! is_array( $data ) || empty( $data['name'] ) ) {
             return [];
         }
 
         $info = [
-            'id'      => $data['id'],
-            'name'    => $data['name'],
+            'id'      => $data['id'] ?? $publisher_id,
+            'name'    => $data['name'] ?? '',
             'image'   => $data['image'] ?? '',
             'desc'    => $data['desc'] ?? '',
             'founded' => $data['founded'] ?? '',
+            'cv_id'   => $data['cv_id'] ?? '',
         ];
 
+        // -----------------------------
+        // COMIC VINE FALLBACK
+        // Only if important fields missing
+        // -----------------------------
+        $needs_fallback =
+            empty( $info['image'] ) ||
+            empty( $info['desc'] ) ||
+            empty( $info['founded'] );
+
+            if ( $needs_fallback && ! empty( $info['cv_id'] ) ) {
+
+                $cv_data = $this->get_comicvine_publisher_info( $info['cv_id'] );
+            
+                if ( ! empty( $cv_data ) ) {
+                    if ( empty( $info['image'] ) && ! empty( $cv_data['image'] ) ) {
+                        $info['image'] = $cv_data['image'];
+                    }
+            
+                    if ( empty( $info['desc'] ) && ! empty( $cv_data['desc'] ) ) {
+                        $info['desc'] = $cv_data['desc'];
+                    }
+            
+                    if ( empty( $info['founded'] ) && ! empty( $cv_data['founded'] ) ) {
+                        $info['founded'] = $cv_data['founded'];
+                    }
+                }
+            }
+
+        // Final image fallback
+        $info['image'] = ! empty( $info['image'] )
+            ? $info['image']
+            : PUBLISHER_PLACEHOLDER_IMAGE_URL;
+
+        if ( empty( $info['founded'] ) ) {
+            $info['founded'] = 'Unknown';
+        }
+            
+        if ( empty( $info['desc'] ) ) {
+            $info['desc'] = 'No description available.';
+        }
+
         set_transient( $key, $info, WEEK_IN_SECONDS );
+
         return $info;
     }
 
-    /** -----------------------------------------------------------------
-     *  SERIES LIST for a publisher
-     * ----------------------------------------------------------------- */
-    public function get_series(
-        $publisher_id,
-        $page = 1,
-        $per_page = 100,
-        $search = '',
-        $letter = 'all',
-        $force_api = false,
-        $batch_size = 100
-    ) {
-        $complete_key = "metron:series_complete:$publisher_id";
-        $is_complete = get_transient($complete_key);
+    /**
+     * Shared Comic Vine GET request — handles key retrieval, headers,
+     * and JSON decoding once instead of in every CV method.
+     */
+    private function cv_api_get( string $endpoint, array $query_args = [] ): ?array {
+        $cv_key = get_option( 'comic_vine_api_key', '' );
 
-        $cache_key = "metron:series_full:$publisher_id";
-        $full = get_transient($cache_key) ?: [];
-    
-        $last_page_key = "metron:series_last_page:$publisher_id";
-        $api_page = get_transient($last_page_key) ?: 1;
-    
-        if ($force_api || empty($full) || !$is_complete) {
-    
-            $pages_fetched = 0;
-    
-            do {
-                $url = $this->client->api_base . "publisher/$publisher_id/series_list/?page={$api_page}&page_size=100";
-                $response = $this->client->api_get($url);
-                
-                if (
-                    !$response ||
-                    empty($response['results']) ||
-                    (isset($response['detail']) && str_contains($response['detail'], 'Invalid page'))
-                ) {
-                    break;
-                }
-    
-                foreach ($response['results'] as $item) {
-                    $full[$item['id']] = [
-                        'series_id'   => $item['id'],
-                        'name'        => $item['series'],
-                        'volume'      => $item['volume'] ?? '1',
-                        'issue_count' => $item['issue_count'] ?? 0,
-                        'year_began'  => $item['year_began'] ?? 'N/A',
-                    ];
-                }
-    
-                $api_page++;
-                $pages_fetched++;
-    
-                // reduce delay massively
-                usleep(200000); // 0.2s
-    
-            } while (!empty($response['next']) && $pages_fetched < $batch_size);
-
-            if (empty($response['next'])) {
-                set_transient($complete_key, true, 30 * DAY_IN_SECONDS);
-            }
-    
-            set_transient($cache_key, $full, 30 * DAY_IN_SECONDS);
-            set_transient($last_page_key, $api_page, 30 * DAY_IN_SECONDS);
-        }
-    
-        // --- filtering ---
-        $filtered = $full;
-
-        if (!is_array($filtered)) {
-            $filtered = [];
+        if ( empty( $cv_key ) ) {
+            error_log( 'Comic Vine API key missing' );
+            return null;
         }
 
-        // search filter
-        if ($search) {
-            $search = strtolower(trim($search));
-            $filtered = array_filter($filtered, fn($s) =>
-                strpos(strtolower($s['name']), $search) !== false
-            );
-        }
-
-        // letter filter
-        if ($letter !== 'all') {
-
-            $filtered = array_filter($filtered, function($item) use ($letter) {
-        
-                $title = trim($item['name']);
-        
-                // Remove leading articles
-                $title = preg_replace('/^(The|A|An)\s+/i', '', $title);
-        
-                $first = strtoupper(mb_substr($title, 0, 1));
-        
-                return $letter === '#'
-                    ? !ctype_alpha($first)
-                    : $first === strtoupper($letter);
-            });
-        }
-
-        // reindex
-        $filtered = array_values($filtered);
-
-        $total = count($filtered);
-        
-        // FIRST: paginate
-        $paged = array_slice(
-            $filtered,
-            ($page - 1) * $per_page,
-            $per_page
+        $url = add_query_arg(
+            array_merge( [ 'api_key' => $cv_key, 'format' => 'json' ], $query_args ),
+            $endpoint
         );
 
-        // RETURN the modified dataset
+        $res = wp_remote_get(
+            $url,
+            [
+                'timeout' => 30,
+                'headers' => [
+                    'User-Agent' => 'ComicBookFetcher/1.1 (+' . get_site_url() . ')',
+                ],
+            ]
+        );
+
+        if ( is_wp_error( $res ) ) {
+            error_log( 'Comic Vine request failed (' . $endpoint . '): ' . $res->get_error_message() );
+            return null;
+        }
+
+        $body = json_decode( wp_remote_retrieve_body( $res ), true );
+
+        if ( json_last_error() !== JSON_ERROR_NONE ) {
+            error_log( 'Comic Vine JSON decode failed (' . $endpoint . '): ' . json_last_error_msg() );
+            return null;
+        }
+
+        return $body;
+    }
+
+        /**
+     * Given [series_id => cv_volume_id], return [series_id => image_url]
+     * in a single ComicVine request.
+     */
+    public function get_comicvine_first_issues_batch( array $series_to_cv_id ) {
+        error_log('CV BATCH: input series_to_cv_id = ' . print_r($series_to_cv_id, true));
+    
+        $volume_ids = array_filter( array_values( $series_to_cv_id ) );
+        if ( empty( $volume_ids ) ) {
+            error_log('CV BATCH: no volume ids after filtering — series_to_cv_id had no usable cv_id values, aborting');
+            return [];
+        }
+    
+        error_log('CV BATCH: volume_ids to query = ' . implode(',', $volume_ids));
+    
+        $cv_key = get_option( 'comic_vine_api_key', '' );
+        if ( empty( $cv_key ) ) {
+            error_log( 'CV BATCH: Comic Vine API key missing' );
+            return [];
+        }
+    
+        $filter = 'volume:' . implode( '|', array_map( 'absint', $volume_ids ) ) . ',issue_number:1';
+        $url    = add_query_arg(
+            [
+                'api_key'    => $cv_key,
+                'format'     => 'json',
+                'field_list' => 'volume,image,issue_number',
+                'filter'     => $filter,
+                'limit'      => 100,
+            ],
+            'https://comicvine.gamespot.com/api/issues/'
+        );
+    
+        error_log('CV BATCH: request URL = ' . preg_replace('/api_key=[^&]+/', 'api_key=REDACTED', $url));
+    
+        $res = wp_remote_get(
+            $url,
+            [
+                'timeout' => 30,
+                'headers' => [
+                    'User-Agent' => 'ComicBookFetcher/1.1 (+' . get_site_url() . ')',
+                ],
+            ]
+        );
+    
+        if ( is_wp_error( $res ) ) {
+            error_log( 'CV BATCH: wp_remote_get failed: ' . $res->get_error_message() );
+            return [];
+        }
+    
+        $status = wp_remote_retrieve_response_code( $res );
+        $raw    = wp_remote_retrieve_body( $res );
+        error_log("CV BATCH: HTTP status = $status");
+        error_log('CV BATCH: raw body (first 800 chars) = ' . substr($raw, 0, 800));
+    
+        $body = json_decode( $raw, true );
+    
+        if ( json_last_error() !== JSON_ERROR_NONE ) {
+            error_log('CV BATCH: JSON decode failed: ' . json_last_error_msg());
+            return [];
+        }
+    
+        error_log('CV BATCH: decoded error field = ' . ($body['error'] ?? 'MISSING'));
+        error_log('CV BATCH: number_of_page_results = ' . ($body['number_of_page_results'] ?? 'MISSING'));
+    
+        if ( empty( $body['results'] ) ) {
+            error_log( 'CV BATCH: no results in body' );
+            return [];
+        }
+    
+        $by_volume = [];
+        foreach ( $body['results'] as $issue ) {
+            $vol_id = $issue['volume']['id'] ?? null;
+            $img_check = $issue['image'] ?? null;
+            error_log("CV BATCH: result issue_id={$issue['id']} volume_id=" . ($vol_id ?? 'NULL') . " issue_number=" . ($issue['issue_number'] ?? '?') . " has_image=" . (!empty($img_check) ? 'yes' : 'no'));
+    
+            if ( $vol_id ) {
+                $by_volume[ $vol_id ] = $issue['image']['small_url']
+                    ?? $issue['image']['medium_url']
+                    ?? $issue['image']['original_url']
+                    ?? '';
+            }
+        }
+    
+        error_log('CV BATCH: by_volume map = ' . print_r($by_volume, true));
+    
+        $images = [];
+        foreach ( $series_to_cv_id as $sid => $cv_id ) {
+            $images[ $sid ] = $by_volume[ $cv_id ] ?? '';
+            if (empty($images[$sid])) {
+                error_log("CV BATCH: series $sid (cv_id=$cv_id) got NO image from by_volume map");
+            }
+        }
+    
+        return $images;
+    }
+
+    /**
+     * Look up known ComicVine volume ids for a set of series ids,
+     * from the per-series cache populated in get_series_api_page().
+     * Returns null for any series_id we haven't cached a cv_id for yet.
+     */
+    public function get_known_cv_ids( array $series_ids ) : array {
+        $map = [];
+        foreach ( $series_ids as $sid ) {
+            $cached = get_transient( "metron:series_cvid:$sid" );
+            $map[ $sid ] = ( $cached !== false ) ? (int) $cached : null;
+        }
+        error_log('get_known_cv_ids: ' . print_r($map, true));
+        return $map;
+    }
+
+    /**
+     * Last-resort per-series Metron fallback, only used when a series
+     * has no known cv_id at all.
+     */
+    public function get_series_first_issue_image( int $series_id ): string {
+        $url  = $this->client->api_base . "series/{$series_id}/issue_list/?page=1&page_size=1";
+        $data = $this->client->api_get( $url );
+        return $data['results'][0]['image'] ?? '';
+    }
+
+    private function get_filtered_series_lazy(
+        int $publisher_id, int $page, int $per_page,
+        string $search, string $letter, bool $force_api
+    ): array {
+        $needed_count = $page * $per_page;
+        $max_pages_per_call = 1;
+    
+        $progress_key = "metron:series_scan_progress:v1:{$publisher_id}";
+        $progress = $force_api ? false : get_transient( $progress_key );
+    
+        if ( ! is_array( $progress ) ) {
+            $progress = [
+                'next_api_page' => 1,
+                'exhausted'     => false,
+                'raw_items'     => [],
+            ];
+        }
+    
+        $filtered = $this->filter_series_list( $progress['raw_items'], $letter, $search );
+    
+        // Only attempt to fetch more if we actually need to AND can get the lock.
+        // If another request already holds the lock, just return what we have —
+        // the caller (AJAX handler / template) treats scan_complete=false as
+        // "poll again shortly," so this degrades gracefully instead of racing.
+        if ( count( $filtered ) < $needed_count && ! $progress['exhausted'] ) {
+    
+            if ( $this->acquire_scan_lock( $publisher_id ) ) {
+    
+                try {
+                    $pages_fetched_this_call = 0;
+    
+                    while (
+                        count( $filtered ) < $needed_count &&
+                        ! $progress['exhausted'] &&
+                        $pages_fetched_this_call < $max_pages_per_call
+                    ) {
+                        $page_data = $this->get_series_api_page(
+                            $publisher_id, $progress['next_api_page'], 100, $force_api
+                        );
+                        $pages_fetched_this_call++;
+    
+                        if ( empty( $page_data['items'] ) ) {
+                            $progress['exhausted'] = true;
+                            break;
+                        }
+    
+                        $progress['raw_items'] = array_merge( $progress['raw_items'], $page_data['items'] );
+                        $progress['next_api_page']++;
+    
+                        if ( empty( $page_data['has_next'] ) ) {
+                            $progress['exhausted'] = true;
+                        }
+    
+                        $filtered = $this->filter_series_list( $progress['raw_items'], $letter, $search );
+                    }
+    
+                    set_transient( $progress_key, $progress, DAY_IN_SECONDS );
+    
+                } finally {
+                    $this->release_scan_lock( $publisher_id );
+                }
+    
+            }
+            // else: lock held elsewhere — fall through and return current progress as-is.
+        }
+    
+        $have_enough = count( $filtered ) >= $needed_count || $progress['exhausted'];
+        $total_known = count( $filtered );
+        $offset      = ( $page - 1 ) * $per_page;
+    
         return [
-            'items' => $paged,
-            'total' => $total,
-            'page' => $page,
+            'items'          => array_slice( $filtered, $offset, $per_page ),
+            'total'          => $total_known,
+            'is_total_exact' => $progress['exhausted'],
+            'scan_complete'  => $have_enough,
+            'page'           => $page,
+            'per_page'       => $per_page,
+        ];
+    }
+
+    private function acquire_scan_lock( int $publisher_id ): bool {
+        $lock_key = "metron:series_scan_lock:{$publisher_id}";
+        if ( get_transient( $lock_key ) ) {
+            return false; // another request is already scanning this publisher
+        }
+        set_transient( $lock_key, 1, 20 ); // short TTL — auto-releases if a worker dies mid-scan
+        return true;
+    }
+    
+    private function release_scan_lock( int $publisher_id ): void {
+        delete_transient( "metron:series_scan_lock:{$publisher_id}" );
+    }
+
+    /** -----------------------------------------------------------------
+     * SERIES LIST for a publisher — fixed 5-page block mode.
+     *
+     * Normal behavior with your current setup:
+     * - Catalog page 1–50 uses Metron API pages 1–5.
+     * - Catalog page 51–100 uses Metron API pages 6–10.
+     *
+     * Why? Your catalog shows 10 items per page, while Metron API returns
+     * 100 items per page.
+     * ----------------------------------------------------------------- */
+    public function get_series(
+        $publisher_id, $page = 1, $per_page = 10,
+        $search = '', $letter = 'all', $force_api = false, $batch_size = null
+    ) {
+        $publisher_id = (int) $publisher_id;
+        $page         = max( 1, (int) $page );
+        $per_page     = max( 1, (int) $per_page );
+        $is_filtered  = ! empty( $search ) || $letter !== 'all';
+
+        if ( $is_filtered ) {
+            return $this->get_filtered_series_lazy( $publisher_id, $page, $per_page, $search, $letter, $force_api );
+        }
+
+        $api_page_size = 100;
+        $block_size    = 1;
+
+        /*
+        * IMPORTANT:
+        * This maps your visible catalog page to the Metron API page.
+        *
+        * Because catalog page = 10 items
+        * and Metron page = 100 items:
+        *
+        * catalog pages 1–10  need Metron page 1
+        * catalog pages 11–20 need Metron page 2
+        * catalog pages 41–50 need Metron page 5
+        * catalog pages 51–60 need Metron page 6
+        */
+        $absolute_offset = ( $page - 1 ) * $per_page;
+        $needed_api_page = (int) floor( $absolute_offset / $api_page_size ) + 1;
+
+        /*
+        * Fetch API pages in blocks:
+        * needed 1–5  => fetch 1–5
+        * needed 6–10 => fetch 6–10
+        * needed 11–15 => fetch 11–15
+        */
+        $block_start = ( (int) floor( ( $needed_api_page - 1 ) / $block_size ) * $block_size ) + 1;
+        $block_end   = $block_start + $block_size - 1;
+
+        error_log(
+            "get_series BLOCK MODE v4: publisher={$publisher_id}, catalog_page={$page}, needed_api_page={$needed_api_page}, block={$block_start}-{$block_end}"
+        );
+
+        $block_items = [];
+        $api_total   = 0;
+        $api_has_next = false;
+
+        for ( $api_page = $block_start; $api_page <= $block_end; $api_page++ ) {
+            $page_data = $this->get_series_api_page(
+                $publisher_id,
+                $api_page,
+                $api_page_size,
+                $force_api
+            );
+
+            if ( empty( $page_data['items'] ) ) {
+                break;
+            }
+
+            $block_items = array_merge( $block_items, $page_data['items'] );
+
+            if ( ! empty( $page_data['total'] ) ) {
+                $api_total = (int) $page_data['total'];
+            }
+
+            if ( ! empty( $page_data['has_next'] ) ) {
+                $api_has_next = true;
+            }
+        }
+
+        $filtered = $this->filter_series_list( $block_items, $letter, $search );
+
+        /*
+        * For normal unfiltered "all" browsing, use Metron's real total.
+        * For letter/search filters, we can only know the filtered total
+        * inside the loaded block unless you fetch every API page.
+        */
+        $is_filtered = ! empty( $search ) || $letter !== 'all';
+
+        $total = $is_filtered
+            ? count( $filtered )
+            : max( $api_total, count( $filtered ) );
+
+        /*
+        * Slice within the current 5-page API block.
+        */
+        if ( ! $is_filtered ) {
+            $block_absolute_start = ( $block_start - 1 ) * $api_page_size;
+            $offset_in_block      = max( 0, $absolute_offset - $block_absolute_start );
+        } else {
+            $offset_in_block = 0;
+        }
+
+        $paged_items = array_slice( $filtered, $offset_in_block, $per_page );
+
+        return [
+            'items'    => $paged_items,
+            'total'    => $total,
+            'page'     => $page,
             'per_page' => $per_page,
         ];
     }
 
+
     /**
-     * Get issues for a series with full caching, search, and pagination.
+     * Fetch one exact Metron series_list API page.
+     * No rolling "last page" state.
+     */
+    private function get_series_api_page(
+        int $publisher_id,
+        int $api_page,
+        int $api_page_size = 100,
+        bool $force_api = false
+    ): array {
+        $cache_key = "metron:series_api_page:v4:{$publisher_id}:{$api_page}:{$api_page_size}";
+
+        if ( ! $force_api ) {
+            $cached = get_transient( $cache_key );
+
+            if ( $cached !== false && is_array( $cached ) ) {
+                return $cached;
+            }
+        }
+
+        $url = $this->client->api_base . "publisher/{$publisher_id}/series_list/?page={$api_page}&page_size={$api_page_size}";
+
+        $response = $this->client->api_get( $url );
+
+        if (
+            ! $response ||
+            empty( $response['results'] ) ||
+            ( ! empty( $response['detail'] ) && str_contains( $response['detail'], 'Invalid page' ) )
+        ) {
+            $empty = [
+                'items'    => [],
+                'total'    => 0,
+                'has_next' => false,
+            ];
+
+            set_transient( $cache_key, $empty, 30 * DAY_IN_SECONDS );
+
+            return $empty;
+        }
+
+        $items = [];
+
+        foreach ( $response['results'] as $item ) {
+
+            error_log("RAW SERIES ITEM {$item['id']}: " . print_r($item, true));
+            
+            $items[] = [
+                'series_id'   => $item['id'],
+                'name'        => $item['series'],
+                'volume'      => $item['volume']      ?? '1',
+                'issue_count' => $item['issue_count'] ?? 0,
+                'year_began'  => $item['year_began']  ?? 'N/A',
+                'image'       => $item['image']       ?? '',
+                'cv_id'       => $item['cv_id']       ?? null,
+            ];
+        
+            if ( ! empty( $item['cv_id'] ) ) {
+                set_transient( "metron:series_cvid:{$item['id']}", (int) $item['cv_id'], YEAR_IN_SECONDS );
+            }
+        }
+
+        $result = [
+            'items'    => $items,
+            'total'    => (int) ( $response['count'] ?? 0 ),
+            'has_next' => ! empty( $response['next'] ),
+        ];
+
+        set_transient( $cache_key, $result, 30 * DAY_IN_SECONDS );
+
+        return $result;
+    }
+
+    /**
+     * Apply letter and search filters to a raw series map.
+     */
+    private function filter_series_list( array $full, string $letter, string $search ): array {
+        $data = $full;
+
+        if ( $search ) {
+            $s    = strtolower( trim( $search ) );
+            $data = array_filter( $data, fn( $item ) => stripos( $item['name'], $s ) !== false );
+        }
+
+        if ( $letter !== 'all' ) {
+            $data = array_filter( $data, function( $item ) use ( $letter ) {
+                $title = preg_replace( '/^(The|A|An)\s+/i', '', trim( $item['name'] ) );
+                $first = strtoupper( mb_substr( $title, 0, 1 ) );
+                return $letter === '#' ? ! ctype_alpha( $first ) : $first === strtoupper( $letter );
+            } );
+        }
+
+        return array_values( $data );
+    }
+
+    /**
+     * Get issues for a series — incremental-page edition.
      *
-     * This is now the SINGLE SOURCE OF TRUTH for issue data.
+     * Instead of looping through up to 10 API pages on every cold load,
+     * we fetch only the three Metron API pages that surround the requested
+     * display page: prev (if any), current, next.
      *
-     * @param int    $title_id     Series ID
-     * @param int    $current_page Current page (1-based)
-     * @param string $search       Search term (optional)
-     * @return array
+     * Cache structure
+     * ──────────────
+     *  metron:issue_page:{id}:{n}   – results[] for Metron API page n   (30 d)
+     *  metron:issue_total:{id}      – total issue count from the API     (30 d)
+     *  metron:series:{id}           – series metadata                    (14 d)
+     *
+     * Backward compat: if the old v5 full-list transient still exists it
+     * is used as-is and expires naturally after 30 days.
      */
     public function get_series_issues( $title_id, $current_page = 1, $search = '' ) {
         $title_id     = (int) $title_id;
-        $current_page = max(1, (int) $current_page);
+        $current_page = max( 1, (int) $current_page );
         $per_page     = 10;
-    
-        $full_list_key   = "metron:issue_list_full:{$title_id}:v5";
-        $all_issues_data = get_transient( $full_list_key );
-    
-        error_log("get_series_issues called for series {$title_id} page {$current_page} - cache " . ($all_issues_data !== false ? 'HIT' : 'MISS'));
-    
-        // Fetch full list if not cached
-        if ($all_issues_data === false || !isset($all_issues_data['results']) || !is_array($all_issues_data['results'])) {
-            $all = [];
-            $page_fetch = $current_page;
-            // Start fetching from the requested page to optimize for user navigation patterns  
-    
-            do {
-                $url = $this->client->api_base . "series/{$title_id}/issue_list/?page={$page_fetch}&page_size=100";
-                $response = $this->client->api_get($url);
-    
-                if (isset($response['error']) || empty($response['results']) || !is_array($response['results'])) {
-                    break;
-                }
-    
-                $all = array_merge($all, $response['results']);
-                $page_fetch++;
-    
-            } while (!empty($response['next']) && $page_fetch < 10); // safety limit
-    
-            // Sort by issue number
-            usort($all, function($a, $b) {
-                $numA = trim((string)($a['number'] ?? '0'));
-                $numB = trim((string)($b['number'] ?? '0'));
-                $valueA = is_numeric($numA) ? (float)$numA : INF;
-                $valueB = is_numeric($numB) ? (float)$numB : INF;
-                if ($valueA !== $valueB) return $valueA <=> $valueB;
-                return ((int)($a['id'] ?? 0)) <=> ((int)($b['id'] ?? 0));
-            });
-    
-            $all_issues_data = [
-                'count'   => count($all),
-                'results' => $all
-            ];
-    
-            if (!empty($all)) {
-                set_transient($full_list_key, $all_issues_data, 30 * DAY_IN_SECONDS);
-            } else {
-                error_log("Warning: Empty issue list for series {$title_id}");
-            }
-        }
-    
-        // Get series metadata (cached)
+        $api_size     = 100; // Metron page_size
+
+        // ── Series metadata ───────────────────────────────────────────────
         $series_key = "metron:series:{$title_id}";
-        $series = get_transient($series_key);
-        if ($series === false) {
-            $series = $this->client->api_get($this->client->api_base . "series/{$title_id}/");
-            if (empty($series['name'])) {
-                return ['error' => 'Series not found'];
+        $series     = get_transient( $series_key );
+        if ( $series === false ) {
+            $series = $this->client->api_get( $this->client->api_base . "series/{$title_id}/" );
+            if ( empty( $series['name'] ) ) {
+                return [ 'error' => 'Series not found' ];
             }
-            set_transient($series_key, $series, 14 * DAY_IN_SECONDS);
+            set_transient( $series_key, $series, 14 * DAY_IN_SECONDS );
         }
-    
-        // Apply search
-        $filtered = $search 
-            ? array_filter($all_issues_data['results'], function($i) use ($search) {
-                $s   = strtolower(trim($search));
-                $num = strtolower(trim($i['number'] ?? ''));
-                if ($num === $s || stripos($num, $s) === 0) return true;
-                if (stripos(strtolower($i['issue'] ?? ''), $s) !== false || 
-                    stripos($i['cover_date'] ?? '', $s) !== false) return true;
-                return false;
-            })
-            : $all_issues_data['results'];
-    
-        $filtered = array_values($filtered);
-    
-        // Paginate
-        $offset       = ($current_page - 1) * $per_page;
-        $paged_issues = array_slice($filtered, $offset, $per_page);
-    
-        $total_filtered = count($filtered);
-        $total_pages    = max(1, ceil($total_filtered / $per_page));
-    
-        // Graceful handling for page > total
-        if ($current_page > $total_pages && $total_filtered > 0) {          
+
+        // ── Backward compat: legacy v5 full-list cache ────────────────────
+        $full_key  = "metron:issue_list_full:{$title_id}:v5";
+        $full_data = get_transient( $full_key );
+        $use_new   = ( $full_data === false || ! isset( $full_data['results'] ) || ! is_array( $full_data['results'] ) );
+
+        $combined = [];  // api_page => results[]  (new mode only)
+        $total    = 0;
+
+        if ( $use_new ) {
+            // ── Which Metron API page covers the current display page? ────
+            // display pages 1-10 → api page 1, 11-20 → 2, etc.
+            $api_pg_needed = max( 1, (int) ceil( $current_page * $per_page / $api_size ) );
+
+            // Prev, current, next API pages (filter out 0)
+            $total_key = "metron:issue_total:{$title_id}";
+            $total     = (int)( get_transient( $total_key ) ?: 0 );
+
+            /*
+            * Fetch the current API page first.
+            * Only fetch next if the current API response says next exists.
+            * This prevents Metron 404 Invalid page errors.
+            */
+            $current_ap = $api_pg_needed;
+
+            $current_key  = "metron:issue_page:{$title_id}:{$current_ap}";
+            $current_data = get_transient( $current_key );
+            $current_resp = null;
+
+            if ( $current_data === false ) {
+                $url = $this->client->api_base . "series/{$title_id}/issue_list/?page={$current_ap}&page_size={$api_size}";
+                $current_resp = $this->client->api_get( $url );
+
+                if ( ! empty( $current_resp['results'] ) && is_array( $current_resp['results'] ) ) {
+                    $current_data = $current_resp['results'];
+
+                    set_transient( $current_key, $current_data, 30 * DAY_IN_SECONDS );
+
+                    if ( ! empty( $current_resp['count'] ) ) {
+                        $total = (int) $current_resp['count'];
+                        set_transient( $total_key, $total, 30 * DAY_IN_SECONDS );
+                    }
+                } else {
+                    $current_data = [];
+                    set_transient( $current_key, [], 30 * DAY_IN_SECONDS );
+                }
+            }
+
+            if ( ! empty( $current_data ) ) {
+                $combined[ $current_ap ] = $current_data;
+            }
+
+            /*
+            * Fetch previous API page only if it can exist.
+            */
+            if ( $current_ap > 1 ) {
+                $prev_ap  = $current_ap - 1;
+                $prev_key = "metron:issue_page:{$title_id}:{$prev_ap}";
+                $prev_data = get_transient( $prev_key );
+
+                if ( $prev_data === false ) {
+                    $prev_url  = $this->client->api_base . "series/{$title_id}/issue_list/?page={$prev_ap}&page_size={$api_size}";
+                    $prev_resp = $this->client->api_get( $prev_url );
+
+                    $prev_data = ! empty( $prev_resp['results'] ) && is_array( $prev_resp['results'] )
+                        ? $prev_resp['results']
+                        : [];
+
+                    set_transient( $prev_key, $prev_data, 30 * DAY_IN_SECONDS );
+                }
+
+                if ( ! empty( $prev_data ) ) {
+                    $combined[ $prev_ap ] = $prev_data;
+                }
+            }
+
+            /*
+            ** Fetch next API page only if current response says there is a next page.
+            ** If current was cached and we do not have the original `next` field,
+            ** calculate from total count instead.
+            */
+            $has_next = false;
+
+            if ( is_array( $current_resp ) ) {
+                $has_next = ! empty( $current_resp['next'] );
+            } elseif ( $total > 0 ) {
+                $has_next = $current_ap < (int) ceil( $total / $api_size );
+            }
+
+            if ( $has_next ) {
+                $next_ap  = $current_ap + 1;
+                $next_key = "metron:issue_page:{$title_id}:{$next_ap}";
+                $next_data = get_transient( $next_key );
+
+                if ( $next_data === false ) {
+                    $next_url  = $this->client->api_base . "series/{$title_id}/issue_list/?page={$next_ap}&page_size={$api_size}";
+                    $next_resp = $this->client->api_get( $next_url );
+
+                    $next_data = ! empty( $next_resp['results'] ) && is_array( $next_resp['results'] )
+                        ? $next_resp['results']
+                        : [];
+
+                    set_transient( $next_key, $next_data, 30 * DAY_IN_SECONDS );
+                }
+
+                if ( ! empty( $next_data ) ) {
+                    $combined[ $next_ap ] = $next_data;
+                }
+            }
+
+
+
+            ksort( $combined ); // ensure ascending API-page order
+            $all = $combined ? array_merge( ...array_values( $combined ) ) : [];
+
+        } else {
+            // Legacy complete cache
+            $all   = $full_data['results'];
+            $total = count( $all );
+        }
+
+        // ── Sort by issue number ──────────────────────────────────────────
+        usort( $all, function( $a, $b ) {
+            $nA = is_numeric( trim( (string)( $a['number'] ?? '' ) ) ) ? (float) $a['number'] : INF;
+            $nB = is_numeric( trim( (string)( $b['number'] ?? '' ) ) ) ? (float) $b['number'] : INF;
+            return $nA !== $nB ? ( $nA <=> $nB ) : ( (int)( $a['id'] ?? 0 ) ) <=> ( (int)( $b['id'] ?? 0 ) );
+        } );
+
+        // ── Search filter ─────────────────────────────────────────────────
+        if ( $search ) {
+            $s   = strtolower( trim( $search ) );
+            $all = array_values( array_filter( $all, fn( $i ) =>
+                stripos( $i['number']     ?? '', $s ) !== false ||
+                stripos( $i['issue']      ?? '', $s ) !== false ||
+                stripos( $i['cover_date'] ?? '', $s ) !== false
+            ) );
+            $total = count( $all ); // search total = filtered count within fetched pages
+        }
+
+        // ── Slice for the requested display page ──────────────────────────
+        if ( $use_new && ! $search ) {
+            // Total comes from the API count (covers the full series).
+            // The assembled array starts at (min_api_page - 1) * api_size,
+            // so we shift the display-page offset accordingly.
+            $min_api_page    = $combined ? min( array_keys( $combined ) ) : $api_pg_needed;
+            $assembled_start = ( $min_api_page - 1 ) * $api_size; // 0-indexed absolute
+            $abs_start       = ( $current_page  - 1 ) * $per_page;  // 0-indexed absolute
+            $offset          = max( 0, $abs_start - $assembled_start );
+            $paged_issues    = array_slice( $all, $offset, $per_page );
+        } else {
+            // Legacy full cache, or search (where $all is already the filtered set)
+            $paged_issues = array_slice( $all, ( $current_page - 1 ) * $per_page, $per_page );
+        }
+
+        $total_pages = max( 1, (int) ceil( $total / $per_page ) );
+
+        if ( $current_page > $total_pages && $total > 0 ) {
             $paged_issues = [];
         }
-    
+
         return [
-            'series'       => is_array($series) ? $series : [],
-            'issue_list'   => [
-                'count'   => $total_filtered,
-                'results' => $paged_issues,
-            ],
+            'series'       => is_array( $series ) ? $series : [],
+            'issue_list'   => [ 'count' => $total, 'results' => $paged_issues ],
             'current_page' => $current_page,
             'total_pages'  => $total_pages,
-            'total_issues' => $total_filtered,
+            'total_issues' => $total,
             'per_page'     => $per_page,
         ];
     }
-        
+            
 
-        /* -----------------------------------------------------------------
-     *  SINGLE ISSUE
-     * ----------------------------------------------------------------- */
+    /* -----------------------------------------------------------------
+    **  SINGLE ISSUE
+    ** ----------------------------------------------------------------- */
 
     /**
      * Fetch a single issue, including verification it belongs to the given series.
@@ -452,6 +950,127 @@ class ComicDataService {
 
         return $issue_data;
     }
+
+    /* -----------------------------------------------------------------
+    *  COMIC VINE PUBLISHER FALLBACK
+    * ----------------------------------------------------------------- */
+    public function get_comicvine_publisher_info( $cv_id ) {
+
+        if ( empty( $cv_id ) ) {
+            return [];
+        }
+    
+        $cache_key = 'cv_publisher_' . absint( $cv_id );
+    
+        $cached = get_transient( $cache_key );
+    
+        if ( $cached !== false ) {
+            return $cached;
+        }
+    
+        $cv_key = get_option( 'comic_vine_api_key', '' );
+    
+        if ( empty( $cv_key ) ) {
+            return [];
+        }
+    
+        $url = add_query_arg(
+            [
+                'api_key' => $cv_key,
+                'format'  => 'json',
+            ],
+            'https://comicvine.gamespot.com/api/publisher/4010-' . absint( $cv_id ) . '/'
+        );
+    
+        $response = wp_remote_get(
+            $url,
+            [
+                'timeout' => 30,
+                'headers' => [
+                    'User-Agent' => 'ComicBookFetcher/1.1 (+' . get_site_url() . ')'
+                ],
+            ]
+        );
+    
+        if ( is_wp_error( $response ) ) {
+            error_log(
+                'Comic Vine publisher lookup failed for cv_id ' .
+                $cv_id .
+                ': ' .
+                $response->get_error_message()
+            );
+    
+            return [];
+        }
+    
+        $body = json_decode(
+            wp_remote_retrieve_body( $response ),
+            true
+        );
+    
+        if ( empty( $body['results'] ) ) {
+            error_log(
+                'Comic Vine found no publisher for cv_id: ' . $cv_id
+            );
+    
+            return [];
+        }
+    
+        $publisher = $body['results'];
+    
+        $result = [
+            'image'   => $publisher['image']['original_url'] ?? '',
+            'desc'    => $publisher['deck']
+                ?? $publisher['description']
+                ?? '',
+            'founded' => $publisher['start_year'] ?? '',
+        ];
+    
+        if ( empty( $result['founded'] ) && ! empty( $publisher['description'] ) ) {
+            if (
+                preg_match(
+                    '/founded.*?(\d{4})/i',
+                    strip_tags( $publisher['description'] ),
+                    $matches
+                )
+            ) {
+                $result['founded'] = $matches[1];
+            }
+        }
+    
+        set_transient(
+            $cache_key,
+            $result,
+            30 * DAY_IN_SECONDS
+        );
+    
+        return $result;
+    }
+    
+    /* -----------------------------------------------------------------
+    *  COMIC VINE issue image only
+    * ----------------------------------------------------------------- */
+    public function get_comicvine_issue_image( $cv_id ) {
+
+        $cv_id = intval( $cv_id );
+        if ( empty( $cv_id ) ) {
+            return '';
+        }
+    
+        $cache_key = "cv_issue_image_$cv_id";
+        $cached = get_transient( $cache_key );
+        if ( $cached !== false ) {
+            return $cached;
+        }
+    
+        $body  = $this->cv_api_get( "https://comicvine.gamespot.com/api/issue/4000-{$cv_id}/", [ 'field_list' => 'image' ] );
+        $image = $body['results']['image'] ?? [];
+    
+        $img = $image['small_url'] ?? $image['medium_url'] ?? $image['original_url'] ?? '';
+    
+        set_transient( $cache_key, $img, 30 * DAY_IN_SECONDS );
+        return $img;
+    }
  
 
     /* -----------------------------------------------------------------
@@ -474,12 +1093,21 @@ class ComicDataService {
             return $cached;
         }
 
-        $url = "https://comicvine.gamespot.com/api/issue/4000-{$cv_id}/?api_key={$cv_key}&format=json";
+        $url = add_query_arg(
+            [
+                'api_key' => $cv_key,
+                'format'  => 'json',
+            ],
+            "https://comicvine.gamespot.com/api/issue/4000-{$cv_id}/"
+        );
+        
         $res = wp_remote_get(
             $url,
             [
                 'timeout' => 30,
-                'headers' => [ 'User-Agent' => 'CollectibleSpotBot/1.1 (+' . get_site_url() . ')' ],
+                'headers' => [
+                    'User-Agent' => 'CollectibleSpotBot/1.1 (+' . get_site_url() . ')',
+                ],
             ]
         );
 
@@ -493,6 +1121,7 @@ class ComicDataService {
         }
 
         $merged = $body['results'];
+        $merged['cv_id'] = (int) $cv_id;
 
         $met_url = $this->client->api_base . 'issue/?cv_id=' . $cv_id;
         $met_res = $this->client->api_get( $met_url );
@@ -709,96 +1338,6 @@ class ComicDataService {
             return $desc;
         }
 
-    
-    /**-----------------------------------------------------------------
-     *  BATCH COMICVINE INFO (used in issue list)
-     * ----------------------------------------------------------------- */
-    public function build_cv_map_for_series( $series_id, $page = 1) {
-
-        $cache_key = "metron:cv_map:series:{$series_id}";
-    
-        $cached = get_transient( $cache_key );
-        if ( $cached !== false ) {
-            return $cached;
-        }
-    
-        $url  = $this->client->api_base . "series/{$series_id}/issue_list/?page={$page}&page_size=100";
-        $data = $this->client->api_get( $url ); 
-    
-        if ( empty( $data['results'] ) ) {
-            return [];
-        }
-    
-        $map = [];
-    
-        foreach ( $data['results'] as $issue ) {
-    
-            $id = $issue['id'];
-    
-            // Try cache first
-            $cached_cv = get_transient("metron:issue_cv_id:{$id}");
-    
-            if ( $cached_cv !== false ) {
-                $map[$id] = $cached_cv;
-                continue;
-            }
-    
-            // ⚠️ Only fetch ONE per run (throttle hard)
-            $response = $this->client->api_get(
-                $this->client->api_base . "issue/{$id}/"
-            );
-    
-            $cv_id = $response['cv_id'] ?? null;
-    
-            $map[$id] = $cv_id;
-    
-            set_transient(
-                "metron:issue_cv_id:{$id}",
-                $cv_id,
-                $cv_id ? 30 * DAY_IN_SECONDS : 6 * HOUR_IN_SECONDS
-            );
-    
-            // 🔥 STOP EARLY → prevents bursts
-            break;
-        }
-    
-        set_transient( $cache_key, $map, 7 * DAY_IN_SECONDS );
-    
-        return $map;
-    }
-
-    public function get_comicvine_issue_info_batch( $metron_ids ) {
-        if ( empty( $metron_ids ) || ! is_array( $metron_ids ) ) {
-            return [];
-        }
-    
-        $results = [];
-    
-        foreach ( $metron_ids as $mid ) {
-            $mid = (int) $mid;
-            if ( $mid <= 0 ) continue;
-    
-            // Fast path: Check if we already have full CV data cached
-            $cv_full_key = "cv_issue_full_{$mid}";
-            $cached_cv = get_transient( $cv_full_key );
-            if ( $cached_cv !== false ) {
-                $results[$mid] = $cached_cv;
-                continue;
-            }
-    
-            // Get cv_id (now heavily cached)
-            $cv_id = $this->get_metron_cv_id( $mid );
-    
-            if ( $cv_id ) {
-                $merged = $this->get_comicvine_issue_info( $cv_id );
-                if ( $merged ) {
-                    $results[$mid] = $merged;
-                }
-            }
-        }
-    
-        return $results;
-    }
     
     /* -----------------------------------------------------------------
      *  METRON to COMIC VINE ID lookup
