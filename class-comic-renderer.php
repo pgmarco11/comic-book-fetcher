@@ -141,18 +141,9 @@ class ComicRenderer {
         return $this->data_service->get_comicvine_issue_info( $cv_id );
     }
 
-    // public function build_cv_map_for_series( $series_id, $page = 1) {
-
-    //     $map = $this->data_service->build_cv_map_for_series( $series_id, $page );
-        
-    //     return $map;
-    // }
-    
     public function clean_cv_description($desc) {
         return $this->data_service->clean_cv_description($desc);
     }
-
-
    
 
     /* -----------------------------------------------------------------
