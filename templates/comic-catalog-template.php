@@ -5,7 +5,7 @@
  * 100% identical to renderItems() output, except the empty‑state text.
  */
 $is_total_exact = $is_total_exact ?? true;
-$scan_complete  = $scan_complete  ?? true;   // default: assume complete unless told otherwise
+$scan_complete  = $scan_complete  ?? true;
 $showing        = count( $items ?? [] );
 $total_pages = $total > 0 ? ceil( $total / $per_page ) : 0;
 $is_publisher = $type === 'publishers';
@@ -40,7 +40,6 @@ $is_publisher = $type === 'publishers';
                 $is_publisher = $type === 'publishers';
                 $what         = $is_publisher ? 'publishers' : 'series';
 
-                // Build a human-readable description of the active filter
                 if ( ! empty( $search ) ) {
                     $filter_desc = 'matching "' . esc_html( $search ) . '"';
                 } elseif ( ! empty( $letter ) && $letter !== 'all' ) {
@@ -49,7 +48,6 @@ $is_publisher = $type === 'publishers';
                     $filter_desc = '';
                 }
 
-                // Build a reset link that makes sense
                 if ( ! empty( $selected_publisher ) && ! $is_publisher ) {
                     $reset_url = add_query_arg([
                         'publisher_id' => $selected_publisher,
@@ -79,11 +77,6 @@ $is_publisher = $type === 'publishers';
                 } elseif ( $letter && $letter !== 'all' ) {
                     $extra = ' starting with "' . esc_html( $letter ) . '"';
                 }
-               
-                $series_image_url = ! empty( $item['image'] )
-                        ? $item['image']
-                        : COMICBOOKS_PLUGIN_URL . 'images/placeholder.png';
-                    
                 ?>
                 <p>
                     Showing <?php echo $showing; ?> of
@@ -107,16 +100,30 @@ $is_publisher = $type === 'publishers';
                                 </div>
                             </a>
                         </div>
-                    <?php else : ?>
+                    <?php else :
+                        // Metron's own series image, if get_series_api_page() already
+                        // has one. Only when it's missing do we need the client-side
+                        // ComicVine batch fallback — so only then do we mark this img
+                        // for the lazy loader.
+                        $series_image_url = ! empty( $item['image'] ) ? $item['image'] : '';
+                        $needs_lazy_image = empty( $series_image_url );
+                        $img_src = $needs_lazy_image
+                            ? ( COMICBOOKS_PLUGIN_URL . 'images/placeholder.png' )
+                            : $series_image_url;
+                    ?>
                         <div class="comic-title" data-series-id="<?php echo esc_attr($item['series_id']); ?>">                     
                             <a href="/comic-catalog/issues/?title_id=<?php echo esc_attr($item['series_id']); ?>&page=1">
                                 <div class="comic-image">
                                 <img 
-                                    src="<?php echo esc_url( $series_image_url ); ?>"
+                                    src="<?php echo esc_url( $img_src ); ?>"
                                     alt="<?php echo esc_attr($item['name']); ?>"
-                                    data-series-id="<?php echo esc_attr( $item['series_id'] ); ?>"          
-                                    loading="lazy"
+                                    <?php if ( $needs_lazy_image ) : ?>
+                                    data-series-id="<?php echo esc_attr( $item['series_id'] ); ?>"
                                     class="lazy-placeholder"
+                                    <?php else : ?>
+                                    data-loaded="true"
+                                    <?php endif; ?>
+                                    loading="lazy"
                                     width="100"
                                     height="150">
                                 </div>

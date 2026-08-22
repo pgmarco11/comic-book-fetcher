@@ -50,6 +50,7 @@ jQuery(document).ready(function($){
     let currentLetter = 'all';
     let currentPage = 1;
     let currentSearch = '';
+    let booksRequestId = 0;
     
     // Custom confirm dialog using Toastify and Promise
     function toastConfirm(message) {
@@ -220,9 +221,19 @@ jQuery(document).ready(function($){
         let html = `<div id="items-wrapper"><div class="${isPublisher ? 'publishers' : 'book'}-wrapper">`;
 
         const totalLabel = `${total}${isTotalExact ? '' : '+'}`;
-    
-        if (!items || items.length === 0) {
-            html += `<p>No ${isPublisher ? 'publishers' : 'series'} found.</p>`;
+
+        if (!items) {
+            html += `
+                <p class="empty-results">
+                    No ${isPublisher ? 'publishers' : 'series'} found.
+                </p>
+            `;
+        } else if (items.length === 0) {
+            html += `
+                <p class="empty-results">
+                    Loading or 0 ${isPublisher ? 'publishers' : 'series'} found...
+                </p>
+            `;
         } else {
             html += `<p>Showing ${startIndex}–${endIndex} of ${totalLabel} ${isPublisher ? 'publishers' : 'series'}${search ? ` for "${search}"` : letter && letter !== 'all' ? ` starting with "${letter}"` : ''}</p>`
             
@@ -245,15 +256,23 @@ jQuery(document).ready(function($){
                         </a>
                     </div>`;
                 } else {  
+                    const hasImage = !!item.image;
+                    const imgSrc = hasImage
+                        ? item.image
+                        : (comicbooks_fetchers_data?.placeholder || '/wp-content/plugins/comic-book-fetcher/images/placeholder.png');
+                
+                    const imgAttrs = hasImage
+                        ? `data-loaded="true"`
+                        : `data-series-id="${item.series_id}" class="lazy-placeholder"`;
+                
                     html += `
                     <div class="comic-title" data-series-id="${item.series_id}">
                             <a href="/comic-catalog/issues/?title_id=${item.series_id}&page=1">
                                 <div class="comic-image">
-                                    <img src="${comicbooks_fetchers_data?.placeholder || '/wp-content/plugins/comic-book-fetcher/images/placeholder.png'}"
-                                        data-series-id="${item.series_id}"                                    
+                                    <img src="${imgSrc}"
+                                        ${imgAttrs}
                                         alt="${item.name}"   
                                         loading="lazy"                                 
-                                        class="lazy-placeholder"
                                         width="100"
                                         height="150">
                                 </div>
@@ -446,10 +465,17 @@ jQuery(document).ready(function($){
                  */
                 if (img.dataset.issueId) {
                     const issueId = img.dataset.issueId;
-                    const $item = img.closest('.issue-item');               
+                    const $item = img.closest('.issue-item');
                 
-                    obs.unobserve(img);  
-                    
+                    obs.unobserve(img);
+                
+                    // Metron already gave us an image for this issue — use it, no AJAX at all.
+                    if (img.dataset.fallbackImage) {
+                        img.src = img.dataset.fallbackImage;
+                        img.onload = () => { img.dataset.loaded = 'true'; };
+                        return;
+                    }
+                
                     const loadImageFromCvId = (cvId) => {
                         if (!cvId) return;
                         $.post(comicbooks_fetchers_data.ajax_url, {
@@ -469,7 +495,8 @@ jQuery(document).ready(function($){
                     };
                 
                     if (issueId) {
-                        // cv_id missing on the element — fetch it via the batch endpoint
+                        // No fallback image and no cv_id on the element — this is now the
+                        // rare case, not the default path.
                         $.post(comicbooks_fetchers_data.ajax_url, {
                             action: 'load_comic_vine_batch',
                             nonce: comicbooks_fetchers_data.nonce,
@@ -479,10 +506,8 @@ jQuery(document).ready(function($){
                                 const cvData = response.data.cv_data[issueId];
                                 const resolvedCvId = cvData?.cv_id || cvData?.id || null;
                                 if (resolvedCvId) {
-                                    // Write it back to the DOM so subsequent calls have it
                                     if ($item) {
                                         $item.dataset.cvId = resolvedCvId;
-                                        // Also patch the buttons so collection/wishlist actions work
                                         $item.querySelector('.add-to-collection')?.setAttribute('data-cv-issue-id', resolvedCvId);
                                         $item.querySelector('.add-to-wishlist')?.setAttribute('data-cv-issue-id', resolvedCvId);
                                     }
@@ -580,35 +605,74 @@ jQuery(document).ready(function($){
 
     // Fetch books
     function fetchBooks(publisherId, page = 1, name = '', letter = 'all') {
-        showSpinner();  
+
+        // Every new request invalidates any previous request.
+        const requestId = ++booksRequestId;
+    
+        showSpinner();
+    
+        // Don't leave an old "No series found" message visible
+        // while the next request/scan is running.
+        $('#book-container .empty-results').remove();
+    
         if (!publisherId && !name) {
-            $('#book-container').html('<p>Please select a publisher or enter a search term.</p>');
+            $('#book-container').html(
+                '<p>Please select a publisher or enter a search term.</p>'
+            );
+    
             showLetterButtons(false);
             updateActiveLetter(letter);
             hideSpinner();
             return;
         }
-
-        console.log("Fetching books for publisher:", publisherId, "letter:", letter);
-
+    
+        console.log(
+            "Fetching books for publisher:",
+            publisherId,
+            "letter:",
+            letter,
+            "request:",
+            requestId
+        );
+    
         const cacheKey = `metron_books_${publisherId}_${page}_${name}_${letter}`;
         const cached = getCachedData(cacheKey);
+    
         if (cached) {
+    
+            // A newer request started while we were getting here.
+            if (requestId !== booksRequestId) {
+                return;
+            }
+    
             allSeries = cached.series || [];
+    
             const perPage = cached.perPage || cached.per_page || 10;
-            const total = cached.total || 0;   
-            const isTotalExact = cached.isTotalExact !== false;       
-            renderItems(allSeries, 'books', page, total, name, letter, perPage, isTotalExact);
+            const total = cached.total || 0;
+            const isTotalExact = cached.isTotalExact !== false;
+    
+            renderItems(
+                allSeries,
+                'books',
+                page,
+                total,
+                name,
+                letter,
+                perPage,
+                isTotalExact
+            );
+    
             showLetterButtons(true);
             updateActiveLetter(letter);
-            hideSpinner();       
-        
+            hideSpinner();
+    
             return;
         }
-
+    
         $.ajax({
             url: comicbooks_fetchers_data.ajax_url,
             method: 'POST',
+    
             data: {
                 action: 'load_book',
                 nonce: comicbooks_fetchers_data.nonce,
@@ -618,46 +682,129 @@ jQuery(document).ready(function($){
                 name: name,
                 letter: letter
             },
+    
             timeout: 30000,
+    
             beforeSend: () => {
-                console.log('Sending REAL request for page', page);
+                console.log(
+                    'Sending REAL request for page',
+                    page,
+                    'request',
+                    requestId
+                );
             },
+    
             success: response => {
-                console.log('REAL load_book response (page ' + page + '):', response);
+    
+                // Important:
+                // Ignore this response if another fetchBooks() started after it.
+                if (requestId !== booksRequestId) {
+                    console.log(
+                        'Ignoring stale books response',
+                        requestId,
+                        'current:',
+                        booksRequestId
+                    );
+                    return;
+                }
+    
+                console.log(
+                    'REAL load_book response (page ' + page + '):',
+                    response
+                );
+    
                 if (response.success && response.data) {
-                    const scanComplete = response.data.scan_complete !== false;
-
+    
+                    const scanComplete =
+                        response.data.scan_complete !== false;
+    
                     if (!scanComplete) {
-                        // Still scanning server-side — don't render, don't hide spinner, ask again shortly
-                        setTimeout(() => fetchBooks(publisherId, page, name, letter), 3500);
+    
+                        console.log(
+                            'Series scan still running — waiting before retry'
+                        );
+    
+                        // Do NOT render an empty result while scanning.
+                        setTimeout(() => {
+    
+                            // Don't restart this scan if user has moved
+                            // to another publisher/search/page meanwhile.
+                            if (requestId !== booksRequestId) {
+                                return;
+                            }
+    
+                            fetchBooks(
+                                publisherId,
+                                page,
+                                name,
+                                letter
+                            );
+    
+                        }, 3500);
+    
                         return;
                     }
-
+    
+                    // Scan is definitely complete now.
                     allSeries = response.data.series || [];
-                    const perPage = response.data.per_page || 10;
-                    const total = response.data.total || 0;
-                    const isTotalExact = response.data.is_total_exact !== false;
-        
-                    setCachedData(cacheKey, { series: allSeries, total, perPage, isTotalExact });
-                    renderItems(allSeries, 'books', page, total, name, letter, perPage, isTotalExact);
+    
+                    const perPage =
+                        response.data.per_page || 10;
+    
+                    const total =
+                        response.data.total || 0;
+    
+                    const isTotalExact =
+                        response.data.is_total_exact !== false;
+    
+                    setCachedData(cacheKey, {
+                        series: allSeries,
+                        total,
+                        perPage,
+                        isTotalExact
+                    });
+    
+                    renderItems(
+                        allSeries,
+                        'books',
+                        page,
+                        total,
+                        name,
+                        letter,
+                        perPage,
+                        isTotalExact
+                    );
+    
                     showLetterButtons(true);
                     updateActiveLetter(letter);
-                    hideSpinner(); // only now   
+                    hideSpinner();
+    
                 } else {
-                    console.error('Invalid response', response);
-                
+    
                     $('#book-container').html(`
                         <div class="error-message">
                             Failed to load series.
                             <button class="retry-books">Retry</button>
                         </div>
                     `);
-                    
+    
                     hideSpinner();
                 }
             },
-            error: (xhr) => {
-                console.error('REAL load failed:', xhr.responseText);
+    
+            error: (xhr, status) => {
+    
+                // Don't let an old failed request interfere
+                // with the current request.
+                if (requestId !== booksRequestId) {
+                    return;
+                }
+    
+                console.error(
+                    'REAL load failed:',
+                    xhr.responseText
+                );
+    
                 hideSpinner();
             }
         });
@@ -1294,11 +1441,25 @@ jQuery(document).ready(function($){
         console.log('Issues page detected – initializing');
         $('#issue-search').val(issueSearch);
     } 
-    if (window.__resumeScanOnLoad) {
+    if (window.__resumeFetchOnLoad) {
+        const { publisherId, page, search, letter } = window.__resumeFetchOnLoad;
+        currentPublisherId = publisherId || null;
+        currentPage = page || 1;
+        currentSearch = search || '';
+        currentLetter = letter || 'all';
+    
+        showSpinner();
+    
+        if (currentPublisherId) {
+            fetchBooks(currentPublisherId, currentPage, currentSearch, currentLetter);
+        } else {
+            fetchPublishers(currentSearch, currentPage, currentLetter);
+        }
+    } else if (window.__resumeScanOnLoad) {
         const { publisherId, page, search, letter } = window.__resumeScanOnLoad;
         currentPublisherId = publisherId;
         showSpinner();
-        fetchBooks(publisherId, page, search, letter); // bypasses cache, resumes polling
-    }  
+        fetchBooks(publisherId, page, search, letter);
+    }
 
 });

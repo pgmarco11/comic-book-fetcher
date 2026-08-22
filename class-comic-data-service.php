@@ -715,7 +715,7 @@ class ComicDataService {
         $current_page = max( 1, (int) $current_page );
         $per_page     = 10;
         $api_size     = 100; // Metron page_size
-
+    
         // ── Series metadata ───────────────────────────────────────────────
         $series_key = "metron:series:{$title_id}";
         $series     = get_transient( $series_key );
@@ -726,44 +726,45 @@ class ComicDataService {
             }
             set_transient( $series_key, $series, 14 * DAY_IN_SECONDS );
         }
-
+    
         // ── Backward compat: legacy v5 full-list cache ────────────────────
         $full_key  = "metron:issue_list_full:{$title_id}:v5";
         $full_data = get_transient( $full_key );
         $use_new   = ( $full_data === false || ! isset( $full_data['results'] ) || ! is_array( $full_data['results'] ) );
-
+    
         $combined = [];  // api_page => results[]  (new mode only)
         $total    = 0;
-
+    
         if ( $use_new ) {
-            // ── Which Metron API page covers the current display page? ────
             // display pages 1-10 → api page 1, 11-20 → 2, etc.
             $api_pg_needed = max( 1, (int) ceil( $current_page * $per_page / $api_size ) );
-
-            // Prev, current, next API pages (filter out 0)
+    
             $total_key = "metron:issue_total:{$title_id}";
             $total     = (int)( get_transient( $total_key ) ?: 0 );
-
+    
             /*
-            * Fetch the current API page first.
-            * Only fetch next if the current API response says next exists.
-            * This prevents Metron 404 Invalid page errors.
-            */
+             * Fetch ONLY the Metron API page that covers the requested display
+             * page. Previously we also pulled prev/next speculatively on every
+             * load — up to 3 Metron calls per cold load. That only ever paid
+             * off exactly at a 100-item page boundary (display page 11, 21...),
+             * and the burst limit is shared across every visitor hitting this
+             * plugin. Each page is still cached 30 days once fetched, so
+             * repeat views of the same page cost nothing regardless.
+             */
             $current_ap = $api_pg_needed;
-
+    
             $current_key  = "metron:issue_page:{$title_id}:{$current_ap}";
             $current_data = get_transient( $current_key );
-            $current_resp = null;
-
+    
             if ( $current_data === false ) {
                 $url = $this->client->api_base . "series/{$title_id}/issue_list/?page={$current_ap}&page_size={$api_size}";
                 $current_resp = $this->client->api_get( $url );
-
+    
                 if ( ! empty( $current_resp['results'] ) && is_array( $current_resp['results'] ) ) {
                     $current_data = $current_resp['results'];
-
+    
                     set_transient( $current_key, $current_data, 30 * DAY_IN_SECONDS );
-
+    
                     if ( ! empty( $current_resp['count'] ) ) {
                         $total = (int) $current_resp['count'];
                         set_transient( $total_key, $total, 30 * DAY_IN_SECONDS );
@@ -773,87 +774,26 @@ class ComicDataService {
                     set_transient( $current_key, [], 30 * DAY_IN_SECONDS );
                 }
             }
-
+    
             if ( ! empty( $current_data ) ) {
                 $combined[ $current_ap ] = $current_data;
             }
-
-            /*
-            * Fetch previous API page only if it can exist.
-            */
-            if ( $current_ap > 1 ) {
-                $prev_ap  = $current_ap - 1;
-                $prev_key = "metron:issue_page:{$title_id}:{$prev_ap}";
-                $prev_data = get_transient( $prev_key );
-
-                if ( $prev_data === false ) {
-                    $prev_url  = $this->client->api_base . "series/{$title_id}/issue_list/?page={$prev_ap}&page_size={$api_size}";
-                    $prev_resp = $this->client->api_get( $prev_url );
-
-                    $prev_data = ! empty( $prev_resp['results'] ) && is_array( $prev_resp['results'] )
-                        ? $prev_resp['results']
-                        : [];
-
-                    set_transient( $prev_key, $prev_data, 30 * DAY_IN_SECONDS );
-                }
-
-                if ( ! empty( $prev_data ) ) {
-                    $combined[ $prev_ap ] = $prev_data;
-                }
-            }
-
-            /*
-            ** Fetch next API page only if current response says there is a next page.
-            ** If current was cached and we do not have the original `next` field,
-            ** calculate from total count instead.
-            */
-            $has_next = false;
-
-            if ( is_array( $current_resp ) ) {
-                $has_next = ! empty( $current_resp['next'] );
-            } elseif ( $total > 0 ) {
-                $has_next = $current_ap < (int) ceil( $total / $api_size );
-            }
-
-            if ( $has_next ) {
-                $next_ap  = $current_ap + 1;
-                $next_key = "metron:issue_page:{$title_id}:{$next_ap}";
-                $next_data = get_transient( $next_key );
-
-                if ( $next_data === false ) {
-                    $next_url  = $this->client->api_base . "series/{$title_id}/issue_list/?page={$next_ap}&page_size={$api_size}";
-                    $next_resp = $this->client->api_get( $next_url );
-
-                    $next_data = ! empty( $next_resp['results'] ) && is_array( $next_resp['results'] )
-                        ? $next_resp['results']
-                        : [];
-
-                    set_transient( $next_key, $next_data, 30 * DAY_IN_SECONDS );
-                }
-
-                if ( ! empty( $next_data ) ) {
-                    $combined[ $next_ap ] = $next_data;
-                }
-            }
-
-
-
-            ksort( $combined ); // ensure ascending API-page order
+    
             $all = $combined ? array_merge( ...array_values( $combined ) ) : [];
-
+    
         } else {
             // Legacy complete cache
             $all   = $full_data['results'];
             $total = count( $all );
         }
-
+    
         // ── Sort by issue number ──────────────────────────────────────────
         usort( $all, function( $a, $b ) {
             $nA = is_numeric( trim( (string)( $a['number'] ?? '' ) ) ) ? (float) $a['number'] : INF;
             $nB = is_numeric( trim( (string)( $b['number'] ?? '' ) ) ) ? (float) $b['number'] : INF;
             return $nA !== $nB ? ( $nA <=> $nB ) : ( (int)( $a['id'] ?? 0 ) ) <=> ( (int)( $b['id'] ?? 0 ) );
         } );
-
+    
         // ── Search filter ─────────────────────────────────────────────────
         if ( $search ) {
             $s   = strtolower( trim( $search ) );
@@ -862,30 +802,26 @@ class ComicDataService {
                 stripos( $i['issue']      ?? '', $s ) !== false ||
                 stripos( $i['cover_date'] ?? '', $s ) !== false
             ) );
-            $total = count( $all ); // search total = filtered count within fetched pages
+            $total = count( $all );
         }
-
+    
         // ── Slice for the requested display page ──────────────────────────
         if ( $use_new && ! $search ) {
-            // Total comes from the API count (covers the full series).
-            // The assembled array starts at (min_api_page - 1) * api_size,
-            // so we shift the display-page offset accordingly.
             $min_api_page    = $combined ? min( array_keys( $combined ) ) : $api_pg_needed;
-            $assembled_start = ( $min_api_page - 1 ) * $api_size; // 0-indexed absolute
-            $abs_start       = ( $current_page  - 1 ) * $per_page;  // 0-indexed absolute
+            $assembled_start = ( $min_api_page - 1 ) * $api_size;
+            $abs_start       = ( $current_page  - 1 ) * $per_page;
             $offset          = max( 0, $abs_start - $assembled_start );
             $paged_issues    = array_slice( $all, $offset, $per_page );
         } else {
-            // Legacy full cache, or search (where $all is already the filtered set)
             $paged_issues = array_slice( $all, ( $current_page - 1 ) * $per_page, $per_page );
         }
-
+    
         $total_pages = max( 1, (int) ceil( $total / $per_page ) );
-
+    
         if ( $current_page > $total_pages && $total > 0 ) {
             $paged_issues = [];
         }
-
+    
         return [
             'series'       => is_array( $series ) ? $series : [],
             'issue_list'   => [ 'count' => $total, 'results' => $paged_issues ],

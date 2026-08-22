@@ -2,7 +2,6 @@
 /**
  * Issue Item Template – Optimized
  * Uses data from issue_list cache + pre-fetched CV batch
- * 
  */
 
 // Safety checks
@@ -25,26 +24,17 @@ $collection_status = $collection_status ?? [];
 $issue_number = esc_html($issue['number'] ?? 'N/A');
 $cover_date   = $issue['cover_date'] ?? '';
 
-
-if (!empty($cv_issue['image']) && is_array($cv_issue['image'])) {
-    $comic_vine_image_url =
-        $cv_issue['image']['small_url']
-        ?? $cv_issue['image']['medium_url']
-        ?? $cv_issue['image']['super_url']
-        ?? $cv_issue['image']['original_url']
-        ?? '';
-}
-
 $placeholder_url = defined( 'PUBLISHER_PLACEHOLDER_IMAGE_URL' )
     ? PUBLISHER_PLACEHOLDER_IMAGE_URL
     : '/wp-content/plugins/comic-book-fetcher/images/placeholder.png';
 
-$metron_issue_image_url = ! empty( $issue['image'] )
-    ? $issue['image']
-    : '';
+// Metron's own list-response image first — costs nothing, it's already
+// in $issue from the page we fetched. CV image is a fallback for when
+// cv_info_batch carries one (currently only cv_id is populated there,
+// so this branch is inert until that changes — kept for when it does).
+$metron_issue_image_url = ! empty( $issue['image'] ) ? $issue['image'] : '';
 
 $comic_vine_image_url = '';
-
 if ( ! empty( $cv_issue['image'] ) && is_array( $cv_issue['image'] ) ) {
     $comic_vine_image_url =
         $cv_issue['image']['small_url']
@@ -153,6 +143,5 @@ $metron_cv_id = $cv_issue['cv_id'] ?? $issue['cv_id'] ?? '';
                 </button>
             </div>
         <?php endif; ?>
-
 
 </li>

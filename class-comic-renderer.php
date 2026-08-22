@@ -86,14 +86,13 @@ class ComicRenderer {
                 ]) . ');',
             'before'
         );
-
-
-        // "No data at all" — no filters applied yet, let JS bootstrap the first fetch
-        $has_filters = $search || $selected_publisher || ( $letter && $letter !== 'all' );
-        $data_was_fetched = isset( $initial_data['items'] ); // key exists = a real query ran
-
-        if ( ! $data_was_fetched && ! $has_filters ) {
-            // Nothing fetched and no filters → show spinner, JS will fetch
+    
+        // Empty from the initial synchronous fetch isn't trustworthy on its own —
+        // a cold/rate-limited/interrupted Metron call can return zero rows even
+        // when real results exist. Show a spinner and let JS re-verify with its
+        // own retry-aware fetch; only render "not found" after that comes back
+        // empty too.
+        if ( empty( $items ) ) {
             if ( defined('DOING_AJAX') && DOING_AJAX ) ob_start();
             ?>
             <div id="loading-spinner" class="spinner-overlay" aria-live="polite" aria-label="Loading content">
@@ -101,19 +100,28 @@ class ComicRenderer {
                 <p>Loading...</p>
             </div>
             <div id="book-container"></div>
+            <script>
+                window.__resumeFetchOnLoad = {
+                    type: <?php echo wp_json_encode( $type ); ?>,
+                    publisherId: <?php echo (int) $selected_publisher; ?>,
+                    page: <?php echo (int) $page; ?>,
+                    search: <?php echo wp_json_encode( $search ); ?>,
+                    letter: <?php echo wp_json_encode( $letter ); ?>
+                };
+            </script>
             <?php
             if ( defined('DOING_AJAX') && DOING_AJAX ) {
                 wp_send_json_success(['html' => ob_get_clean()]);
             }
             return;
         }
-
+    
         // Normal render with data
         if (defined('DOING_AJAX') && DOING_AJAX) ob_start();
-
+    
         extract($initial_data);
         include plugin_dir_path(__FILE__) . 'templates/comic-catalog-template.php';
-
+    
         if (defined('DOING_AJAX') && DOING_AJAX) {
             wp_send_json_success(['html' => ob_get_clean()]);
         }

@@ -183,13 +183,12 @@ class Comicbooks {
         $metron_ids = !empty($all_issues) 
         ? array_values(array_filter(array_column($all_issues, 'id'))) 
         : [];
-    
+
         // Build cv_info_batch directly from issue data + transient cache
         foreach ($all_issues as $issue) {
             $mid = (int)($issue['id'] ?? 0);
             if (!$mid) continue;
-        
-          
+
             $cv_id_cached = get_transient("metron:issue_cv_id:{$mid}");
             if ($cv_id_cached !== false) {
                 $cv_id = is_array($cv_id_cached) ? ($cv_id_cached['cv_id'] ?? null) : ($cv_id_cached ?: null);
@@ -198,9 +197,15 @@ class Comicbooks {
                 set_transient("metron:issue_cv_id:{$mid}", ['cv_id' => $cv_id], 30 * DAY_IN_SECONDS);
             } else {
                 $cv_id = null;
-            }  
-        
-            $cv_info_batch[$mid] = ['cv_id' => $cv_id];
+            }
+
+            // Metron's own list-response image, if present — used only when we
+            // have no cv_id, so we skip the cv_id-resolve call + CV image call
+            // entirely for those issues instead of paying for both.
+            $cv_info_batch[$mid] = [
+                'cv_id'         => $cv_id,
+                'metron_image'  => $cv_id ? '' : ( $issue['image'] ?? '' ),
+            ];
         }
 
         if (is_user_logged_in()) {
