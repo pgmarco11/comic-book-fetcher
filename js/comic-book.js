@@ -231,7 +231,7 @@ jQuery(document).ready(function($){
         } else if (items.length === 0) {
             html += `
                 <p class="empty-results">
-                    Loading or 0 ${isPublisher ? 'publishers' : 'series'} found...
+                    Loading ${isPublisher ? 'publishers' : 'series'}...
                 </p>
             `;
         } else {

@@ -275,15 +275,12 @@ class ComicDataService {
      * in a single ComicVine request.
      */
     public function get_comicvine_first_issues_batch( array $series_to_cv_id ) {
-        error_log('CV BATCH: input series_to_cv_id = ' . print_r($series_to_cv_id, true));
     
         $volume_ids = array_filter( array_values( $series_to_cv_id ) );
         if ( empty( $volume_ids ) ) {
             error_log('CV BATCH: no volume ids after filtering — series_to_cv_id had no usable cv_id values, aborting');
             return [];
-        }
-    
-        error_log('CV BATCH: volume_ids to query = ' . implode(',', $volume_ids));
+        }      
     
         $cv_key = get_option( 'comic_vine_api_key', '' );
         if ( empty( $cv_key ) ) {
@@ -300,10 +297,8 @@ class ComicDataService {
                 'filter'     => $filter,
                 'limit'      => 100,
             ],
-            'https://comicvine.gamespot.com/api/issues/'
-        );
+            'https://comicvine.gamespot.com/api/issues/'        );
     
-        error_log('CV BATCH: request URL = ' . preg_replace('/api_key=[^&]+/', 'api_key=REDACTED', $url));
     
         $res = wp_remote_get(
             $url,
@@ -321,19 +316,13 @@ class ComicDataService {
         }
     
         $status = wp_remote_retrieve_response_code( $res );
-        $raw    = wp_remote_retrieve_body( $res );
-        error_log("CV BATCH: HTTP status = $status");
-        error_log('CV BATCH: raw body (first 800 chars) = ' . substr($raw, 0, 800));
-    
+        $raw    = wp_remote_retrieve_body( $res );    
         $body = json_decode( $raw, true );
     
         if ( json_last_error() !== JSON_ERROR_NONE ) {
             error_log('CV BATCH: JSON decode failed: ' . json_last_error_msg());
             return [];
         }
-    
-        error_log('CV BATCH: decoded error field = ' . ($body['error'] ?? 'MISSING'));
-        error_log('CV BATCH: number_of_page_results = ' . ($body['number_of_page_results'] ?? 'MISSING'));
     
         if ( empty( $body['results'] ) ) {
             error_log( 'CV BATCH: no results in body' );
@@ -352,9 +341,8 @@ class ComicDataService {
                     ?? $issue['image']['original_url']
                     ?? '';
             }
-        }
-    
-        error_log('CV BATCH: by_volume map = ' . print_r($by_volume, true));
+        }  
+
     
         $images = [];
         foreach ( $series_to_cv_id as $sid => $cv_id ) {
@@ -368,18 +356,240 @@ class ComicDataService {
     }
 
     /**
-     * Look up known ComicVine volume ids for a set of series ids,
-     * from the per-series cache populated in get_series_api_page().
-     * Returns null for any series_id we haven't cached a cv_id for yet.
-     */
+     * Get Comic Vine volume IDs for Metron series IDs.
+     *
+     * Uses the per-series cv_id cache first. If missing, attempts to recover
+     * the cv_id from cached series metadata, then falls back to the Metron
+     * series endpoint and populates the cache.
+    */
     public function get_known_cv_ids( array $series_ids ) : array {
+
         $map = [];
-        foreach ( $series_ids as $sid ) {
-            $cached = get_transient( "metron:series_cvid:$sid" );
-            $map[ $sid ] = ( $cached !== false ) ? (int) $cached : null;
+
+            foreach ( $series_ids as $sid ) {
+
+                $sid = absint( $sid );
+
+                if ( ! $sid ) {
+                    continue;
+                }
+
+                $cv_cache_key   = "metron:series_cvid:{$sid}";
+                $miss_cache_key = "metron:series_cvid_missing:{$sid}";
+                $series_key     = "metron:series:{$sid}";
+
+                /*
+                * 1. Check dedicated CV ID cache.
+                */
+                $cached = get_transient( $cv_cache_key );
+
+                if ( $cached !== false ) {
+                    $map[ $sid ] = (int) $cached;
+
+                    error_log(
+                        "get_known_cv_ids: series {$sid} cv_id {$map[$sid]} from CV cache"
+                    );
+
+                    continue;
+                }
+
+                /*
+                * Don't repeatedly hit Metron if we recently confirmed
+                * that this series has no cv_id.
+                */
+                if ( get_transient( $miss_cache_key ) !== false ) {
+
+                    $map[ $sid ] = null;
+
+                    error_log(
+                        "get_known_cv_ids: series {$sid} recently confirmed to have no cv_id"
+                    );
+
+                    continue;
+                }
+
+                /*
+                * 2. Check cached series metadata.
+                */
+                $series = get_transient( $series_key );
+
+                if (
+                    is_array( $series ) &&
+                    ! empty( $series['cv_id'] )
+                ) {
+
+                    $cv_id = (int) $series['cv_id'];
+
+                    set_transient(
+                        $cv_cache_key,
+                        $cv_id,
+                        YEAR_IN_SECONDS
+                    );
+
+                    $map[ $sid ] = $cv_id;
+
+                    error_log(
+                        "get_known_cv_ids: series {$sid} cv_id {$cv_id} recovered from series cache"
+                    );
+
+                    continue;
+                }
+
+                /*
+                * 3. Nothing cached — fetch the series directly from Metron.
+                */
+                error_log(
+                    "get_known_cv_ids: series {$sid} cv_id not cached — fetching from Metron"
+                );
+
+                $url = $this->client->api_base . "series/{$sid}/";
+                $series = $this->client->api_get( $url );
+
+                /*
+                * Keep the complete series metadata too, since other methods
+                * already use this transient.
+                */
+                if ( is_array( $series ) && ! empty( $series['name'] ) ) {
+                    set_transient(
+                        $series_key,
+                        $series,
+                        14 * DAY_IN_SECONDS
+                    );
+                }
+
+                /*
+                * 4. Found a CV ID — cache it.
+                */
+                if ( ! empty( $series['cv_id'] ) ) {
+
+                    $cv_id = (int) $series['cv_id'];
+
+                    set_transient(
+                        $cv_cache_key,
+                        $cv_id,
+                        YEAR_IN_SECONDS
+                    );
+
+                    $map[ $sid ] = $cv_id;
+
+                    error_log(
+                        "get_known_cv_ids: series {$sid} fetched cv_id {$cv_id} from Metron and cached it"
+                    );
+
+                } else {
+
+                    /*
+                    * 5. Metron genuinely has no CV ID.
+                    *
+                    * Cache that fact briefly so AJAX requests don't repeatedly
+                    * query the same series.
+                    */
+                    set_transient(
+                        $miss_cache_key,
+                        1,
+                        6 * HOUR_IN_SECONDS
+                    );
+
+                    $map[ $sid ] = null;
+
+                    error_log(
+                        "get_known_cv_ids: series {$sid} has no cv_id in Metron"
+                    );
+                }
+            }
+
+            return $map;
+        
+    }
+
+     /**
+     * Build Comic Vine data for Metron issues.
+     */
+    public function get_cv_info_batch(array $issues): array
+    {
+        $cv_info_batch = [];
+
+        foreach ($issues as $issue) {
+
+            $mid = (int) ($issue['id'] ?? 0);
+
+            if (!$mid) {
+                continue;
+            }
+
+            $cv_id = null;
+
+            /*
+            * 1. Check cached Metron → Comic Vine mapping.
+            */
+            $cached = get_transient("metron:issue_cv_id:{$mid}");
+
+            if ($cached !== false) {
+
+                $cv_id = is_array($cached)
+                    ? ($cached['cv_id'] ?? null)
+                    : ($cached ?: null);
+
+            /*
+            * 2. Metron issue response already contains CV ID.
+            */
+            } elseif (!empty($issue['cv_id'])) {
+
+                $cv_id = (int) $issue['cv_id'];
+
+                set_transient(
+                    "metron:issue_cv_id:{$mid}",
+                    ['cv_id' => $cv_id],
+                    30 * DAY_IN_SECONDS
+                );
+
+            /*
+            * 3. IMPORTANT:
+            * Resolve CV ID from Metron when issue_list
+            * doesn't contain it.
+            */
+            } else {
+
+                $cv_id = $this->get_metron_cv_id($mid);
+
+                if ($cv_id) {
+
+                    $cv_id = (int) $cv_id;
+
+                    set_transient(
+                        "metron:issue_cv_id:{$mid}",
+                        ['cv_id' => $cv_id],
+                        30 * DAY_IN_SECONDS
+                    );
+                }
+            }
+
+            /*
+            * Get Comic Vine cover.
+            */
+            $comic_vine_image = '';
+
+            if ($cv_id) {
+                $comic_vine_image =
+                    $this->get_comicvine_issue_image($cv_id);
+            }
+
+            $cv_info_batch[$mid] = [
+                'cv_id'             => $cv_id ?: null,
+                'comic_vine_image'  => $comic_vine_image ?: '',
+                'metron_image'      => $issue['image'] ?? '',
+            ];
+
+            // Temporary debugging
+            error_log(
+                "ISSUE {$mid}: CV ID = " .
+                ($cv_id ?: 'NONE') .
+                " | CV IMAGE = " .
+                ($comic_vine_image ?: 'NONE')
+            );
         }
-        error_log('get_known_cv_ids: ' . print_r($map, true));
-        return $map;
+
+        return $cv_info_batch;
     }
 
     /**
@@ -616,6 +826,22 @@ class ComicDataService {
             $cached = get_transient( $cache_key );
 
             if ( $cached !== false && is_array( $cached ) ) {
+
+                // Re-populate per-series cv_id cache from the cached page data.
+                foreach ( $cached['items'] ?? [] as $item ) {
+            
+                    if (
+                        ! empty( $item['series_id'] ) &&
+                        ! empty( $item['cv_id'] )
+                    ) {
+                        set_transient(
+                            "metron:series_cvid:{$item['series_id']}",
+                            (int) $item['cv_id'],
+                            YEAR_IN_SECONDS
+                        );
+                    }
+                }
+            
                 return $cached;
             }
         }
@@ -643,8 +869,6 @@ class ComicDataService {
         $items = [];
 
         foreach ( $response['results'] as $item ) {
-
-            error_log("RAW SERIES ITEM {$item['id']}: " . print_r($item, true));
             
             $items[] = [
                 'series_id'   => $item['id'],

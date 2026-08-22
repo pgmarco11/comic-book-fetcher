@@ -151,6 +151,8 @@ class Comicbooks {
         wp_send_json_success( $info );
     }
 
+   
+
     /** -----------------------------------------------------------------
     * AJAX – Issues (for a series) – CLEAN VERSION
     * ----------------------------------------------------------------- */
@@ -177,36 +179,14 @@ class Comicbooks {
         $series        = $data['series'] ?? [];
         $all_issues    = $data['issue_list']['results'] ?? [];
         $total_issues  = (int) ($data['issue_list']['count'] ?? 0);
-        $cv_info_batch    = []; 
+
         $collection_status = [];
 
         $metron_ids = !empty($all_issues) 
         ? array_values(array_filter(array_column($all_issues, 'id'))) 
         : [];
 
-        // Build cv_info_batch directly from issue data + transient cache
-        foreach ($all_issues as $issue) {
-            $mid = (int)($issue['id'] ?? 0);
-            if (!$mid) continue;
-
-            $cv_id_cached = get_transient("metron:issue_cv_id:{$mid}");
-            if ($cv_id_cached !== false) {
-                $cv_id = is_array($cv_id_cached) ? ($cv_id_cached['cv_id'] ?? null) : ($cv_id_cached ?: null);
-            } elseif (!empty($issue['cv_id'])) {
-                $cv_id = (int)$issue['cv_id'];
-                set_transient("metron:issue_cv_id:{$mid}", ['cv_id' => $cv_id], 30 * DAY_IN_SECONDS);
-            } else {
-                $cv_id = null;
-            }
-
-            // Metron's own list-response image, if present — used only when we
-            // have no cv_id, so we skip the cv_id-resolve call + CV image call
-            // entirely for those issues instead of paying for both.
-            $cv_info_batch[$mid] = [
-                'cv_id'         => $cv_id,
-                'metron_image'  => $cv_id ? '' : ( $issue['image'] ?? '' ),
-            ];
-        }
+        $cv_info_batch = $this->get_cv_info_batch($all_issues);
 
         if (is_user_logged_in()) {
             $collection_status = ComicRenderer::get_collection_status($metron_ids);
@@ -218,7 +198,8 @@ class Comicbooks {
                 <?php 
                 foreach ($all_issues as $issue) :
                     if (empty($issue['id'])) continue;
-                    $metron_id = $issue['id'];
+                    $metron_id = $issue['id'];           
+         
                     // If you have CV data preloaded, pass it here if needed
                     include plugin_dir_path(__FILE__) . 'templates/issue-item-template.php';
                 endforeach; 
@@ -268,23 +249,24 @@ class Comicbooks {
     
         if ( empty( $metron_ids ) ) {
             wp_send_json_error( [ 'message' => 'No IDs provided' ] );
-        }
-    
-        $cv_info_batch = [];
-    
-        foreach ( $metron_ids as $mid ) {
-            $cv_id = $this->data_service->get_metron_cv_id( $mid );
-    
-            if ( ! $cv_id ) {
-                $cv_info_batch[ $mid ] = null;
-                continue;
-            }
+        }    
    
-            $cv_info_batch[ $mid ] = [
-                    'cv_id' => (int) $cv_id,
-             ];
-         
-        }  
+    
+        /*
+        * Convert IDs into the same structure expected
+        * by get_cv_info_batch().
+        */
+        $issues = array_map(
+            static function ($mid) {
+                return [
+                    'id' => $mid
+                ];
+            },
+            $metron_ids
+        );
+
+        $cv_info_batch = $this->get_cv_info_batch($issues);
+
     
         wp_send_json_success( [
             'cv_data'           => $cv_info_batch
@@ -345,13 +327,11 @@ class Comicbooks {
         error_log('SERIES IMG BATCH: uncached ids = ' . implode(',', array_keys($uncached)));
     
         if (!empty($uncached)) {
-            $series_to_cv_id = $this->data_service->get_known_cv_ids(array_keys($uncached));
-            error_log('SERIES IMG BATCH: series_to_cv_id from get_known_cv_ids = ' . print_r($series_to_cv_id, true));
-    
+            $series_to_cv_id = $this->data_service->get_known_cv_ids(array_keys($uncached));    
             $cv_images = $this->data_service->get_comicvine_first_issues_batch($series_to_cv_id);
-            error_log('SERIES IMG BATCH: cv_images returned = ' . print_r($cv_images, true));
     
             foreach ($uncached as $sid => $_) {
+
                 $img = $cv_images[$sid] ?? '';
     
                 if (empty($img) && empty($series_to_cv_id[$sid])) {

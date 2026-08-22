@@ -234,6 +234,22 @@ function tcs_get_comicvine_issue_basic( int $cv_id ): array {
     $cached = get_transient( $cache_key );
 
     if ( $cached !== false && is_array( $cached ) ) {
+
+        // Re-populate per-series cv_id cache from the cached page data.
+        foreach ( $cached['items'] ?? [] as $item ) {
+    
+            if (
+                ! empty( $item['series_id'] ) &&
+                ! empty( $item['cv_id'] )
+            ) {
+                set_transient(
+                    "metron:series_cvid:{$item['series_id']}",
+                    (int) $item['cv_id'],
+                    YEAR_IN_SECONDS
+                );
+            }
+        }
+    
         return $cached;
     }
 

@@ -16,9 +16,10 @@ if (!$metron_id || !$title_id) {
     return;
 }
 
-$cv_issue = $cv_info_batch[$metron_id] ?? [];
-$cv_issue = is_array($cv_issue) ? $cv_issue : [];
-
+$cv_issue = isset($cv_issue) && is_array($cv_issue)
+    ? $cv_issue
+    : [];
+    
 $collection_status = $collection_status ?? [];
 
 $issue_number = esc_html($issue['number'] ?? 'N/A');
@@ -28,25 +29,20 @@ $placeholder_url = defined( 'PUBLISHER_PLACEHOLDER_IMAGE_URL' )
     ? PUBLISHER_PLACEHOLDER_IMAGE_URL
     : '/wp-content/plugins/comic-book-fetcher/images/placeholder.png';
 
-// Metron's own list-response image first — costs nothing, it's already
-// in $issue from the page we fetched. CV image is a fallback for when
-// cv_info_batch carries one (currently only cv_id is populated there,
-// so this branch is inert until that changes — kept for when it does).
-$metron_issue_image_url = ! empty( $issue['image'] ) ? $issue['image'] : '';
+$metron_issue_image_url = ! empty( $issue['image'] )
+    ? $issue['image']
+    : '';
 
-$comic_vine_image_url = '';
-if ( ! empty( $cv_issue['image'] ) && is_array( $cv_issue['image'] ) ) {
-    $comic_vine_image_url =
-        $cv_issue['image']['small_url']
-        ?? $cv_issue['image']['medium_url']
-        ?? $cv_issue['image']['super_url']
-        ?? $cv_issue['image']['original_url']
-        ?? '';
-}
+$comic_vine_image_url = !empty($cv_issue['comic_vine_image'])
+    ? $cv_issue['comic_vine_image']
+    : '';
 
-$display_image_url = ! empty( $metron_issue_image_url )
-    ? $metron_issue_image_url
-    : ( ! empty( $comic_vine_image_url ) ? $comic_vine_image_url : $placeholder_url );
+$metron_cv_id = $cv_issue['cv_id']
+    ?? $issue['cv_id']
+    ?? '';
+
+$display_image_url = $comic_vine_image_url
+    ?: ( $metron_issue_image_url ?: $placeholder_url );
 
 $image_url = $display_image_url;
 
@@ -69,7 +65,7 @@ if (is_user_logged_in() && !empty($collection_status[$metron_id]['owned'])) {
     $collection_post_id = $collection_status[$metron_id]['post_id'] ?? 0;
 }
 
-$metron_cv_id = $cv_issue['cv_id'] ?? $issue['cv_id'] ?? '';
+
 ?>
 
 <li class="issue-item" 
