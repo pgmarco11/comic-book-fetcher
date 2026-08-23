@@ -96,7 +96,7 @@ $is_publisher = $type === 'publishers';
                                 <div class="publisher-info">                          
                                     <h3><?php echo esc_html( $item['name'] ); ?></h3>
                                     <p><strong>Founded:</strong> <?php echo esc_html( $item['founded'] ?? 'N/A' ); ?></p>
-                                    <p><?php echo wp_kses_post( $item['desc'] ?? 'No description available.' ); ?></p>
+                                    <p><?php echo esc_html( $item['desc'] ?? 'No description available.' ); ?></p>
                                 </div>
                             </a>
                         </div>

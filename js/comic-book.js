@@ -592,7 +592,7 @@ jQuery(document).ready(function($){
         
             showLetterButtons(true);
             updateActiveLetter(letter);
-            
+
             $('#book-container')
             .attr('aria-busy', 'false')
             .css('visibility', 'visible');
@@ -1440,7 +1440,14 @@ jQuery(document).ready(function($){
         const page = parseInt(params.get('page')) || 1;
         const letter = params.get('letter') || 'all';
         const search = params.get('search') || '';
-        const publisherId = params.get('publisher_id') || null;
+        const rawPublisherId = params.get('publisher_id');
+        const parsedPublisherId = parseInt(rawPublisherId, 10);
+
+        const publisherId =
+            Number.isInteger(parsedPublisherId) && parsedPublisherId > 0
+                ? parsedPublisherId
+                : null;
+
         const titleId = params.get('title_id') || null;
     
         // DO NOT run if we're already on the correct page
@@ -1473,7 +1480,13 @@ jQuery(document).ready(function($){
     const urlLetter   = urlParams.get('letter') || 'all';
     const urlPage     = parseInt(urlParams.get('page')) || 1;
     const urlSearch   = urlParams.get('search') || '';
-    const urlPubId    = urlParams.get('publisher_id') || null;
+    const rawPublisherId = urlParams.get('publisher_id');
+    const parsedPublisherId = parseInt(rawPublisherId, 10);
+
+    const urlPubId =
+        Number.isInteger(parsedPublisherId) && parsedPublisherId > 0
+            ? parsedPublisherId
+            : null;
 
     console.log('URL PARAMS:', { urlLetter, urlPage, urlSearch, urlPubId });
     
@@ -1514,19 +1527,47 @@ jQuery(document).ready(function($){
         $('#issue-search').val(issueSearch);
     } 
     if (window.__resumeFetchOnLoad) {
-        const { publisherId, page, search, letter } = window.__resumeFetchOnLoad;
-        currentPublisherId = publisherId || null;
-        currentPage = page || 1;
-        currentSearch = search || '';
-        currentLetter = letter || 'all';
+        const { 
+            publisherId, 
+            page, 
+            search, 
+            letter 
+        } = window.__resumeFetchOnLoad;
+
+        const normalizedPublisherId = parseInt(publisherId, 10);
+
+        let currentPublisherId =
+            Number.isInteger(normalizedPublisherId) &&
+            normalizedPublisherId > 0
+                ? normalizedPublisherId
+                : null;
+
+            currentPage   = parseInt(page, 10) || 1;
+            currentSearch = search || '';
+            currentLetter = letter || 'all';
     
-        showSpinner();
+            showSpinner();
+
+            $('#book-container')
+            .empty()
+            .attr('aria-busy', 'true')
+            .css('visibility', 'hidden');
     
-        if (currentPublisherId) {
-            fetchBooks(currentPublisherId, currentPage, currentSearch, currentLetter);
-        } else {
-            fetchPublishers(currentSearch, currentPage, currentLetter);
-        }
+            if (currentPublisherId !== null) {
+                fetchBooks(
+                    currentPublisherId,
+                    currentPage,
+                    currentSearch,
+                    currentLetter
+                );
+            } else {
+                fetchPublishers(
+                    currentSearch,
+                    currentPage,
+                    currentLetter
+                );
+            }
+
     } else if (window.__resumeScanOnLoad) {
         const { publisherId, page, search, letter } = window.__resumeScanOnLoad;
         currentPublisherId = publisherId;
