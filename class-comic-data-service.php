@@ -293,7 +293,7 @@ class ComicDataService {
             [
                 'api_key'    => $cv_key,
                 'format'     => 'json',
-                'field_list' => 'volume,image,issue_number',
+                'field_list' => 'id,volume,image,issue_number',
                 'filter'     => $filter,
                 'limit'      => 100,
             ],
@@ -332,8 +332,15 @@ class ComicDataService {
         $by_volume = [];
         foreach ( $body['results'] as $issue ) {
             $vol_id = $issue['volume']['id'] ?? null;
-            $img_check = $issue['image'] ?? null;
-            error_log("CV BATCH: result issue_id={$issue['id']} volume_id=" . ($vol_id ?? 'NULL') . " issue_number=" . ($issue['issue_number'] ?? '?') . " has_image=" . (!empty($img_check) ? 'yes' : 'no'));
+            $issue_id = (int) ($issue['id'] ?? 0);
+            $img_check = $issue['image'] ?? null;           
+
+            error_log(
+                "CV BATCH: result issue_id={$issue_id}" .
+                " volume_id=" . ($vol_id ?? 'NULL') .
+                " issue_number=" . ($issue['issue_number'] ?? '?') .
+                " has_image=" . (!empty($img_check) ? 'yes' : 'no')
+            );
     
             if ( $vol_id ) {
                 $by_volume[ $vol_id ] = $issue['image']['small_url']
@@ -502,91 +509,211 @@ class ComicDataService {
         
     }
 
-     /**
-     * Build Comic Vine data for Metron issues.
+    /**
+     * Retrieve multiple Comic Vine issue images in one API request.
+     *
+     * Returns:
+     * [
+     *     comic_vine_issue_id => image_url
+     * ]
      */
-    public function get_cv_info_batch(array $issues): array
+    public function get_comicvine_issue_images_batch(array $cv_ids): array
     {
-        $cv_info_batch = [];
+        $cv_ids = array_values(
+            array_unique(
+                array_filter(
+                    array_map('absint', $cv_ids)
+                )
+            )
+        );
 
-        foreach ($issues as $issue) {
+        if (empty($cv_ids)) {
+            return [];
+        }
 
-            $mid = (int) ($issue['id'] ?? 0);
+        $images    = [];
+        $uncached  = [];
 
-            if (!$mid) {
-                continue;
-            }
-
-            $cv_id = null;
-
-            /*
-            * 1. Check cached Metron → Comic Vine mapping.
-            */
-            $cached = get_transient("metron:issue_cv_id:{$mid}");
+        /*
+        * First use individual image transients populated by either this
+        * method or get_comicvine_issue_image().
+        */
+        foreach ($cv_ids as $cv_id) {
+            $cache_key = "cv_issue_image_{$cv_id}";
+            $cached    = get_transient($cache_key);
 
             if ($cached !== false) {
-
-                $cv_id = is_array($cached)
-                    ? ($cached['cv_id'] ?? null)
-                    : ($cached ?: null);
-
-            /*
-            * 2. Metron issue response already contains CV ID.
-            */
-            } elseif (!empty($issue['cv_id'])) {
-
-                $cv_id = (int) $issue['cv_id'];
-
-                set_transient(
-                    "metron:issue_cv_id:{$mid}",
-                    ['cv_id' => $cv_id],
-                    30 * DAY_IN_SECONDS
-                );
-
-            /*
-            * 3. IMPORTANT:
-            * Resolve CV ID from Metron when issue_list
-            * doesn't contain it.
-            */
+                $images[$cv_id] = is_string($cached) ? $cached : '';
             } else {
+                $uncached[] = $cv_id;
+            }
+        }
 
-                $cv_id = $this->get_metron_cv_id($mid);
+        if (empty($uncached)) {
+            return $images;
+        }
 
-                if ($cv_id) {
+        /*
+        * Comic Vine supports a maximum of 100 results per request.
+        * Chunking keeps this safe if the page size increases later.
+        */
+        foreach (array_chunk($uncached, 100) as $chunk) {
+            $body = $this->cv_api_get(
+                'https://comicvine.gamespot.com/api/issues/',
+                [
+                    'filter'     => 'id:' . implode('|', $chunk),
+                    'field_list' => 'id,image',
+                    'limit'      => count($chunk),
+                ]
+            );
 
-                    $cv_id = (int) $cv_id;
+            $found = [];
+
+            if (!empty($body['results']) && is_array($body['results'])) {
+                foreach ($body['results'] as $result) {
+                    $cv_id = (int) ($result['id'] ?? 0);
+
+                    if (!$cv_id) {
+                        continue;
+                    }
+
+                    $image = $result['image'] ?? [];
+
+                    $image_url =
+                        $image['small_url']
+                        ?? $image['medium_url']
+                        ?? $image['original_url']
+                        ?? '';
+
+                    $found[$cv_id]  = $image_url;
+                    $images[$cv_id] = $image_url;
 
                     set_transient(
-                        "metron:issue_cv_id:{$mid}",
-                        ['cv_id' => $cv_id],
-                        30 * DAY_IN_SECONDS
+                        "cv_issue_image_{$cv_id}",
+                        $image_url,
+                        $image_url ? 30 * DAY_IN_SECONDS : 6 * HOUR_IN_SECONDS
                     );
                 }
             }
 
             /*
-            * Get Comic Vine cover.
+            * Briefly cache confirmed misses. Don't cache an empty result for
+            * 30 days because a temporary Comic Vine problem could cause it.
             */
-            $comic_vine_image = '';
+            foreach ($chunk as $cv_id) {
+                if (!array_key_exists($cv_id, $found)) {
+                    $images[$cv_id] = '';
 
-            if ($cv_id) {
-                $comic_vine_image =
-                    $this->get_comicvine_issue_image($cv_id);
+                    set_transient(
+                        "cv_issue_image_{$cv_id}",
+                        '',
+                        6 * HOUR_IN_SECONDS
+                    );
+                }
+            }
+        }
+
+        return $images;
+    }
+
+    /**
+     * Build Comic Vine information for a page of Metron issues.
+     *
+     * Comic Vine images are retrieved in one batch after resolving all
+     * Metron-to-Comic-Vine mappings.
+     */
+    public function get_cv_info_batch(array $issues): array
+    {
+        $cv_info_batch = [];
+        $metron_to_cv  = [];
+        $cv_ids        = [];
+
+        /*
+        * First pass: resolve every Metron issue ID to a Comic Vine issue ID.
+        */
+        foreach ($issues as $issue) {
+            $metron_id = (int) ($issue['id'] ?? 0);
+
+            if (!$metron_id) {
+                continue;
             }
 
-            $cv_info_batch[$mid] = [
-                'cv_id'             => $cv_id ?: null,
-                'comic_vine_image'  => $comic_vine_image ?: '',
-                'metron_image'      => $issue['image'] ?? '',
-            ];
+            $cv_id     = null;
+            $cache_key = "metron:issue_cv_id:{$metron_id}";
+            $cached    = get_transient($cache_key);
 
-            // Temporary debugging
-            error_log(
-                "ISSUE {$mid}: CV ID = " .
-                ($cv_id ?: 'NONE') .
-                " | CV IMAGE = " .
-                ($comic_vine_image ?: 'NONE')
-            );
+            if ($cached !== false) {
+                $cv_id = is_array($cached)
+                    ? (int) ($cached['cv_id'] ?? 0)
+                    : (int) $cached;
+            } elseif (!empty($issue['cv_id'])) {
+                /*
+                * Best path: issue_list already supplied the mapping.
+                */
+                $cv_id = (int) $issue['cv_id'];
+
+                set_transient(
+                    $cache_key,
+                    ['cv_id' => $cv_id],
+                    30 * DAY_IN_SECONDS
+                );
+            } else {
+                /*
+                * Cold-cache fallback. This may require one Metron issue-detail
+                * request, but the resulting mapping is cached for 30 days.
+                */
+                $cv_id = (int) $this->get_metron_cv_id($metron_id);
+
+                if ($cv_id) {
+                    set_transient(
+                        $cache_key,
+                        ['cv_id' => $cv_id],
+                        30 * DAY_IN_SECONDS
+                    );
+                } else {
+                    /*
+                    * Cache a confirmed missing mapping briefly so repeated page
+                    * loads don't immediately request it again.
+                    */
+                    set_transient(
+                        $cache_key,
+                        ['cv_id' => null],
+                        6 * HOUR_IN_SECONDS
+                    );
+                }
+            }
+
+            $metron_to_cv[$metron_id] = $cv_id ?: null;
+
+            if ($cv_id) {
+                $cv_ids[] = $cv_id;
+            }
+        }
+
+        /*
+        * One Comic Vine request for all uncached issue covers.
+        */
+        $cv_images = $this->get_comicvine_issue_images_batch($cv_ids);
+
+        /*
+        * Second pass: build the structure expected by the issue template.
+        */
+        foreach ($issues as $issue) {
+            $metron_id = (int) ($issue['id'] ?? 0);
+
+            if (!$metron_id) {
+                continue;
+            }
+
+            $cv_id = $metron_to_cv[$metron_id] ?? null;
+
+            $cv_info_batch[$metron_id] = [
+                'cv_id'            => $cv_id,
+                'comic_vine_image' => $cv_id
+                    ? ($cv_images[$cv_id] ?? '')
+                    : '',
+                'metron_image'     => $issue['image'] ?? '',
+            ];
         }
 
         return $cv_info_batch;
@@ -1210,26 +1337,43 @@ class ComicDataService {
     /* -----------------------------------------------------------------
     *  COMIC VINE issue image only
     * ----------------------------------------------------------------- */
-    public function get_comicvine_issue_image( $cv_id ) {
-
-        $cv_id = intval( $cv_id );
-        if ( empty( $cv_id ) ) {
+    public function get_comicvine_issue_image($cv_id)
+    {
+        $cv_id = absint($cv_id);
+    
+        if (!$cv_id) {
             return '';
         }
     
-        $cache_key = "cv_issue_image_$cv_id";
-        $cached = get_transient( $cache_key );
-        if ( $cached !== false ) {
-            return $cached;
+        $cache_key = "cv_issue_image_{$cv_id}";
+        $cached    = get_transient($cache_key);
+    
+        if ($cached !== false) {
+            return is_string($cached) ? $cached : '';
         }
     
-        $body  = $this->cv_api_get( "https://comicvine.gamespot.com/api/issue/4000-{$cv_id}/", [ 'field_list' => 'image' ] );
+        $body = $this->cv_api_get(
+            "https://comicvine.gamespot.com/api/issue/4000-{$cv_id}/",
+            [
+                'field_list' => 'image',
+            ]
+        );
+    
         $image = $body['results']['image'] ?? [];
     
-        $img = $image['small_url'] ?? $image['medium_url'] ?? $image['original_url'] ?? '';
+        $image_url =
+            $image['small_url']
+            ?? $image['medium_url']
+            ?? $image['original_url']
+            ?? '';
     
-        set_transient( $cache_key, $img, 30 * DAY_IN_SECONDS );
-        return $img;
+        set_transient(
+            $cache_key,
+            $image_url,
+            $image_url ? 30 * DAY_IN_SECONDS : 6 * HOUR_IN_SECONDS
+        );
+    
+        return $image_url;
     }
  
 

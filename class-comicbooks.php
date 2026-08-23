@@ -197,12 +197,16 @@ class Comicbooks {
             <ul class="issues-list">
                 <?php 
                 foreach ($all_issues as $issue) :
-                    if (empty($issue['id'])) continue;
-                    $metron_id = $issue['id'];           
-         
-                    // If you have CV data preloaded, pass it here if needed
+                    if (empty($issue['id'])) {
+                        continue;
+                    }
+
+                    $metron_id = (int) $issue['id'];
+                   
+                    $cv_issue = $cv_info_batch[$metron_id] ?? [];
+
                     include plugin_dir_path(__FILE__) . 'templates/issue-item-template.php';
-                endforeach; 
+                endforeach;
                 ?>
             </ul>
             <?php
@@ -302,8 +306,14 @@ class Comicbooks {
         check_ajax_referer('comicbooks_fetchers_data', 'nonce');
     
         $series_ids = isset($_POST['series_ids'])
-            ? array_map('intval', (array) $_POST['series_ids'])
-            : [];
+        ? array_values(
+            array_unique(
+                array_filter(
+                    array_map('absint', (array) $_POST['series_ids'])
+                )
+            )
+        )
+        : [];
     
         error_log('SERIES IMG BATCH: requested series_ids = ' . implode(',', $series_ids));
     
