@@ -36,7 +36,7 @@
             usleep(200000);
         }
     
-        set_transient($lock_key, 1, 10);
+        set_transient($lock_key, 1, 60);
     
         return true;
     }

@@ -1536,7 +1536,7 @@ jQuery(document).ready(function($){
 
         const normalizedPublisherId = parseInt(publisherId, 10);
 
-        let currentPublisherId =
+        currentPublisherId =
             Number.isInteger(normalizedPublisherId) &&
             normalizedPublisherId > 0
                 ? normalizedPublisherId
