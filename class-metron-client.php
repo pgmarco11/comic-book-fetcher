@@ -25,11 +25,11 @@
     {
         $lock_key   = 'metron_request_lock';
         $started_at = microtime(true);
-        $max_wait   = 10;
+        $max_wait   = 15.0;
     
         while (get_transient($lock_key)) {
             if ((microtime(true) - $started_at) >= $max_wait) {
-                error_log('Metron request lock wait timed out');
+                error_log('api_get: Metron request lock timed out after 15 seconds');
                 return false;
             }
     

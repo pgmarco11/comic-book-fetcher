@@ -151,18 +151,31 @@ jQuery(document).ready(function($){
     // ===================================================================    
     function showSpinner() {
         $('#loading-spinner')
+            .stop(true, true)
             .removeClass('hidden')
             .addClass('visible')
-            .css({ opacity: 0 })
-            .animate({ opacity: 1 }, 350);    
+            .css({
+                display: 'block',
+                opacity: 0
+            })
+            .animate({
+                opacity: 1
+            }, 200);
     }
     function hideSpinner() {
-        $('#loading-spinner').animate({ opacity: 0 }, 350, function() {
-            $(this)
-                .removeClass('visible')
-                .addClass('hidden')
-                .css('display', 'none');
-        });    
+        $('#loading-spinner')
+            .stop(true, true)
+            .animate({
+                opacity: 0
+            }, 200, function() {
+                $(this)
+                    .removeClass('visible')
+                    .addClass('hidden')
+                    .css({
+                        display: 'none',
+                        opacity: 0
+                    });
+            });
     }
 
     // UI updates
@@ -222,13 +235,14 @@ jQuery(document).ready(function($){
 
         const totalLabel = `${total}${isTotalExact ? '' : '+'}`;
 
-        if (!items) {
+        if (!Array.isArray(items) || items.length === 0) {
             html += `
                 <p class="empty-results">
-                    No ${isPublisher ? 'publishers' : 'series'} found.
+                    No ${isPublisher ? 'publishers' : 'series'} found
+                    ${letter && letter !== 'all' ? ` starting with "${letter}"` : ''}.
                 </p>
             `;
-            } else {
+        } else {
             html += `<p>Showing ${startIndex}–${endIndex} of ${totalLabel} ${isPublisher ? 'publishers' : 'series'}${search ? ` for "${search}"` : letter && letter !== 'all' ? ` starting with "${letter}"` : ''}</p>`
             
             items.forEach(item => {           
@@ -285,7 +299,16 @@ jQuery(document).ready(function($){
         }
     
         html += '</div>';
-        html += renderPagination(requestedPage, Math.ceil(total / perPage), letter, isTotalExact);
+
+        if (Array.isArray(items) && items.length > 0 && total > 0) {
+            html += renderPagination(
+                requestedPage,
+                Math.ceil(total / pageSize),
+                letter,
+                isTotalExact
+            );
+        }
+        
         html += '</div></div>';
     
         container.html(html);
@@ -537,20 +560,53 @@ jQuery(document).ready(function($){
     // Fetch publishers
     function fetchPublishers(name = '', page, letter = 'all', retries = 3) {
         showSpinner();    
+
+        $('#book-container')
+        .attr('aria-busy', 'true')
+        .css('visibility', 'hidden');
+
         const cacheKey = `metron_publishers_${name}_${page}_${letter}`;
         const cached = getCachedData(cacheKey);  
 
-        if (cached) {   
-            allPublishers = cached.publishers || [];
-            const total = cached.total || 0;  // ← MUST come from server, not guessed
+        const hasValidCachedPublishers =
+        cached &&
+        Array.isArray(cached.publishers) &&
+        cached.publishers.length > 0 &&
+        Number(cached.total) > 0;
+    
+        if (hasValidCachedPublishers) {
+            allPublishers = cached.publishers;
+        
+            const total   = Number(cached.total);
             const perPage = 10;
         
-            renderItems(allPublishers, 'publishers', page, total, name, letter, perPage);
+            renderItems(
+                allPublishers,
+                'publishers',
+                page,
+                total,
+                name,
+                letter,
+                perPage
+            );
+        
             showLetterButtons(true);
             updateActiveLetter(letter);
-            hideSpinner();        
-   
+            
+            $('#book-container')
+            .attr('aria-busy', 'false')
+            .css('visibility', 'visible');
+
+            hideSpinner();
+        
             return;
+        }
+        
+        /*
+        * Remove an old empty result rather than displaying it.
+        */
+        if (cached) {
+            clearCachedData(cacheKey);
         }
         $.ajax({
             url: comicbooks_fetchers_data.ajax_url,
@@ -566,7 +622,11 @@ jQuery(document).ready(function($){
             success: function(response) {           
         
                 if (!response.success || !response.data?.publishers) {
-                    console.error('BAD RESPONSE — NO PUBLISHERS!', response);
+                    console.error('BAD RESPONSE — NO PUBLISHERS!', response);                    
+                    $('#book-container')
+                    .attr('aria-busy', 'false')
+                    .css('visibility', 'visible');
+                    
                     $('#book-container').html('<p>Failed to load publishers.</p>');
                     hideSpinner();
                     return;
@@ -591,6 +651,10 @@ jQuery(document).ready(function($){
                 renderItems(publishers, 'publishers', page, total, name, letter, 10);
                 showLetterButtons(true);
                 updateActiveLetter(letter);
+                $('#book-container')
+                .attr('aria-busy', 'false')
+                .css('visibility', 'visible');
+
                 hideSpinner();        
        
             },
@@ -600,7 +664,10 @@ jQuery(document).ready(function($){
                 if (typeof retries !== 'undefined' && retries > 0) {
                     console.warn('Retrying fetchPublishers...', retries, 'left');
                     setTimeout(() => fetchPublishers(name, page, letter, retries - 1), 2000);
-                } else {
+                } else {                
+                    $('#book-container')
+                    .attr('aria-busy', 'false')
+                    .css('visibility', 'visible');
                     $('#book-container').html('<p>Error loading publishers for page ' + page + '. <button onclick="location.reload()">Retry</button></p>');
                     hideSpinner();
                 }
