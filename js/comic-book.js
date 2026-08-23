@@ -668,6 +668,7 @@ jQuery(document).ready(function($){
                     $('#book-container')
                     .attr('aria-busy', 'false')
                     .css('visibility', 'visible');
+
                     $('#book-container').html('<p>Error loading publishers for page ' + page + '. <button onclick="location.reload()">Retry</button></p>');
                     hideSpinner();
                 }
@@ -694,6 +695,11 @@ jQuery(document).ready(function($){
     
             showLetterButtons(false);
             updateActiveLetter(letter);
+
+            $('#book-container')
+            .attr('aria-busy', 'false')
+            .css('visibility', 'visible');
+
             hideSpinner();
             return;
         }
@@ -736,6 +742,10 @@ jQuery(document).ready(function($){
     
             showLetterButtons(true);
             updateActiveLetter(letter);
+            $('#book-container')
+            .attr('aria-busy', 'false')
+            .css('visibility', 'visible');
+
             hideSpinner();
     
             return;
@@ -849,9 +859,17 @@ jQuery(document).ready(function($){
     
                     showLetterButtons(true);
                     updateActiveLetter(letter);
+                    $('#book-container')
+                    .attr('aria-busy', 'false')
+                    .css('visibility', 'visible');
+
                     hideSpinner();
     
                 } else {
+
+                    $('#book-container')
+                    .attr('aria-busy', 'false')
+                    .css('visibility', 'visible');
     
                     $('#book-container').html(`
                         <div class="error-message">
@@ -876,6 +894,10 @@ jQuery(document).ready(function($){
                     'REAL load failed:',
                     xhr.responseText
                 );
+
+                $('#book-container')
+                .attr('aria-busy', 'false')
+                .css('visibility', 'visible');
     
                 hideSpinner();
             }
@@ -967,6 +989,10 @@ jQuery(document).ready(function($){
             page = page ?? (urlPage ? parseInt(urlPage, 10) : 1);
 
             if (!titleId || isNaN(titleId)) {
+                $('#book-container')
+                .attr('aria-busy', 'false')
+                .css('visibility', 'visible');
+
                 $('#issues-list').html('<p>No series selected.</p>').addClass('loaded');
                 $('#pagination-wrapper').empty();
                 hideSpinner();
@@ -997,6 +1023,10 @@ jQuery(document).ready(function($){
                 renderIssuePagination(titleId, page, search, cached.total);
         
                 lazyLoadImages();
+                $('#book-container')
+                .attr('aria-busy', 'false')
+                .css('visibility', 'visible');
+
                 hideSpinner();  
         
                 return;
@@ -1025,6 +1055,10 @@ jQuery(document).ready(function($){
             
                 if (!response || response.success !== true) {
                     console.error('AJAX failed - no success flag', response);
+                    $('#book-container')
+                    .attr('aria-busy', 'false')
+                    .css('visibility', 'visible');
+
                     $('#issues-list').html('<p class="no-results">AJAX load failed (no success)</p>').addClass('loaded');
                     hideSpinner();
                     return;
@@ -1038,6 +1072,10 @@ jQuery(document).ready(function($){
             
                 if (typeof html !== 'string' || html.trim() === '') {
                     console.error('No valid HTML in response - empty or wrong format', data);
+                    $('#book-container')
+                    .attr('aria-busy', 'false')
+                    .css('visibility', 'visible');
+
                     $('#issues-list').html('<p class="no-results">No issues HTML returned</p>').addClass('loaded');
                     hideSpinner();
                     return;
@@ -1064,11 +1102,20 @@ jQuery(document).ready(function($){
                     });
                 }
             
-                lazyLoadImages();        
+                lazyLoadImages(); 
+
+                $('#book-container')
+                .attr('aria-busy', 'false')
+                .css('visibility', 'visible');
+
                 hideSpinner();  // always call at the end
             },
 
             error(xhr, status) {
+                $('#book-container')
+                .attr('aria-busy', 'false')
+                .css('visibility', 'visible');
+
                 hideSpinner();
 
                 if ((xhr.status === 429 || status === 'timeout') && retries > 0) {
@@ -1145,6 +1192,10 @@ jQuery(document).ready(function($){
         if (titleId) {
             fetchIssues(titleId, page, search);
         } else {
+            $('#book-container')
+            .attr('aria-busy', 'false')
+            .css('visibility', 'visible');
+            
             $('#issues-list').html('<p>No series selected.</p>');
             hideSpinner();
         }

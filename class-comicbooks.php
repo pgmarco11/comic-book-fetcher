@@ -186,7 +186,7 @@ class Comicbooks {
         ? array_values(array_filter(array_column($all_issues, 'id'))) 
         : [];
 
-        $cv_info_batch = $this->get_cv_info_batch($all_issues);
+        $cv_info_batch = $this->data_service->get_cv_info_batch($all_issues);
 
         if (is_user_logged_in()) {
             $collection_status = ComicRenderer::get_collection_status($metron_ids);
@@ -269,7 +269,7 @@ class Comicbooks {
             $metron_ids
         );
 
-        $cv_info_batch = $this->get_cv_info_batch($issues);
+        $cv_info_batch = $this->data_service->get_cv_info_batch($issues);
 
     
         wp_send_json_success( [
