@@ -265,9 +265,10 @@ jQuery(document).ready(function($){
                     </div>`;
                 } else {  
                     const hasImage = !!item.image;
+
                     const imgSrc = hasImage
                         ? item.image
-                        : (comicbooks_fetchers_data?.placeholder || '/wp-content/plugins/comic-book-fetcher/images/placeholder.png');
+                        : comicbooks_fetchers_data.placeholder;
                 
                     const imgAttrs = hasImage
                         ? `data-loaded="true"`

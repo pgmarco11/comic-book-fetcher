@@ -100,44 +100,83 @@ $is_publisher = $type === 'publishers';
                                 </div>
                             </a>
                         </div>
-                    <?php else :
-                        // Metron's own series image, if get_series_api_page() already
-                        // has one. Only when it's missing do we need the client-side
-                        // ComicVine batch fallback — so only then do we mark this img
-                        // for the lazy loader.
-                        $series_image_url = ! empty( $item['image'] ) ? $item['image'] : '';
-                        $needs_lazy_image = empty( $series_image_url );
-                        $img_src = $needs_lazy_image
-                            ? ( COMICBOOKS_PLUGIN_URL . 'images/placeholder.png' )
-                            : $series_image_url;
-                    ?>
-                        <div class="comic-title" data-series-id="<?php echo esc_attr($item['series_id']); ?>">                     
-                            <a href="/comic-catalog/issues/?title_id=<?php echo esc_attr($item['series_id']); ?>&page=1">
-                                <div class="comic-image">
-                                <img 
-                                    src="<?php echo esc_url( $img_src ); ?>"
-                                    alt="<?php echo esc_attr($item['name']); ?>"
-                                    <?php if ( $needs_lazy_image ) : ?>
-                                    data-series-id="<?php echo esc_attr( $item['series_id'] ); ?>"
-                                    class="lazy-placeholder"
-                                    <?php else : ?>
-                                    data-loaded="true"
-                                    <?php endif; ?>
-                                    loading="lazy"
-                                    width="100"
-                                    height="150">
-                                </div>
-                                <div class="comic-info">
-                                    <div class="comic-title-name"><?php echo esc_html($item['name']); ?></div>
-                                    <div class="comic-title-meta">
-                                        <p>Vol. <span><?php echo esc_html($item['volume'] ?? '1'); ?></span></p>
-                                        <p>Issues: <span><?php echo esc_html($item['issue_count'] ?? 0); ?></span></p>
-                                        <p>Started: <span><?php echo esc_html($item['year_began'] ?? 'N/A'); ?></span></p>
+                        <?php else :
+                            /*
+                            * Use Metron first. When Metron has no image, render a placeholder
+                            * and let the JavaScript request the Comic Vine fallback.
+                            */
+                            $series_id = absint($item['series_id'] ?? 0);
+
+                            $metron_image_url = !empty($item['image'])
+                                ? (string) $item['image']
+                                : '';
+
+                            $needs_cv_fallback = empty($metron_image_url);
+
+                            $display_image_url = $needs_cv_fallback
+                                ? COMICBOOKS_PLUGIN_URL . 'images/placeholder.png'
+                                : $metron_image_url;
+                        ?>
+
+                            <div
+                                class="comic-title"
+                                data-series-id="<?php echo esc_attr($series_id); ?>">
+
+                                <a href="<?php
+                                    echo esc_url(
+                                        add_query_arg(
+                                            [
+                                                'title_id' => $series_id,
+                                                'page'     => 1,
+                                            ],
+                                            home_url('/comic-catalog/issues/')
+                                        )
+                                    );
+                                ?>">
+
+                                    <div class="comic-image">
+                                        <img
+                                            src="<?php echo esc_url($display_image_url); ?>"
+                                            alt="<?php echo esc_attr($item['name'] ?? 'Comic series'); ?>"
+
+                                            <?php if ($needs_cv_fallback) : ?>
+                                                data-series-id="<?php echo esc_attr($series_id); ?>"
+                                                class="lazy-placeholder"
+                                            <?php else : ?>
+                                                data-loaded="true"
+                                            <?php endif; ?>
+
+                                            loading="lazy"
+                                            decoding="async"
+                                            width="100"
+                                            height="150">
                                     </div>
-                                </div>
-                            </a>
-                        </div>
-                    <?php endif; ?>
+
+                                    <div class="comic-info">
+                                        <div class="comic-title-name">
+                                            <?php echo esc_html($item['name'] ?? 'Unknown series'); ?>
+                                        </div>
+
+                                        <div class="comic-title-meta">
+                                            <p>
+                                                Vol.
+                                                <span><?php echo esc_html($item['volume'] ?? '1'); ?></span>
+                                            </p>
+
+                                            <p>
+                                                Issues:
+                                                <span><?php echo esc_html($item['issue_count'] ?? 0); ?></span>
+                                            </p>
+
+                                            <p>
+                                                Started:
+                                                <span><?php echo esc_html($item['year_began'] ?? 'N/A'); ?></span>
+                                            </p>
+                                        </div>
+                                    </div>
+                                </a>
+                            </div>
+                        <?php endif; ?>
                 <?php endforeach; ?>
             <?php endif; ?>
         </div>

@@ -41,8 +41,8 @@ $metron_cv_id = $cv_issue['cv_id']
     ?? $issue['cv_id']
     ?? '';
 
-$display_image_url = $comic_vine_image_url
-    ?: ( $metron_issue_image_url ?: $placeholder_url );
+$display_image_url = $metron_issue_image_url
+    ?: ( $comic_vine_image_url ?: $placeholder_url );
 
 $image_url = $display_image_url;
 
