@@ -81,20 +81,23 @@ class Comicbooks {
             ] );
         }
 
-        foreach ( $publisher_data['items'] as $item ) {
-            if ( ! empty( $item['id'] ) ) {
-                $info = $this->data_service->get_publisher_info( $item['id'] );
-                $item = [
-                    'id'      => (int) $item['id'],
-                    'name'    => $item['name'],
-                    'image'   => $info['image'] ?? '',
-                    'desc'    => $info['desc'] ?? '',
-                    'founded' => $info['founded'] ?? '',
-                ];
-               sleep(2); // respect rate limits
+        foreach ($publisher_data['items'] as &$item) {
+            if (empty($item['id'])) {
+                continue;
             }
+        
+            $info = $this->data_service->get_publisher_info($item['id']);
+        
+            $item = [
+                'id'      => (int) $item['id'],
+                'name'    => $item['name'],
+                'image'   => $info['image'] ?? '',
+                'desc'    => $info['desc'] ?? '',
+                'founded' => $info['founded'] ?? '',
+            ];
         }
-        unset( $item );
+        
+        unset($item);
 
         wp_send_json_success( [
             'publishers' => $publisher_data['items'],
@@ -103,6 +106,7 @@ class Comicbooks {
             'per_page'   => 10,
             'max_pages'  => ceil( $publisher_data['total'] / $per_page ),
         ] );
+        
     }
 
      /* -----------------------------------------------------------------
@@ -158,39 +162,90 @@ class Comicbooks {
     * ----------------------------------------------------------------- */
     public function ajax_load_issues() {
         check_ajax_referer('comicbooks_fetchers_data', 'nonce');
+
+        $title_id = isset($_POST['title_id'])
+            ? absint($_POST['title_id'])
+            : 0;
     
-        $title_id = isset($_POST['title_id']) ? intval($_POST['title_id']) : 0;
-        $page     = isset($_POST['page']) ? max(1, intval($_POST['page'])) : 1;
-        $search   = isset($_POST['search']) ? strtolower(trim(wp_strip_all_tags($_POST['search']))) : '';
+        $page = isset($_POST['page'])
+            ? max(1, absint($_POST['page']))
+            : 1;
+    
+        $search = isset($_POST['search'])
+            ? strtolower(
+                trim(
+                    sanitize_text_field(
+                        wp_unslash($_POST['search'])
+                    )
+                )
+            )
+            : '';
     
         if (!$title_id) {
-            wp_send_json_error(['message' => 'No title_id provided']);
+            wp_send_json_error(
+                ['message' => 'No title_id provided'],
+                400
+            );
         }
     
         $comic_renderer = new ComicRenderer();
-        $data = $comic_renderer->get_series_issues($title_id, $page, $search);
+        $data = $comic_renderer->get_series_issues(
+            $title_id,
+            $page,
+            $search
+        );
     
         if (isset($data['error'])) {
             wp_send_json_error($data);
         }
     
-        // Render the exact same HTML as the template
-        ob_start();
-        $series        = $data['series'] ?? [];
-        $all_issues    = $data['issue_list']['results'] ?? [];
-        $total_issues  = (int) ($data['issue_list']['count'] ?? 0);
-
+        $series = $data['series'] ?? [];
+    
+        $all_issues = isset($data['issue_list']['results'])
+            && is_array($data['issue_list']['results'])
+                ? $data['issue_list']['results']
+                : [];
+    
+        $total_issues = (int) (
+            $data['issue_list']['count'] ?? 0
+        );
+    
         $collection_status = [];
-
-        $metron_ids = !empty($all_issues) 
-        ? array_values(array_filter(array_column($all_issues, 'id'))) 
-        : [];
-
-        $cv_info_batch = $this->data_service->get_cv_info_batch($all_issues);
-
+    
+        $metron_ids = array_values(
+            array_filter(
+                array_map(
+                    'absint',
+                    array_column($all_issues, 'id')
+                )
+            )
+        );
+    
+        /*
+         * Only request Comic Vine information when Metron does not
+         * already provide an issue cover.
+         */
+        $issues_needing_cv = array_values(
+            array_filter(
+                $all_issues,
+                static function ($issue) {
+                    return empty($issue['image']);
+                }
+            )
+        );
+    
+        $cv_info_batch = !empty($issues_needing_cv)
+            ? $this->data_service->get_cv_info_batch(
+                $issues_needing_cv
+            )
+            : [];
+    
         if (is_user_logged_in()) {
-            $collection_status = ComicRenderer::get_collection_status($metron_ids);
+            $collection_status =
+                ComicRenderer::get_collection_status($metron_ids);
         }
+    
+        ob_start();
  
         if (!empty($all_issues)) :
             ?>

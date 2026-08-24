@@ -67,7 +67,7 @@ class ComicDataService {
                     $full[] = [ 'id' => $p['id'], 'name' => $p['name'] ];
                 }
                 $api_page++;
-                sleep(2); // respectful delay
+        
             } while (!empty($data['next']));
     
             set_transient($transient_key, $full, WEEK_IN_SECONDS * 2); // longer TTL
