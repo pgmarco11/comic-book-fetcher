@@ -112,9 +112,7 @@
             $username = get_option('metron_api_username', '');
             $password = get_option('metron_api_password', '');
     
-            if (!$username || !$password) {
-                error_log('api_get: Missing Metron API credentials');
-    
+            if (!$username || !$password) {               
                 return [
                     'error' => 'Missing Metron API credentials',
                 ];
@@ -278,10 +276,7 @@
     
                 $response_body = wp_remote_retrieve_body($response);
     
-                if ($response_body === '') {
-                    error_log(
-                        "api_get: Empty response from {$url}"
-                    );
+                if ($response_body === '') {              
     
                     if ($attempt < $retries) {
                         sleep($backoff);

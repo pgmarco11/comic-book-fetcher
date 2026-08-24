@@ -368,9 +368,7 @@ class Comicbooks {
                 )
             )
         )
-        : [];
-    
-        error_log('SERIES IMG BATCH: requested series_ids = ' . implode(',', $series_ids));
+        : [];   
     
         if (empty($series_ids)) {
             wp_send_json_error(['message' => 'No series IDs provided']);
@@ -382,14 +380,13 @@ class Comicbooks {
         foreach ($series_ids as $sid) {
             $cached = get_transient("metron:series_image:$sid");
             if ($cached !== false && !empty($cached)) {
-                error_log("SERIES IMG BATCH: $sid served from cache: $cached");
+           
                 $images[$sid] = $cached;
             } else {
                 $uncached[$sid] = true;
             }
-        }
-    
-        error_log('SERIES IMG BATCH: uncached ids = ' . implode(',', array_keys($uncached)));
+        }   
+
     
         if (!empty($uncached)) {
             $series_to_cv_id = $this->data_service->get_known_cv_ids(array_keys($uncached));    
@@ -399,10 +396,8 @@ class Comicbooks {
 
                 $img = $cv_images[$sid] ?? '';
     
-                if (empty($img) && empty($series_to_cv_id[$sid])) {
-                    error_log("SERIES IMG BATCH: $sid has no cv_id at all — falling back to Metron issue_list");
-                    $img = $this->data_service->get_series_first_issue_image($sid);
-                    error_log("SERIES IMG BATCH: $sid Metron fallback image = " . ($img ?: 'EMPTY'));
+                if (empty($img) && empty($series_to_cv_id[$sid])) {             
+                    $img = $this->data_service->get_series_first_issue_image($sid);                
                 }
     
                 set_transient("metron:series_image:$sid", $img, 30 * DAY_IN_SECONDS);

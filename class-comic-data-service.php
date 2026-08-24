@@ -54,8 +54,7 @@ class ComicDataService {
                 $url = $this->client->api_base . "publisher/?page={$api_page}&page_size=100";
                 $data = $this->client->api_get($url);
 
-                if (!$data || isset($data['detail']) && str_contains($data['detail'], 'Invalid page')) {
-                    error_log("Publisher series_list: Invalid page or end reached for page {$api_page}");
+                if (!$data || isset($data['detail']) && str_contains($data['detail'], 'Invalid page')) {              
                     break;
                 }
 
@@ -235,8 +234,7 @@ class ComicDataService {
     private function cv_api_get( string $endpoint, array $query_args = [] ): ?array {
         $cv_key = get_option( 'comic_vine_api_key', '' );
 
-        if ( empty( $cv_key ) ) {
-            error_log( 'Comic Vine API key missing' );
+        if ( empty( $cv_key ) ) {       
             return null;
         }
 
@@ -278,13 +276,11 @@ class ComicDataService {
     
         $volume_ids = array_filter( array_values( $series_to_cv_id ) );
         if ( empty( $volume_ids ) ) {
-            error_log('CV BATCH: no volume ids after filtering — series_to_cv_id had no usable cv_id values, aborting');
             return [];
         }      
     
         $cv_key = get_option( 'comic_vine_api_key', '' );
-        if ( empty( $cv_key ) ) {
-            error_log( 'CV BATCH: Comic Vine API key missing' );
+        if ( empty( $cv_key ) ) {   
             return [];
         }
     
@@ -324,8 +320,7 @@ class ComicDataService {
             return [];
         }
     
-        if ( empty( $body['results'] ) ) {
-            error_log( 'CV BATCH: no results in body' );
+        if ( empty( $body['results'] ) ) {   
             return [];
         }
     
@@ -333,14 +328,7 @@ class ComicDataService {
         foreach ( $body['results'] as $issue ) {
             $vol_id = $issue['volume']['id'] ?? null;
             $issue_id = (int) ($issue['id'] ?? 0);
-            $img_check = $issue['image'] ?? null;           
-
-            error_log(
-                "CV BATCH: result issue_id={$issue_id}" .
-                " volume_id=" . ($vol_id ?? 'NULL') .
-                " issue_number=" . ($issue['issue_number'] ?? '?') .
-                " has_image=" . (!empty($img_check) ? 'yes' : 'no')
-            );
+            $img_check = $issue['image'] ?? null;    
     
             if ( $vol_id ) {
                 $by_volume[ $vol_id ] = $issue['image']['small_url']
@@ -393,10 +381,6 @@ class ComicDataService {
                 if ( $cached !== false ) {
                     $map[ $sid ] = (int) $cached;
 
-                    error_log(
-                        "get_known_cv_ids: series {$sid} cv_id {$map[$sid]} from CV cache"
-                    );
-
                     continue;
                 }
 
@@ -407,10 +391,6 @@ class ComicDataService {
                 if ( get_transient( $miss_cache_key ) !== false ) {
 
                     $map[ $sid ] = null;
-
-                    error_log(
-                        "get_known_cv_ids: series {$sid} recently confirmed to have no cv_id"
-                    );
 
                     continue;
                 }
@@ -435,19 +415,12 @@ class ComicDataService {
 
                     $map[ $sid ] = $cv_id;
 
-                    error_log(
-                        "get_known_cv_ids: series {$sid} cv_id {$cv_id} recovered from series cache"
-                    );
-
                     continue;
                 }
 
                 /*
                 * 3. Nothing cached — fetch the series directly from Metron.
                 */
-                error_log(
-                    "get_known_cv_ids: series {$sid} cv_id not cached — fetching from Metron"
-                );
 
                 $url = $this->client->api_base . "series/{$sid}/";
                 $series = $this->client->api_get( $url );
@@ -479,10 +452,6 @@ class ComicDataService {
 
                     $map[ $sid ] = $cv_id;
 
-                    error_log(
-                        "get_known_cv_ids: series {$sid} fetched cv_id {$cv_id} from Metron and cached it"
-                    );
-
                 } else {
 
                     /*
@@ -499,9 +468,6 @@ class ComicDataService {
 
                     $map[ $sid ] = null;
 
-                    error_log(
-                        "get_known_cv_ids: series {$sid} has no cv_id in Metron"
-                    );
                 }
             }
 
@@ -872,10 +838,6 @@ class ComicDataService {
         $block_start = ( (int) floor( ( $needed_api_page - 1 ) / $block_size ) * $block_size ) + 1;
         $block_end   = $block_start + $block_size - 1;
 
-        error_log(
-            "get_series BLOCK MODE v4: publisher={$publisher_id}, catalog_page={$page}, needed_api_page={$needed_api_page}, block={$block_start}-{$block_end}"
-        );
-
         $block_items = [];
         $api_total   = 0;
         $api_has_next = false;
@@ -1210,14 +1172,12 @@ class ComicDataService {
         $url_issue = $this->client->api_base . "issue/{$issue_id}/";
         $issue_data = $this->client->api_get( $url_issue );
 
-        if ( isset( $issue_data['error'] ) || ! is_array( $issue_data ) ) {
-            error_log( "Metron issue fetch error {$issue_id}: " . ( $issue_data['error'] ?? 'No data' ) );
+        if ( isset( $issue_data['error'] ) || ! is_array( $issue_data ) ) {       
             return null;
         }
 
         // Verify it actually belongs to this series
-        if ( ( $issue_data['series']['id'] ?? 0 ) !== (int) $title_id ) {
-            error_log( "Issue {$issue_id} does not belong to series {$title_id}" );
+        if ( ( $issue_data['series']['id'] ?? 0 ) !== (int) $title_id ) {      
             return null;
         }
         
@@ -1279,14 +1239,7 @@ class ComicDataService {
             ]
         );
     
-        if ( is_wp_error( $response ) ) {
-            error_log(
-                'Comic Vine publisher lookup failed for cv_id ' .
-                $cv_id .
-                ': ' .
-                $response->get_error_message()
-            );
-    
+        if ( is_wp_error( $response ) ) {    
             return [];
         }
     
@@ -1295,11 +1248,7 @@ class ComicDataService {
             true
         );
     
-        if ( empty( $body['results'] ) ) {
-            error_log(
-                'Comic Vine found no publisher for cv_id: ' . $cv_id
-            );
-    
+        if ( empty( $body['results'] ) ) {       
             return [];
         }
     
@@ -1386,8 +1335,7 @@ class ComicDataService {
         }
 
         $cv_key = get_option( 'comic_vine_api_key', '' );
-        if ( ! $cv_key ) {
-            error_log( 'Comic Vine API key missing' );
+        if ( ! $cv_key ) {         
             return null;
         }
 

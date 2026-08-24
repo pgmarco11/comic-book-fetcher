@@ -279,7 +279,6 @@ function tcs_get_comicvine_issue_basic( int $cv_id ): array {
     );
 
     if ( is_wp_error( $response ) ) {
-        error_log( 'Comic Vine issue lookup failed for cv_id ' . $cv_id . ': ' . $response->get_error_message() );
         return [];
     }
 
