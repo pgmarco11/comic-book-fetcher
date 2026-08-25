@@ -452,111 +452,45 @@ jQuery(document).ready(function($){
     
     function lazyLoadImages() {
         /*
-         * SERIES IMAGES
-         *
-         * A catalog page only contains approximately 10 series. Queue all
-         * missing series covers together so WordPress receives one AJAX
-         * request instead of several two-image requests.
-         */
+        * SERIES IMAGES
+        *
+        * Only request covers for series currently visible in the viewport.
+        * Visible covers are still combined into one AJAX batch.
+        */
         const seriesImages = document.querySelectorAll(
             'img[data-series-id]:not([data-loaded]):not([data-loading])'
         );
-    
+
+        const seriesObserver = new IntersectionObserver(
+            (entries, observer) => {
+                entries.forEach(entry => {
+                    if (!entry.isIntersecting) {
+                        return;
+                    }
+
+                    const img = entry.target;
+
+                    observer.unobserve(img);
+                    queueSeriesImage(img);
+                });
+            },
+            {
+                root: null,
+                rootMargin: '0px',
+                threshold: 0.01
+            }
+        );
+
         seriesImages.forEach(img => {
-            queueSeriesImage(img);
+            seriesObserver.observe(img);
         });
-    
+
         /*
-         * ISSUE IMAGES
-         *
-         * Keep IntersectionObserver behavior for issue images.
-         */
+        * ISSUE IMAGES
+        */
         const issueImages = document.querySelectorAll(
             'img[data-issue-id]:not([data-loaded])'
         );
-    
-        if (!issueImages.length) {
-            return;
-        }
-    
-        const observer = new IntersectionObserver((entries, obs) => {
-            entries.forEach(entry => {
-                if (!entry.isIntersecting) {
-                    return;
-                }
-    
-                const img = entry.target;
-                const issueId = img.dataset.issueId;
-                const $item = img.closest('.issue-item');
-    
-                obs.unobserve(img);
-    
-                if (img.dataset.fallbackImage) {
-                    img.src = img.dataset.fallbackImage;
-    
-                    img.onload = () => {
-                        img.dataset.loaded = 'true';
-                    };
-    
-                    return;
-                }
-    
-                const loadImageFromCvId = cvId => {
-                    if (!cvId) {
-                        return;
-                    }
-    
-                    $.post(comicbooks_fetchers_data.ajax_url, {
-                        action: 'load_cv_issue_images_batch',
-                        cv_ids: [cvId],
-                        nonce: comicbooks_fetchers_data.nonce
-                    }, response => {
-                        const imageUrl = response?.data?.images?.[cvId];
-    
-                        if (response.success && imageUrl) {
-                            img.src = imageUrl;
-    
-                            img.onload = () => {
-                                img.dataset.loaded = 'true';
-                            };
-                        }
-                    });
-                };
-    
-                if (!issueId) {
-                    return;
-                }
-    
-                $.post(comicbooks_fetchers_data.ajax_url, {
-                    action: 'load_comic_vine_batch',
-                    nonce: comicbooks_fetchers_data.nonce,
-                    metron_ids: issueId
-                }, response => {
-                    const cvData = response?.data?.cv_data?.[issueId];
-                    const cvId = cvData?.cv_id || cvData?.id || null;
-    
-                    if (!response.success || !cvId) {
-                        return;
-                    }
-    
-                    if ($item) {
-                        $item.dataset.cvId = cvId;
-    
-                        $item
-                            .querySelector('.add-to-collection')
-                            ?.setAttribute('data-cv-issue-id', cvId);
-    
-                        $item
-                            .querySelector('.add-to-wishlist')
-                            ?.setAttribute('data-cv-issue-id', cvId);
-                    }
-    
-                    loadImageFromCvId(cvId);
-                });
-            });
-        }, {
-            rootMargin: '300px'
-        });
     
         issueImages.forEach(img => observer.observe(img));
     }
