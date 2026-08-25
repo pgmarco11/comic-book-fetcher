@@ -87,12 +87,16 @@ function comicbooks_enqueue_scripts() {
             true
         );
 
-        wp_localize_script('comicbook-script', 'comic_collection_data', [
-            'ajax_url'    => admin_url('admin-ajax.php'),
-            'nonce'       => wp_create_nonce('comicbooks_fetchers_data'),
-            'placeholder' => PUBLISHER_PLACEHOLDER_IMAGE_URL,
-            'per_page'    => 10,
-        ]);
+        wp_localize_script(
+            'comicbook-script',
+            'comicbooks_fetchers_data',
+            [
+                'ajax_url'    => admin_url('admin-ajax.php'),
+                'nonce'       => wp_create_nonce('comicbooks_fetchers_data'),
+                'placeholder' => PUBLISHER_PLACEHOLDER_IMAGE_URL,
+                'per_page'    => 10,
+            ]
+        );
      
         wp_enqueue_script(
             'comic-collection-script',
@@ -100,16 +104,8 @@ function comicbooks_enqueue_scripts() {
             ['jquery', 'comic-utils'], 
             COMICBOOKS_PLUGIN_DIR . 'js/comic-collection.js',
             true
-        );
-     
-        wp_localize_script( 
-            'comic-collection-script',
-            'comicbooks_fetchers_data',
-            [
-                'ajax_url' => admin_url( 'admin-ajax.php' ),
-                'nonce'    => wp_create_nonce( 'comicbooks_fetchers_data' ),
-            ]
-        );
+        );     
+
     }
 
     // === WISHLIST ASSETS (always load) ===

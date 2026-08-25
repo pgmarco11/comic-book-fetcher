@@ -266,9 +266,12 @@ jQuery(document).ready(function($){
                 } else {  
                     const hasImage = !!item.image;
 
+                    const placeholder = comicbooks_fetchers_data.placeholder ||
+                    '/wp-content/plugins/comic-book-fetcher/images/placeholder.png';
+
                     const imgSrc = hasImage
-                        ? item.image
-                        : comicbooks_fetchers_data.placeholder;
+                    ? item.image
+                    : placeholder;
                 
                     const imgAttrs = hasImage
                         ? `data-loaded="true"`
