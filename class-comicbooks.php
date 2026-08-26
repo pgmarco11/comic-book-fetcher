@@ -81,31 +81,15 @@ class Comicbooks {
             ] );
         }
 
-        foreach ($publisher_data['items'] as &$item) {
-            if (empty($item['id'])) {
-                continue;
-            }
-        
-            $info = $this->data_service->get_publisher_info($item['id']);
-        
-            $item = [
-                'id'      => (int) $item['id'],
-                'name'    => $item['name'],
-                'image'   => $info['image'] ?? '',
-                'desc'    => $info['desc'] ?? '',
-                'founded' => $info['founded'] ?? '',
-            ];
-        }
-        
-        unset($item);
-
-        wp_send_json_success( [
-            'publishers' => $publisher_data['items'],
-            'total'      => $publisher_data['total'],
+        wp_send_json_success([
+            'publishers' => $publisher_data['items'] ?? [],
+            'total'      => (int) ($publisher_data['total'] ?? 0),
             'page'       => $page,
-            'per_page'   => 10,
-            'max_pages'  => ceil( $publisher_data['total'] / $per_page ),
-        ] );
+            'per_page'   => $per_page,
+            'max_pages'  => (int) ceil(
+                ($publisher_data['total'] ?? 0) / $per_page
+            ),
+        ]);
         
     }
 
@@ -357,73 +341,192 @@ class Comicbooks {
     /* -----------------------------------------------------------------
      *  AJAX – Batch series images
      * ----------------------------------------------------------------- */
-    public function ajax_load_series_images_batch() {
-        check_ajax_referer('comicbooks_fetchers_data', 'nonce');
+    public function ajax_load_series_images_batch()
+    {
+        check_ajax_referer(
+            'comicbooks_fetchers_data',
+            'nonce'
+        );
     
         $series_ids = isset($_POST['series_ids'])
-        ? array_values(
-            array_unique(
-                array_filter(
-                    array_map('absint', (array) $_POST['series_ids'])
+            ? array_values(
+                array_unique(
+                    array_filter(
+                        array_map(
+                            'absint',
+                            (array) wp_unslash($_POST['series_ids'])
+                        )
+                    )
                 )
             )
-        )
-        : [];   
+            : [];
     
         if (empty($series_ids)) {
-            wp_send_json_error(['message' => 'No series IDs provided']);
+            wp_send_json_error(
+                ['message' => 'No series IDs provided'],
+                400
+            );
         }
     
-        $images = [];
+        /*
+         * Prevent unusually large public batch requests.
+         */
+        $series_ids = array_slice($series_ids, 0, 20);
+    
+        $images   = [];
         $uncached = [];
     
+        /*
+         * Separate cached images, confirmed missing images and uncached IDs.
+         */
         foreach ($series_ids as $sid) {
-            $cached = get_transient("metron:series_image:$sid");
-            if ($cached !== false && !empty($cached)) {
-           
-                $images[$sid] = $cached;
-            } else {
-                $uncached[$sid] = true;
+            $cache_key = "metron:series_image:{$sid}";
+            $cached    = get_transient($cache_key);
+    
+            /*
+             * This series was recently confirmed to have no usable image.
+             * Return an empty URL without calling either API again.
+             */
+            if ($cached === '__missing__') {
+                $images[$sid] = '';
+                continue;
             }
-        }   
-
+    
+            /*
+             * A usable image URL is already cached.
+             */
+            if ($cached !== false) {
+                $images[$sid] = (string) $cached;
+                continue;
+            }
+    
+            /*
+             * No cached result exists.
+             */
+            $uncached[$sid] = true;
+        }
     
         if (!empty($uncached)) {
-            $series_to_cv_id = $this->data_service->get_known_cv_ids(array_keys($uncached));    
-            $cv_images = $this->data_service->get_comicvine_first_issues_batch($series_to_cv_id);
+            /*
+             * Resolve known Comic Vine volume IDs.
+             */
+            $series_to_cv_id =
+                $this->data_service->get_known_cv_ids(
+                    array_keys($uncached)
+                );
     
-            foreach ($uncached as $sid => $_) {
-
+            /*
+             * Retrieve Comic Vine first-issue covers in a batch.
+             */
+            $cv_images =
+                $this->data_service
+                    ->get_comicvine_first_issues_batch(
+                        $series_to_cv_id
+                    );
+    
+            foreach (array_keys($uncached) as $sid) {
                 $img = $cv_images[$sid] ?? '';
     
-                if (empty($img) && empty($series_to_cv_id[$sid])) {             
-                    $img = $this->data_service->get_series_first_issue_image($sid);                
+                /*
+                 * Only use the Metron issue-list fallback when the series
+                 * does not have a known Comic Vine ID.
+                 */
+                if (
+                    empty($img) &&
+                    empty($series_to_cv_id[$sid])
+                ) {
+                    $img =
+                        $this->data_service
+                            ->get_series_first_issue_image($sid);
                 }
     
-                set_transient("metron:series_image:$sid", $img, 30 * DAY_IN_SECONDS);
-                $images[$sid] = $img;
+                $cache_key = "metron:series_image:{$sid}";
+    
+                if (!empty($img)) {
+                    /*
+                     * Cache successful images for 30 days.
+                     */
+                    set_transient(
+                        $cache_key,
+                        $img,
+                        30 * DAY_IN_SECONDS
+                    );
+    
+                    $images[$sid] = $img;
+                } else {
+                    /*
+                     * Cache a sentinel for six hours. Never return the
+                     * sentinel itself to JavaScript.
+                     */
+                    set_transient(
+                        $cache_key,
+                        '__missing__',
+                        6 * HOUR_IN_SECONDS
+                    );
+    
+                    $images[$sid] = '';
+                }
             }
         }
     
-        wp_send_json_success(['images' => $images]);
+        wp_send_json_success([
+            'images' => $images,
+        ]);
     }
 
 
     /* -----------------------------------------------------------------
      *  AJAX – Batch publisher images
      * ----------------------------------------------------------------- */
-    public function ajax_load_publisher_images_batch() {
-        check_ajax_referer( 'comicbooks_fetchers_data', 'nonce' );
-
-        $publisher_ids = isset( $_POST['publisher_ids'] ) ? array_map( 'intval', (array) $_POST['publisher_ids'] ) : [];
-        $images        = [];
-
-        foreach ( $publisher_ids as $pid ) {
-            $info = $this->data_service->get_publisher_info( $pid );
-            $images[ $pid ] = $info['image'] ?? '';
+    public function ajax_load_publisher_images_batch()
+    {
+        check_ajax_referer(
+            'comicbooks_fetchers_data',
+            'nonce'
+        );
+    
+        $publisher_ids = isset($_POST['publisher_ids'])
+            ? array_values(
+                array_unique(
+                    array_filter(
+                        array_map(
+                            'absint',
+                            (array) wp_unslash($_POST['publisher_ids'])
+                        )
+                    )
+                )
+            )
+            : [];
+    
+        /*
+         * Prevent unusually large public requests.
+         */
+        $publisher_ids = array_slice($publisher_ids, 0, 10);
+    
+        if (empty($publisher_ids)) {
+            wp_send_json_error(
+                ['message' => 'No publisher IDs provided'],
+                400
+            );
         }
-
-        wp_send_json_success( [ 'images' => $images ] );
+    
+        $publishers = [];
+    
+        foreach ($publisher_ids as $publisher_id) {
+            $info = $this->data_service->get_publisher_info(
+                $publisher_id
+            );
+    
+            $publishers[$publisher_id] = [
+                'image'   => $info['image'] ?? '',
+                'founded' => $info['founded'] ?? '',
+                'desc'    => $info['desc'] ?? '',
+            ];
+        }
+    
+        wp_send_json_success([
+            'publishers' => $publishers,
+        ]);
     }
 
    

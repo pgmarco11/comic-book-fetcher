@@ -2,7 +2,6 @@ jQuery(document).ready(function($) {
 
     const urlParams = new URLSearchParams(window.location.search);
     const urlPublisherId = urlParams.get('publisher_id');
-    console.log('URL publisher_id:', urlPublisherId);
 
     // Toast notification helper
     function toast(message, color = "#fff") {
@@ -81,8 +80,6 @@ jQuery(document).ready(function($) {
         });
 
         if (itemIds.length === 0) return;
-
-        console.log("wishlist check itemIds: ",itemIds);
 
         $.ajax({
             url: wishlist_ajax_obj.ajax_url,

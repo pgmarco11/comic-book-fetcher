@@ -85,21 +85,66 @@ $is_publisher = $type === 'publishers';
                 </p>
 
                 <?php foreach ( $items as $item ) :                        
-                    if ( $is_publisher ) : ?>
-                        <div class="publisher-item" data-publisher-id="<?php echo esc_attr( $item['id'] ); ?>">
-                            <a href="/comic-catalog/?publisher_id=<?php echo esc_attr($item['id']); ?>&letter=all&page=1">
-                                <div class="publisher-image">
-                                    <img  src="<?php echo esc_url(!empty($item['image']) ? $item['image'] : PUBLISHER_PLACEHOLDER_IMAGE_URL); ?>"
-                                        alt="<?php echo esc_attr( $item['name'] ); ?>"
-                                        loading="lazy">
-                                </div>
-                                <div class="publisher-info">                          
-                                    <h3><?php echo esc_html( $item['name'] ); ?></h3>
-                                    <p><strong>Founded:</strong> <?php echo esc_html( $item['founded'] ?? 'N/A' ); ?></p>
-                                    <p><?php echo esc_html( $item['desc'] ?? 'No description available.' ); ?></p>
-                                </div>
-                            </a>
-                        </div>
+                        if ($is_publisher) :
+                            $publisher_id = absint($item['id'] ?? 0);
+                        ?>
+                            <div
+                                class="publisher-item"
+                                data-publisher-id="<?php echo esc_attr($publisher_id); ?>">
+
+                                <a href="<?php
+                                    echo esc_url(
+                                        add_query_arg(
+                                            [
+                                                'publisher_id' => $publisher_id,
+                                                'letter'       => 'all',
+                                                'page'         => 1,
+                                            ],
+                                            home_url('/comic-catalog/')
+                                        )
+                                    );
+                                ?>">
+
+                                    <div class="publisher-image">
+                                        <img
+                                            src="<?php
+                                                echo esc_url(
+                                                    PUBLISHER_PLACEHOLDER_IMAGE_URL
+                                                );
+                                            ?>"
+                                            alt="<?php
+                                                echo esc_attr(
+                                                    $item['name'] ?? 'Publisher'
+                                                );
+                                            ?>"
+                                            width="100"
+                                            height="100"
+                                            loading="lazy"
+                                            decoding="async">
+                                    </div>
+
+                                    <div class="publisher-info">
+                                        <h3>
+                                            <?php
+                                            echo esc_html(
+                                                $item['name'] ?? 'Unknown publisher'
+                                            );
+                                            ?>
+                                        </h3>
+
+                                        <p>
+                                            <strong>Founded:</strong>
+                                            <span class="publisher-founded">
+                                                Loading…
+                                            </span>
+                                        </p>
+
+                                        <p class="publisher-description">
+                                            Loading publisher information…
+                                        </p>
+                                    </div>
+                                </a>
+                            </div>
                         <?php else :
                             /*
                             * Use Metron first. When Metron has no image, render a placeholder
@@ -116,7 +161,7 @@ $is_publisher = $type === 'publishers';
                             $display_image_url = $needs_cv_fallback
                                 ? COMICBOOKS_PLUGIN_URL . 'images/placeholder.png'
                                 : $metron_image_url;
-                        ?>
+                            ?>
 
                             <div
                                 class="comic-title"
