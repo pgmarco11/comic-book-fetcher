@@ -111,29 +111,6 @@ jQuery(document).ready(function($){
     // ===================================================================
     const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
-    function clearLegacyIssueHtmlCache() {
-        const prefix = 'metron:issue_list_html:';
-    
-        try {
-            for (
-                let index = localStorage.length - 1;
-                index >= 0;
-                index--
-            ) {
-                const key = localStorage.key(index);
-    
-                if (key && key.startsWith(prefix)) {
-                    localStorage.removeItem(key);
-                }
-            }
-        } catch (error) {
-            console.warn(
-                'Unable to clear legacy issue HTML cache:',
-                error
-            );
-        }
-    }
-
     function getCachedData(key) {
         const cached = localStorage.getItem(key);
         if (!cached) return null;
@@ -1712,8 +1689,6 @@ jQuery(document).ready(function($){
         Number.isInteger(parsedPublisherId) && parsedPublisherId > 0
             ? parsedPublisherId
             : null;
-
-    clearLegacyIssueHtmlCache();
     
     currentLetter = urlLetter;
     currentPage = urlPage;

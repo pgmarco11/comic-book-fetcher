@@ -59,26 +59,10 @@ class ComicDataService {
         
                 $data = $this->client->api_get($url);
 
-                /*
-                * A temporary failure is not a confirmed empty API page.
-                */
-                if (
-                    !is_array($response) ||
-                    isset($response['error'])
-                ) {
-                    return [
-                        'items'           => [],
-                        'total'           => 0,
-                        'has_next'        => true,
-                        'temporary_error' => is_array($response)
-                            ? (string) ($response['error'] ?? 'Temporary Metron error')
-                            : 'Invalid Metron response',
-                    ];
-                }
         
                 /*
-                 * Do not turn an API or lock failure into a cached empty list.
-                 */
+                * Do not turn an API or lock failure into a cached empty list.
+                */
                 if (
                     !is_array($data) ||
                     isset($data['error'])
@@ -86,11 +70,11 @@ class ComicDataService {
                     $temporary_error = is_array($data)
                         ? (string) ($data['error'] ?? 'Temporary Metron error')
                         : 'Invalid Metron response';
-        
+
                     break;
                 }
-        
-                /*
+
+                /**
                  * This was a successful response with no more results.
                  */
                 if (empty($data['results'])) {
@@ -153,14 +137,12 @@ class ComicDataService {
         $total = count( $full );
         $start = ( $page - 1 ) * $per_page;
         $slice = array_slice( $full, $start, $per_page );        
-        $result = [];
-
-   
+         
         return [
-            'items' => $slice,
-            'total' => $total,
-        ];          
-        return $result;
+            'items'    => $slice,
+            'total'    => $total,
+            'has_next' => ($start + $per_page) < $total,
+        ];
     }
 
     public function get_enriched_publishers( $page = 1, $per_page = 50, $letter = 'all', $bypass_cache = false ) {

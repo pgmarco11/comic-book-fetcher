@@ -25,31 +25,30 @@
     {
         $lock_key   = 'metron_request_lock';
         $started_at = microtime(true);
-        $max_wait   = 45.0;
+        $max_wait   = 60.0;
     
         while (get_transient($lock_key)) {
             if ((microtime(true) - $started_at) >= $max_wait) {
                 error_log(
-                    'api_get: Metron request lock timed out after 45 seconds'
+                    sprintf(
+                        'api_get: Metron request lock timed out after %.0f seconds',
+                        $max_wait
+                    )
                 );
     
                 return false;
             }
     
             /*
-             * Slight jitter prevents multiple waiting PHP workers from
-             * checking the lock at exactly the same moment.
+             * Jitter prevents waiting PHP workers from checking the lock
+             * at exactly the same moment.
              */
             usleep(random_int(200000, 400000));
         }
     
-        /*
-         * A Metron request can use a 45-second HTTP timeout and retry.
-         * The lock must live longer than one attempt.
-         */
         set_transient(
             $lock_key,
-            1,
+            microtime(true),
             180
         );
     
