@@ -164,8 +164,75 @@ function comic_book_api_settings_page() {
     );
     
 }
-add_action('admin_menu', 'comic_book_api_settings_page');
 
+add_action(
+    'comicbooks_process_publisher_warm_queue',
+    'comicbooks_process_publisher_warm_queue'
+);
+
+function comicbooks_process_publisher_warm_queue()
+{
+    $queue = get_transient(
+        'comicbooks:publisher_warm_queue'
+    );
+
+    if (!is_array($queue) || empty($queue)) {
+        delete_transient(
+            'comicbooks:publisher_warm_queue'
+        );
+
+        return;
+    }
+
+    /*
+     * Process exactly one publisher during this request.
+     */
+    $publisher_id = absint(array_shift($queue));
+
+    if ($publisher_id) {
+        $service = new ComicDataService(
+            new MetronClient()
+        );
+
+        /*
+         * Warm only the first Metron series-list page.
+         * Existing caches will be used when available.
+         */
+        $service->get_series(
+            $publisher_id,
+            1,
+            10,
+            '',
+            'all',
+            false
+        );
+    }
+
+    if (!empty($queue)) {
+        /*
+         * Save the remaining publisher IDs.
+         */
+        set_transient(
+            'comicbooks:publisher_warm_queue',
+            $queue,
+            DAY_IN_SECONDS
+        );
+
+        /*
+         * Process the next publisher later in a separate request.
+         */
+        wp_schedule_single_event(
+            time() + 10,
+            'comicbooks_process_publisher_warm_queue'
+        );
+    } else {
+        delete_transient(
+            'comicbooks:publisher_warm_queue'
+        );
+    }
+}
+
+add_action('admin_menu', 'comic_book_api_settings_page');
 
 function render_api_settings_page() {
     // Save API credentials
@@ -194,44 +261,64 @@ function render_api_settings_page() {
     }
 
     // Warm publisher caches – now supports custom IDs or top 5
-    if (isset($_POST['warm_publisher_caches']) && check_admin_referer('warm_publisher_caches')) {
-        $service = new ComicDataService(new MetronClient());
+    if (
+        isset($_POST['warm_publisher_caches']) &&
+        check_admin_referer('warm_publisher_caches')
+    ) {
+        $custom_input = sanitize_text_field(
+            wp_unslash(
+                $_POST['custom_publisher_ids'] ?? ''
+            )
+        );
     
-        // Custom IDs from input (comma-separated)
-        $custom_input = trim(sanitize_text_field($_POST['custom_publisher_ids'] ?? ''));
-        $publisher_ids = [];
+        $publisher_ids = array_values(
+            array_unique(
+                array_filter(
+                    array_map(
+                        'absint',
+                        explode(',', $custom_input)
+                    )
+                )
+            )
+        );
     
-        if ($custom_input !== '') {
-            $ids = array_map('intval', array_filter(explode(',', $custom_input), 'is_numeric'));
-            $publisher_ids = array_unique(array_filter($ids, fn($id) => $id > 0));
+        /*
+         * Default publishers when no IDs were entered.
+         */
+        if (empty($publisher_ids)) {
+            $publisher_ids = [2, 3];
         }
     
-        // Default publishers if none provided
-        if (empty($publisher_ids)) { 
-            $publisher_ids = [2, 3]; // DC=2, Dark Horse=3
+        /*
+         * Save the work instead of performing it during this page request.
+         */
+        set_transient(
+            'comicbooks:publisher_warm_queue',
+            $publisher_ids,
+            DAY_IN_SECONDS
+        );
+    
+        /*
+         * Prevent duplicate scheduled workers.
+         */
+        if (
+            !wp_next_scheduled(
+                'comicbooks_process_publisher_warm_queue'
+            )
+        ) {
+            wp_schedule_single_event(
+                time() + 5,
+                'comicbooks_process_publisher_warm_queue'
+            );
         }
     
-        $warm_count = 0;
-        $errors = []; 
-    
-        foreach ($publisher_ids as $pub_id) {
-            try {                    
-                // Batch-aware fetch: will fetch series in 5-page increments
-                $service->get_series($pub_id, 1, 50, '', 'all', true, 5);   
-                
-                sleep(3); // 3 seconds delay between publishers to avoid rate limits
-
-                $warm_count++;
-            } catch (Exception $e) {
-                $errors[] = "Publisher ID $pub_id: " . $e->getMessage();
-            }
-        }
-    
-        $msg = "<p><strong>Success!</strong> Warmed caches for $warm_count publisher" . ($warm_count === 1 ? '' : 's') . ".</p>";
-        if (!empty($errors)) {
-            $msg .= '<p><strong>Errors:</strong><br>' . implode('<br>', array_map('esc_html', $errors)) . '</p>';
-        }
-        echo '<div class="notice notice-success is-dismissible">' . $msg . '</div>';
+        echo '<div class="notice notice-success is-dismissible">';
+        echo '<p><strong>Cache warming scheduled.</strong> ';
+        echo esc_html(
+            count($publisher_ids) .
+            ' publisher(s) will be processed in the background.'
+        );
+        echo '</p></div>';
     }
 
     // HTML output

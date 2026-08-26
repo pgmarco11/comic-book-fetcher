@@ -911,22 +911,40 @@ class ComicDataService {
     ): array {
         $cache_key = "metron:series_api_page:v4:{$publisher_id}:{$api_page}:{$api_page_size}";
 
+        //repopulate mappings when a cached API page is returned
         if ( ! $force_api ) {
             $cached = get_transient( $cache_key );
 
             if ( $cached !== false && is_array( $cached ) ) {
 
-                // Re-populate per-series cv_id cache from the cached page data.
-                foreach ( $cached['items'] ?? [] as $item ) {
-            
-                    if (
-                        ! empty( $item['series_id'] ) &&
-                        ! empty( $item['cv_id'] )
-                    ) {
+                foreach ($cached['items'] ?? [] as $item) {
+                    $series_id = absint(
+                        $item['series_id'] ?? 0
+                    );
+                
+                    $cv_id = absint(
+                        $item['cv_id'] ?? 0
+                    );
+                
+                    if (!$series_id) {
+                        continue;
+                    }
+                
+                    if ($cv_id) {
                         set_transient(
-                            "metron:series_cvid:{$item['series_id']}",
-                            (int) $item['cv_id'],
+                            "metron:series_cvid:{$series_id}",
+                            $cv_id,
                             YEAR_IN_SECONDS
+                        );
+                
+                        delete_transient(
+                            "metron:series_cvid_missing:{$series_id}"
+                        );
+                    } else {
+                        set_transient(
+                            "metron:series_cvid_missing:{$series_id}",
+                            1,
+                            6 * HOUR_IN_SECONDS
                         );
                     }
                 }
@@ -969,8 +987,32 @@ class ComicDataService {
                 'cv_id'       => $item['cv_id']       ?? null,
             ];
         
-            if ( ! empty( $item['cv_id'] ) ) {
-                set_transient( "metron:series_cvid:{$item['id']}", (int) $item['cv_id'], YEAR_IN_SECONDS );
+            $series_id = absint($item['id'] ?? 0);
+            $cv_id     = absint($item['cv_id'] ?? 0);
+            
+            if ($series_id && $cv_id) {
+                set_transient(
+                    "metron:series_cvid:{$series_id}",
+                    $cv_id,
+                    YEAR_IN_SECONDS
+                );
+            
+                /*
+                 * Remove an older negative result.
+                 */
+                delete_transient(
+                    "metron:series_cvid_missing:{$series_id}"
+                );
+            } elseif ($series_id) {
+                /*
+                 * The series-list response did not provide a Comic Vine ID.
+                 * Avoid requesting /series/{id}/ again during this session.
+                 */
+                set_transient(
+                    "metron:series_cvid_missing:{$series_id}",
+                    1,
+                    6 * HOUR_IN_SECONDS
+                );
             }
         }
 
