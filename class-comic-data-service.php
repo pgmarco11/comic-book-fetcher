@@ -48,28 +48,88 @@ class ComicDataService {
         $full = $bypass_cache ? false : get_transient($transient_key);
     
         if ($full === false) {
-            $full = [];
-            $api_page = 1;
+            $full            = [];
+            $api_page        = 1;
+            $temporary_error = '';
+        
             do {
-                $url = $this->client->api_base . "publisher/?page={$api_page}&page_size=100";
+                $url =
+                    $this->client->api_base .
+                    "publisher/?page={$api_page}&page_size=100";
+        
                 $data = $this->client->api_get($url);
 
-                if (!$data || isset($data['detail']) && str_contains($data['detail'], 'Invalid page')) {              
+                /*
+                * A temporary failure is not a confirmed empty API page.
+                */
+                if (
+                    !is_array($response) ||
+                    isset($response['error'])
+                ) {
+                    return [
+                        'items'           => [],
+                        'total'           => 0,
+                        'has_next'        => true,
+                        'temporary_error' => is_array($response)
+                            ? (string) ($response['error'] ?? 'Temporary Metron error')
+                            : 'Invalid Metron response',
+                    ];
+                }
+        
+                /*
+                 * Do not turn an API or lock failure into a cached empty list.
+                 */
+                if (
+                    !is_array($data) ||
+                    isset($data['error'])
+                ) {
+                    $temporary_error = is_array($data)
+                        ? (string) ($data['error'] ?? 'Temporary Metron error')
+                        : 'Invalid Metron response';
+        
                     break;
                 }
-
+        
+                /*
+                 * This was a successful response with no more results.
+                 */
                 if (empty($data['results'])) {
                     break;
                 }
-    
-                foreach ($data['results'] as $p) {
-                    $full[] = [ 'id' => $p['id'], 'name' => $p['name'] ];
-                }
-                $api_page++;
         
+                foreach ($data['results'] as $publisher) {
+                    if (
+                        empty($publisher['id']) ||
+                        empty($publisher['name'])
+                    ) {
+                        continue;
+                    }
+        
+                    $full[] = [
+                        'id'   => (int) $publisher['id'],
+                        'name' => (string) $publisher['name'],
+                    ];
+                }
+        
+                $api_page++;
             } while (!empty($data['next']));
-    
-            set_transient($transient_key, $full, WEEK_IN_SECONDS * 2); // longer TTL
+        
+            if ($temporary_error !== '') {
+                return [
+                    'items'           => [],
+                    'total'           => 0,
+                    'temporary_error' => $temporary_error,
+                ];
+            }
+        
+            /*
+             * Cache only after the complete operation succeeded.
+             */
+            set_transient(
+                $transient_key,
+                $full,
+                2 * WEEK_IN_SECONDS
+            );
         }
 
         if ( $letter !== 'all' ) {
@@ -96,10 +156,10 @@ class ComicDataService {
         $result = [];
 
    
-        $result = [
+        return [
             'items' => $slice,
             'total' => $total,
-        ];           
+        ];          
         return $result;
     }
 
@@ -700,6 +760,7 @@ class ComicDataService {
         string $search, string $letter, bool $force_api
     ): array {
         $needed_count = $page * $per_page;
+        $temporary_error = '';
         $max_pages_per_call = 1;
     
         $progress_key = "metron:series_scan_progress:v1:{$publisher_id}";
@@ -733,8 +794,16 @@ class ComicDataService {
                     ) {
                         $page_data = $this->get_series_api_page(
                             $publisher_id, $progress['next_api_page'], 100, $force_api
-                        );
+                        );                  
+
                         $pages_fetched_this_call++;
+
+                        if (!empty($page_data['temporary_error'])) {
+                            $temporary_error =
+                                $page_data['temporary_error'];
+                        
+                            break;
+                        }
     
                         if ( empty( $page_data['items'] ) ) {
                             $progress['exhausted'] = true;
@@ -772,6 +841,7 @@ class ComicDataService {
             'scan_complete'  => $have_enough,
             'page'           => $page,
             'per_page'       => $per_page,
+            'temporary_error' => $temporary_error,
         ];
     }
 
@@ -850,6 +920,19 @@ class ComicDataService {
                 $force_api
             );
 
+            if (!empty($page_data['temporary_error'])) {
+                return [
+                    'items'           => [],
+                    'total'           => 0,
+                    'page'            => $page,
+                    'per_page'        => $per_page,
+                    'is_total_exact'  => false,
+                    'scan_complete'   => false,
+                    'temporary_error' =>
+                        $page_data['temporary_error'],
+                ];
+            }
+
             if ( empty( $page_data['items'] ) ) {
                 break;
             }
@@ -911,44 +994,16 @@ class ComicDataService {
     ): array {
         $cache_key = "metron:series_api_page:v4:{$publisher_id}:{$api_page}:{$api_page_size}";
 
-        //repopulate mappings when a cached API page is returned
-        if ( ! $force_api ) {
-            $cached = get_transient( $cache_key );
+        /*
+        * Return a cached API page immediately.
+        *
+        * Mapping transients are populated only when a fresh, successful
+        * Metron response is processed below.
+        */
+        if (!$force_api) {
+            $cached = get_transient($cache_key);
 
-            if ( $cached !== false && is_array( $cached ) ) {
-
-                foreach ($cached['items'] ?? [] as $item) {
-                    $series_id = absint(
-                        $item['series_id'] ?? 0
-                    );
-                
-                    $cv_id = absint(
-                        $item['cv_id'] ?? 0
-                    );
-                
-                    if (!$series_id) {
-                        continue;
-                    }
-                
-                    if ($cv_id) {
-                        set_transient(
-                            "metron:series_cvid:{$series_id}",
-                            $cv_id,
-                            YEAR_IN_SECONDS
-                        );
-                
-                        delete_transient(
-                            "metron:series_cvid_missing:{$series_id}"
-                        );
-                    } else {
-                        set_transient(
-                            "metron:series_cvid_missing:{$series_id}",
-                            1,
-                            6 * HOUR_IN_SECONDS
-                        );
-                    }
-                }
-            
+            if ($cached !== false && is_array($cached)) {
                 return $cached;
             }
         }
@@ -957,15 +1012,24 @@ class ComicDataService {
 
         $response = $this->client->api_get( $url );
 
+        /*
+        * At this point the request succeeded, so an empty results array can
+        * safely be cached as a genuinely empty page.
+        */
         if (
-            ! $response ||
-            empty( $response['results'] ) ||
-            ( ! empty( $response['detail'] ) && str_contains( $response['detail'], 'Invalid page' ) )
+            empty($response['results']) ||
+            (
+                    !empty($response['detail']) &&
+                    str_contains(
+                        $response['detail'],
+                        'Invalid page'
+                    )
+            )
         ) {
             $empty = [
-                'items'    => [],
-                'total'    => 0,
-                'has_next' => false,
+                    'items'    => [],
+                    'total'    => 0,
+                    'has_next' => false,
             ];
 
             set_transient( $cache_key, $empty, 30 * DAY_IN_SECONDS );
@@ -1005,13 +1069,15 @@ class ComicDataService {
                 );
             } elseif ($series_id) {
                 /*
-                 * The series-list response did not provide a Comic Vine ID.
-                 * Avoid requesting /series/{id}/ again during this session.
+                 * A successful Metron series-list response authoritatively
+                 * reported that this series has no Comic Vine volume ID.
+                 *
+                 * Match this negative mapping to the API-page cache lifetime.
                  */
                 set_transient(
                     "metron:series_cvid_missing:{$series_id}",
                     1,
-                    6 * HOUR_IN_SECONDS
+                    30 * DAY_IN_SECONDS
                 );
             }
         }
@@ -1073,13 +1139,40 @@ class ComicDataService {
     
         // ── Series metadata ───────────────────────────────────────────────
         $series_key = "metron:series:{$title_id}";
+
         $series     = get_transient( $series_key );
+
         if ( $series === false ) {
-            $series = $this->client->api_get( $this->client->api_base . "series/{$title_id}/" );
-            if ( empty( $series['name'] ) ) {
-                return [ 'error' => 'Series not found' ];
+
+            $series = $this->client->api_get(
+                $this->client->api_base .
+                "series/{$title_id}/"
+            );
+            
+            if (
+                !is_array($series) ||
+                isset($series['error'])
+            ) {
+                return [
+                    'error' => is_array($series)
+                        ? ($series['error'] ?? 'Temporary Metron error')
+                        : 'Invalid Metron response',
+                    'temporary_error' => true,
+                ];
             }
-            set_transient( $series_key, $series, 14 * DAY_IN_SECONDS );
+            
+            if (empty($series['name'])) {
+                return [
+                    'error' => 'Series not found',
+                ];
+            }
+            
+            set_transient(
+                $series_key,
+                $series,
+                14 * DAY_IN_SECONDS
+            );
+
         }
     
         // ── Backward compat: legacy v5 full-list cache ────────────────────
@@ -1114,6 +1207,18 @@ class ComicDataService {
             if ( $current_data === false ) {
                 $url = $this->client->api_base . "series/{$title_id}/issue_list/?page={$current_ap}&page_size={$api_size}";
                 $current_resp = $this->client->api_get( $url );
+
+                if (
+                    !is_array($current_resp) ||
+                    isset($current_resp['error'])
+                ) {
+                    return [
+                        'error' => is_array($current_resp)
+                            ? ($current_resp['error'] ?? 'Temporary Metron error')
+                            : 'Invalid Metron response',
+                        'temporary_error' => true,
+                    ];
+                }
     
                 if ( ! empty( $current_resp['results'] ) && is_array( $current_resp['results'] ) ) {
                     $current_data = $current_resp['results'];

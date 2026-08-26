@@ -201,9 +201,8 @@ class ComicRenderer {
                 'post_id' => $owned_map[ $mid ] ?? 0,
             ];
         }
-    
-        wp_cache_set( $cache_key, $status );
-    
+   
+   
         return $status;
     }
 

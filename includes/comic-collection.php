@@ -357,11 +357,6 @@ function tcs_get_cv_image_url( array $cv_issue ): string {
 /**
  * AJAX: Add Comic to Collection
  */
-add_action('wp_ajax_add_comic_to_collection', 'handle_add_comic_to_collection');
-
-/**
- * AJAX: Add Comic to Collection
- */
 add_action( 'wp_ajax_add_comic_to_collection', 'handle_add_comic_to_collection' );
 
 function handle_add_comic_to_collection() {

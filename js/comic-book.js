@@ -104,10 +104,35 @@ jQuery(document).ready(function($){
         });
     }
 
+
+
     // ===================================================================
     // Cache Helpers
     // ===================================================================
     const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+    function clearLegacyIssueHtmlCache() {
+        const prefix = 'metron:issue_list_html:';
+    
+        try {
+            for (
+                let index = localStorage.length - 1;
+                index >= 0;
+                index--
+            ) {
+                const key = localStorage.key(index);
+    
+                if (key && key.startsWith(prefix)) {
+                    localStorage.removeItem(key);
+                }
+            }
+        } catch (error) {
+            console.warn(
+                'Unable to clear legacy issue HTML cache:',
+                error
+            );
+        }
+    }
 
     function getCachedData(key) {
         const cached = localStorage.getItem(key);
@@ -385,6 +410,61 @@ jQuery(document).ready(function($){
         return html;
     }
 
+
+        /*
+        * Run only one potentially Metron-backed enrichment request at a time.
+        */
+        const enrichmentRequestQueue = [];
+        let enrichmentRequestActive = false;
+
+        function enqueueEnrichmentRequest(request)
+        {
+            enrichmentRequestQueue.push(request);
+            processEnrichmentRequestQueue();
+        }
+
+        function processEnrichmentRequestQueue()
+        {
+            if (
+                enrichmentRequestActive ||
+                enrichmentRequestQueue.length === 0
+            ) {
+                return;
+            }
+
+            enrichmentRequestActive = true;
+
+            const request = enrichmentRequestQueue.shift();
+
+            $.ajax(request.options)
+                .done(response => {
+                    if (typeof request.done === 'function') {
+                        request.done(response);
+                    }
+                })
+                .fail(xhr => {
+                    if (typeof request.fail === 'function') {
+                        request.fail(xhr);
+                    }
+                })
+                .always(() => {
+                    if (typeof request.always === 'function') {
+                        request.always();
+                    }
+
+                    enrichmentRequestActive = false;
+
+                    /*
+                    * Yield briefly before processing another visible batch.
+                    * The PHP rate limiter still controls actual Metron timing.
+                    */
+                    window.setTimeout(
+                        processEnrichmentRequestQueue,
+                        250
+                    );
+                });
+        }
+
     const pendingPublisherMap = new Map();
     let publisherBatchTimer = null;
 
@@ -411,73 +491,103 @@ jQuery(document).ready(function($){
         );
     }
 
-    function flushPublisherBatch() {
+    function flushPublisherBatch()
+    {
         if (!pendingPublisherMap.size) {
             return;
         }
-
-        const batch = new Map(pendingPublisherMap);
-        pendingPublisherMap.clear();
-
-        const publisherIds = Array.from(batch.keys());
-
-        $.post(
-            comicbooks_fetchers_data.ajax_url,
-            {
-                action: 'load_publisher_images_batch',
-                publisher_ids: publisherIds,
-                nonce: comicbooks_fetchers_data.nonce
-            }
-        )
-        .done(response => {
-            const publishers =
-                response?.data?.publishers || {};
-
-            publisherIds.forEach(publisherId => {
-                const info = publishers[publisherId] || {};
-                const cards = batch.get(publisherId) || [];
-
-                cards.forEach(card => {
-                    const img = card.querySelector(
-                        '.publisher-image img'
-                    );
-
-                    const founded = card.querySelector(
-                        '.publisher-founded'
-                    );
-
-                    const description = card.querySelector(
-                        '.publisher-description'
-                    );
-
-                    if (img && info.image) {
-                        img.src = info.image;
-                    }
-
-                    if (founded) {
-                        founded.textContent =
-                            info.founded || 'Unknown';
-                    }
-
-                    if (description) {
-                        description.textContent =
-                            info.desc ||
-                            'No description available.';
-                    }
-
-                    delete card.dataset.publisherLoading;
-                    card.dataset.publisherLoaded = 'true';
+    
+        /*
+         * Process only two visible publishers at a time.
+         * Leave the remaining publishers in the map for later requests.
+         */
+        const publisherIds = Array.from(
+            pendingPublisherMap.keys()
+        ).slice(0, 2);
+    
+        const batch = new Map();
+    
+        publisherIds.forEach(publisherId => {
+            batch.set(
+                publisherId,
+                pendingPublisherMap.get(publisherId) || []
+            );
+    
+            pendingPublisherMap.delete(publisherId);
+        });
+    
+        enqueueEnrichmentRequest({
+            options: {
+                url: comicbooks_fetchers_data.ajax_url,
+                method: 'POST',
+                dataType: 'json',
+                data: {
+                    action: 'load_publisher_images_batch',
+                    publisher_ids: publisherIds,
+                    nonce: comicbooks_fetchers_data.nonce,
+                },
+            },
+    
+            done(response) {
+                const publishers =
+                    response?.data?.publishers || {};
+    
+                publisherIds.forEach(publisherId => {
+                    const info = publishers[publisherId] || {};
+                    const cards = batch.get(publisherId) || [];
+    
+                    cards.forEach(card => {
+                        const img = card.querySelector(
+                            '.publisher-image img'
+                        );
+    
+                        const founded = card.querySelector(
+                            '.publisher-founded'
+                        );
+    
+                        const description = card.querySelector(
+                            '.publisher-description'
+                        );
+    
+                        if (img && info.image) {
+                            img.src = info.image;
+                        }
+    
+                        if (founded) {
+                            founded.textContent =
+                                info.founded || 'Unknown';
+                        }
+    
+                        if (description) {
+                            description.textContent =
+                                info.desc ||
+                                'No description available.';
+                        }
+    
+                        delete card.dataset.publisherLoading;
+                        card.dataset.publisherLoaded = 'true';
+                    });
                 });
-            });
-        })
-        .fail(() => {
-            publisherIds.forEach(publisherId => {
-                const cards = batch.get(publisherId) || [];
-
-                cards.forEach(card => {
-                    delete card.dataset.publisherLoading;
+            },
+    
+            fail() {
+                publisherIds.forEach(publisherId => {
+                    const cards = batch.get(publisherId) || [];
+    
+                    cards.forEach(card => {
+                        delete card.dataset.publisherLoading;
+                    });
                 });
-            });
+            },
+    
+            always() {
+                if (pendingPublisherMap.size) {
+                    publisherBatchTimer = window.setTimeout(
+                        flushPublisherBatch,
+                        100
+                    );
+                }
+            },
         });
     }
 
@@ -509,48 +619,88 @@ jQuery(document).ready(function($){
         seriesImageBatchTimer = setTimeout(flushSeriesImageBatch, 400);
     }
 
-    function flushSeriesImageBatch() {
-        if (!pendingSeriesImageMap.size) return;
-
-        const batch = new Map(pendingSeriesImageMap);
-        pendingSeriesImageMap.clear();
-
-        const seriesIds = Array.from(batch.keys());
-
-        $.post(comicbooks_fetchers_data.ajax_url, {
-            action: 'load_series_images_batch',
-            series_ids: seriesIds,
-            nonce: comicbooks_fetchers_data.nonce
-        }, response => {
-            const images = response?.data?.images || {};
-
-            seriesIds.forEach(seriesId => {
-                const imageUrl = images[seriesId] || '';
-
-                const imgs = batch.get(seriesId) || [];
-
-                imgs.forEach(img => {
-                    delete img.dataset.loading;
-
-                    if (!imageUrl) {
-                        return;
-                    }
-
-                    img.src = imageUrl;
-
-                    img.onload = () => {
-                        img.dataset.loaded = 'true';
-                    };
+    function flushSeriesImageBatch()
+    {
+        if (!pendingSeriesImageMap.size) {
+            return;
+        }
+    
+        /*
+         * Process only two visible series at a time.
+         */
+        const seriesIds = Array.from(
+            pendingSeriesImageMap.keys()
+        ).slice(0, 2);
+    
+        const batch = new Map();
+    
+        seriesIds.forEach(seriesId => {
+            batch.set(
+                seriesId,
+                pendingSeriesImageMap.get(seriesId) || []
+            );
+    
+            pendingSeriesImageMap.delete(seriesId);
+        });
+    
+        enqueueEnrichmentRequest({
+            options: {
+                url: comicbooks_fetchers_data.ajax_url,
+                method: 'POST',
+                dataType: 'json',
+                data: {
+                    action: 'load_series_images_batch',
+                    series_ids: seriesIds,
+                    nonce: comicbooks_fetchers_data.nonce,
+                },
+            },
+    
+            done(response) {
+                const images = response?.data?.images || {};
+    
+                seriesIds.forEach(seriesId => {
+                    const imageUrl = images[seriesId] || '';
+                    const imgs = batch.get(seriesId) || [];
+    
+                    imgs.forEach(img => {
+                        delete img.dataset.loading;
+    
+                        if (!imageUrl) {
+                            img.dataset.loaded = 'true';
+                            return;
+                        }
+    
+                        img.onload = () => {
+                            img.dataset.loaded = 'true';
+                        };
+    
+                        img.onerror = () => {
+                            delete img.dataset.loading;
+                        };
+    
+                        img.src = imageUrl;
+                    });
                 });
-            });
-        }).fail(() => {
-            seriesIds.forEach(seriesId => {
-                const imgs = batch.get(seriesId) || [];
-
-                imgs.forEach(img => {
-                    delete img.dataset.loading;
+            },
+    
+            fail() {
+                seriesIds.forEach(seriesId => {
+                    const imgs = batch.get(seriesId) || [];
+    
+                    imgs.forEach(img => {
+                        delete img.dataset.loading;
+                    });
                 });
-            });
+            },
+    
+            always() {
+                if (pendingSeriesImageMap.size) {
+                    seriesImageBatchTimer = window.setTimeout(
+                        flushSeriesImageBatch,
+                        100
+                    );
+                }
+            },
         });
     }
     
@@ -618,14 +768,6 @@ jQuery(document).ready(function($){
             seriesObserver.observe(img);
         });
 
-        /*
-        * ISSUE IMAGES
-        */
-        const issueImages = document.querySelectorAll(
-            'img[data-issue-id]:not([data-loaded])'
-        );
-    
-        issueImages.forEach(img => observer.observe(img));
     }
 
     // Fetch publishers
@@ -748,7 +890,7 @@ jQuery(document).ready(function($){
     }
 
     // Fetch books
-    function fetchBooks(publisherId, page = 1, name = '', letter = 'all') {
+    function fetchBooks(publisherId, page = 1, name = '', letter = 'all', retries = 3) {
 
         // Every new request invalidates any previous request.
         const requestId = ++booksRequestId;
@@ -931,22 +1073,47 @@ jQuery(document).ready(function($){
             },
     
             error: (xhr, status) => {
-    
-                // Don't let an old failed request interfere
-                // with the current request.
                 if (requestId !== booksRequestId) {
                     return;
                 }
-    
-                console.error(
-                    'REAL load failed:',
-                    xhr.responseText
-                );
-
+            
+                if (
+                    (
+                        xhr.status === 429 ||
+                        xhr.status === 503 ||
+                        status === 'timeout'
+                    ) &&
+                    retries > 0
+                ) {
+                    setTimeout(
+                        () => {
+                            fetchBooks(
+                                publisherId,
+                                page,
+                                name,
+                                letter,
+                                retries - 1
+                            );
+                        },
+                        2500
+                    );
+            
+                    return;
+                }
+            
                 $('#book-container')
-                .attr('aria-busy', 'false')
-                .css('visibility', 'visible');
-    
+                    .attr('aria-busy', 'false')
+                    .css('visibility', 'visible');
+            
+                $('#book-container').html(`
+                    <div class="error-message">
+                        The comic catalog is temporarily busy.
+                        <button class="retry-books">
+                            Retry
+                        </button>
+                    </div>
+                `);
+            
                 hideSpinner();
             }
         });
@@ -1049,36 +1216,7 @@ jQuery(document).ready(function($){
             if (!page || isNaN(page) || page < 1) {
                 page = 1;
             }
-        }
-
-        const cacheKey = `metron:issue_list_html:${titleId}:${page}:${search}`;
-        const cached = getCachedData(cacheKey);    
-
-        if (cached) {
-            if (!cached.html || cached.html.length === 0) {
-                console.warn('Invalid cached issues HTML — refetching', cacheKey);
-                clearCachedData(cacheKey); 
-            } else {
-                $('#issues-list')
-                    .removeClass('server-rendered')
-                    .html(cached.html)
-                    .attr('data-total', cached.total)
-                    .attr('data-page', page)
-                    .addClass('loaded')
-                    .css('opacity', '1');
-        
-                renderIssuePagination(titleId, page, search, cached.total);
-        
-                lazyLoadImages();
-                $('#book-container')
-                .attr('aria-busy', 'false')
-                .css('visibility', 'visible');
-
-                hideSpinner();  
-        
-                return;
-            }
-        }
+        }      
 
         /* ======================================================
         * AJAX PATH
@@ -1136,15 +1274,7 @@ jQuery(document).ready(function($){
                     .css('opacity', '1');
             
                 renderIssuePagination(titleId, currentPageFromResponse, search, data.total_issues || 0);
-            
-                if (html.length > 0) {
-                    setCachedData(cacheKey, {
-                        html,
-                        total: data.total_issues || 0,
-                        total_pages: totalPagesFromResponse
-                    });
-                }
-            
+                       
                 lazyLoadImages(); 
 
                 $('#book-container')
@@ -1161,7 +1291,14 @@ jQuery(document).ready(function($){
 
                 hideSpinner();
 
-                if ((xhr.status === 429 || status === 'timeout') && retries > 0) {
+                if (
+                    (
+                        xhr.status === 429 ||
+                        xhr.status === 503 ||
+                        status === 'timeout'
+                    ) &&
+                    retries > 0
+                ) {
                     setTimeout(
                         () => fetchIssues(titleId, page, search, retries - 1),
                         2000
@@ -1575,6 +1712,8 @@ jQuery(document).ready(function($){
         Number.isInteger(parsedPublisherId) && parsedPublisherId > 0
             ? parsedPublisherId
             : null;
+
+    clearLegacyIssueHtmlCache();
     
     currentLetter = urlLetter;
     currentPage = urlPage;

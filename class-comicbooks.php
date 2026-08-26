@@ -72,6 +72,17 @@ class Comicbooks {
 
         $publisher_data = $this->data_service->get_publishers( $name, $page, $per_page, $letter, false );
 
+        if (!empty($publisher_data['temporary_error'])) {
+            wp_send_json_error(
+                [
+                    'message' =>
+                        $publisher_data['temporary_error'],
+                    'temporary' => true,
+                ],
+                503
+            );
+        }
+
         if ( empty( $publisher_data['items'] ) ) {
             wp_send_json_success( [
                 'publishers' => [],
@@ -106,6 +117,17 @@ class Comicbooks {
         $letter       = isset( $_POST['letter'] ) && $_POST['letter'] !== '' ? sanitize_text_field( $_POST['letter'] ) : 'all';
 
         $series_data = $this->data_service->get_series( $publisher_id, $page, $per_page, $name, $letter );
+
+        if (!empty($series_data['temporary_error'])) {
+            wp_send_json_error(
+                [
+                    'message' =>
+                        $series_data['temporary_error'],
+                    'temporary' => true,
+                ],
+                503
+            );
+        }
 
         $is_total_exact = $series_data['is_total_exact'] ?? true;
 
@@ -180,7 +202,12 @@ class Comicbooks {
         );
     
         if (isset($data['error'])) {
-            wp_send_json_error($data);
+            wp_send_json_error(
+                $data,
+                !empty($data['temporary_error'])
+                    ? 503
+                    : 404
+            );
         }
     
         $series = $data['series'] ?? [];
@@ -316,24 +343,42 @@ class Comicbooks {
         ] );
     }
 
-    public function ajax_load_cv_issue_images_batch() {
-        check_ajax_referer('comicbooks_fetchers_data', 'nonce');
+    public function ajax_load_cv_issue_images_batch()
+    {
+        check_ajax_referer(
+            'comicbooks_fetchers_data',
+            'nonce'
+        );
     
-        $cv_ids = isset($_POST['cv_ids'])
-            ? array_filter( array_map( 'intval', (array) $_POST['cv_ids'] ) )
+        $raw_cv_ids = isset($_POST['cv_ids'])
+            ? (array) wp_unslash($_POST['cv_ids'])
             : [];
     
-        if ( empty( $cv_ids ) ) {
-            wp_send_json_error(['message' => 'No CV IDs provided']);
+        $cv_ids = array_values(
+            array_unique(
+                array_filter(
+                    array_map('absint', $raw_cv_ids)
+                )
+            )
+        );
+    
+        if (empty($cv_ids)) {
+            wp_send_json_error(
+                ['message' => 'No CV IDs provided'],
+                400
+            );
         }
     
-        $images = [];
-        foreach ( $cv_ids as $cv_id ) {
-            // get_comicvine_issue_image() returns a string URL directly
-            $images[ $cv_id ] = $this->data_service->get_comicvine_issue_image( $cv_id );
-        }
+        /*
+         * Uses cached individual images first, then sends one Comic Vine
+         * request for all remaining IDs, up to 100 IDs per API request.
+         */
+        $images =
+            $this->data_service->get_comicvine_issue_images_batch($cv_ids);
     
-        wp_send_json_success(['images' => $images]);
+        wp_send_json_success([
+            'images' => $images,
+        ]);
     }
 
 
@@ -371,7 +416,7 @@ class Comicbooks {
         /*
          * Prevent unusually large public batch requests.
          */
-        $series_ids = array_slice($series_ids, 0, 20);
+        $series_ids = array_slice($series_ids, 0, 2);
     
         $images   = [];
         $uncached = [];
@@ -501,7 +546,7 @@ class Comicbooks {
         /*
          * Prevent unusually large public requests.
          */
-        $publisher_ids = array_slice($publisher_ids, 0, 10);
+        $publisher_ids = array_slice($publisher_ids, 0, 2);
     
         if (empty($publisher_ids)) {
             wp_send_json_error(
