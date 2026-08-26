@@ -516,11 +516,54 @@ class Comicbooks {
             $info = $this->data_service->get_publisher_info(
                 $publisher_id
             );
-    
+
+            $description = (string) ($info['desc'] ?? '');
+
+            /*
+             * Decode entities first so encoded HTML can also be cleaned.
+             */
+            $description = html_entity_decode(
+                $description,
+                ENT_QUOTES | ENT_HTML5,
+                'UTF-8'
+            );            
+ 
+            $description = preg_replace(
+                [
+                    '#<br\s*/?>#i',
+                    '#</p\s*>#i',
+                    '#</h[1-6]\s*>#i',
+                    '#</li\s*>#i',
+                    '#</(?:div|ul|ol)\s*>#i',
+                ],
+                [
+                    ' ',
+                    ' ',
+                    ': ',
+                    ' ',
+                    ' ',
+                ],
+                $description
+            );            
+
+            $description = wp_strip_all_tags(
+                $description,
+                true
+            );            
+
+            $description = preg_replace(
+                '/\s+/u',
+                ' ',
+                $description
+            );
+            
+            $description = trim($description);
+            $description = rtrim($description, " ;");
+            
             $publishers[$publisher_id] = [
                 'image'   => $info['image'] ?? '',
                 'founded' => $info['founded'] ?? '',
-                'desc'    => $info['desc'] ?? '',
+                'desc'    => $description ?: 'No description available.',
             ];
         }
     
