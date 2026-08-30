@@ -25,7 +25,7 @@
     {
         $lock_key   = 'metron_request_lock';
         $started_at = microtime(true);
-        $max_wait   = 60.0;
+        $max_wait   = 25.0;
     
         while (get_transient($lock_key)) {
             if ((microtime(true) - $started_at) >= $max_wait) {
@@ -49,7 +49,7 @@
         set_transient(
             $lock_key,
             microtime(true),
-            180
+            300
         );
     
         return true;
@@ -339,12 +339,7 @@
                     $cache_key,
                     $data,
                     $cache_duration
-                );
-    
-                error_log(
-                    "api_get: Data cached for {$url}, " .
-                    "duration={$cache_duration} seconds"
-                );
+                );  
     
                 return $data;
             }

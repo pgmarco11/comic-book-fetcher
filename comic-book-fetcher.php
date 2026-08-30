@@ -239,26 +239,9 @@ function render_api_settings_page() {
     if (isset($_POST['submit']) && check_admin_referer('save_api_settings')) {
         update_option('metron_api_username', sanitize_text_field($_POST['metron_api_username']));
         update_option('metron_api_password', sanitize_text_field($_POST['metron_api_password']));
-        update_option('comic_vine_api_key', sanitize_text_field($_POST['comic_vine_api_key']));
-        // Clear all Metron transients
-        global $wpdb;
-        $wpdb->query("DELETE FROM $wpdb->options WHERE option_name LIKE '_transient_metron_%'");
-        $wpdb->query("DELETE FROM $wpdb->options WHERE option_name LIKE '_transient_timeout_metron_%'");
-        echo '<div class="updated"><p>Settings saved and all caches cleared.</p></div>';
-    }
+        update_option('comic_vine_api_key', sanitize_text_field($_POST['comic_vine_api_key']));        
+     }
 
-    // Clear series cache only
-    if (isset($_POST['clear_series_cache']) && check_admin_referer('clear_series_cache')) {
-        global $wpdb;
-        $patterns = [
-            '_transient_metron:series_full:%',
-            '_transient_timeout_metron:series_full:%'
-        ];
-        foreach ($patterns as $like) {
-            $wpdb->query($wpdb->prepare("DELETE FROM $wpdb->options WHERE option_name LIKE %s", $like));
-        }
-        echo '<div class="notice notice-success is-dismissible"><p>Series caches cleared!</p></div>';
-    }
 
     // Warm publisher caches – now supports custom IDs or top 5
     if (
@@ -350,20 +333,6 @@ function render_api_settings_page() {
 
             <p class="submit">
                 <input type="submit" name="submit" class="button button-primary" value="Save Settings" />
-            </p>
-        </form>
-
-        <hr style="margin: 3rem 0;">
-
-        <h2>Cache Management</h2>
-        <form method="post" style="display:inline;">
-            <?php wp_nonce_field('clear_series_cache'); ?>
-            <p>
-                <input type="submit" name="clear_series_cache" class="button button-secondary" value="Clear all series cache"
-                       onclick="return confirm('Are you sure? This will force re-download of all series lists.');" />
-                <span style="margin-left:10px; color:#666; font-style:italic;">
-                    Clears all publishers series <code>metron:series_full:*</code> caches.
-                </span>
             </p>
         </form>
 

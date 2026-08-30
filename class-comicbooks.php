@@ -26,25 +26,13 @@ class Comicbooks {
         // -----------------------------------------------------------------
 
         add_action('wp_ajax_load_publishers', [$this, 'ajax_load_publishers']);
-        add_action('wp_ajax_nopriv_load_publishers', [$this, 'ajax_load_publishers']);
-        
-        add_action( 'wp_ajax_load_publisher_info',     [ $this, 'ajax_load_publisher_info' ] );
-        add_action( 'wp_ajax_nopriv_load_publisher_info',[ $this, 'ajax_load_publisher_info' ] );
+        add_action('wp_ajax_nopriv_load_publishers', [$this, 'ajax_load_publishers']);     
 
         add_action('wp_ajax_load_book', [$this, 'ajax_load_book']);
         add_action('wp_ajax_nopriv_load_book', [$this, 'ajax_load_book']);
 
         add_action( 'wp_ajax_load_issues',             [ $this, 'ajax_load_issues' ] );
         add_action( 'wp_ajax_nopriv_load_issues',      [ $this, 'ajax_load_issues' ] );
-
-        add_action( 'wp_ajax_load_comic_vine_batch',   [ $this, 'ajax_load_comic_vine_batch' ] );
-        add_action( 'wp_ajax_nopriv_load_comic_vine_batch', [ $this, 'ajax_load_comic_vine_batch' ] );    
-
-       //add_action('wp_ajax_load_issue_images_batch', [$this, 'ajax_load_issue_images_batch']);
-       //add_action('wp_ajax_nopriv_load_issue_images_batch', [$this, 'ajax_load_issue_images_batch']);
-
-        add_action('wp_ajax_load_cv_issue_images_batch', [$this, 'ajax_load_cv_issue_images_batch']);
-        add_action('wp_ajax_nopriv_load_cv_issue_images_batch', [$this, 'ajax_load_cv_issue_images_batch']);
 
        add_action( 'wp_ajax_load_series_images_batch',   [ $this, 'ajax_load_series_images_batch' ] );
        add_action( 'wp_ajax_nopriv_load_series_images_batch',[ $this, 'ajax_load_series_images_batch' ] );
@@ -143,23 +131,7 @@ class Comicbooks {
     }
 
 
-    public function ajax_load_publisher_info() {
-        if ( ! isset( $_POST['nonce'] ) || ! wp_verify_nonce( $_POST['nonce'], 'comicbooks_fetchers_data' ) ) {
-            wp_send_json_error( [ 'message' => 'Invalid security token' ], 400 );
-        }
 
-        $publisher_id = isset( $_POST['publisher_id'] ) ? intval( $_POST['publisher_id'] ) : 0;
-        if ( $publisher_id <= 0 ) {
-            wp_send_json_error( [ 'message' => 'Invalid publisher ID' ], 400 );
-        }
-
-        $info = $this->data_service->get_publisher_info( $publisher_id );
-        if ( empty( $info ) || empty( $info['name'] ) ) {
-            wp_send_json_error( [ 'message' => 'Publisher not found' ], 404 );
-        }
-
-        wp_send_json_success( $info );
-    }
 
    
 
@@ -299,89 +271,6 @@ class Comicbooks {
             'search'       => $search
         ]);
     }
-
-    /* -----------------------------------------------------------------
-    *  AJAX – Load Comic Vine data (non-blocking)
-    * ----------------------------------------------------------------- */
-    public function ajax_load_comic_vine_batch() {
-        check_ajax_referer( 'comicbooks_fetchers_data', 'nonce' );
-    
-        $metron_ids = isset( $_POST['metron_ids'] )
-            ? array_values(
-                array_filter(
-                    array_map(
-                        'intval',
-                        explode( ',', sanitize_text_field( wp_unslash( $_POST['metron_ids'] ) ) )
-                    )
-                )
-            )
-            : [];
-    
-        if ( empty( $metron_ids ) ) {
-            wp_send_json_error( [ 'message' => 'No IDs provided' ] );
-        }    
-   
-    
-        /*
-        * Convert IDs into the same structure expected
-        * by get_cv_info_batch().
-        */
-        $issues = array_map(
-            static function ($mid) {
-                return [
-                    'id' => $mid
-                ];
-            },
-            $metron_ids
-        );
-
-        $cv_info_batch = $this->data_service->get_cv_info_batch($issues);
-
-    
-        wp_send_json_success( [
-            'cv_data'           => $cv_info_batch
-        ] );
-    }
-
-    public function ajax_load_cv_issue_images_batch()
-    {
-        check_ajax_referer(
-            'comicbooks_fetchers_data',
-            'nonce'
-        );
-    
-        $raw_cv_ids = isset($_POST['cv_ids'])
-            ? (array) wp_unslash($_POST['cv_ids'])
-            : [];
-    
-        $cv_ids = array_values(
-            array_unique(
-                array_filter(
-                    array_map('absint', $raw_cv_ids)
-                )
-            )
-        );
-    
-        if (empty($cv_ids)) {
-            wp_send_json_error(
-                ['message' => 'No CV IDs provided'],
-                400
-            );
-        }
-    
-        /*
-         * Uses cached individual images first, then sends one Comic Vine
-         * request for all remaining IDs, up to 100 IDs per API request.
-         */
-        $images =
-            $this->data_service->get_comicvine_issue_images_batch($cv_ids);
-    
-        wp_send_json_success([
-            'images' => $images,
-        ]);
-    }
-
-
 
     /* -----------------------------------------------------------------
      *  AJAX – Batch series images

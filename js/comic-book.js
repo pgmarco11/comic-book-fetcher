@@ -826,11 +826,11 @@ jQuery(document).ready(function($){
                 const total = response.data.total || 0;
         
                 // Empty result + retries → retry
-                if (publishers.length === 0 && typeof retries !== 'undefined' && retries > 0) {
+                /*if (publishers.length === 0 && typeof retries !== 'undefined' && retries > 0) {
                     console.warn(`Empty publishers for page ${page}, retrying... (${retries} left)`);
                     setTimeout(() => fetchPublishers(name, page, letter, retries - 1), 1000);
                     return;
-                }        
+                }*/        
                 
                 setCachedData(cacheKey, { 
                     publishers, 
@@ -1605,33 +1605,6 @@ jQuery(document).ready(function($){
         }).fail(function(jqXHR, textStatus, errorThrown) {
             console.error('AJAX request failed:', textStatus, errorThrown);
             btn.text(isRemove ? 'Error Removing' : 'Error Adding');
-            setTimeout(() => btn.text(originalText), 2000);
-        }).always(function() {
-            btn.prop('disabled', false);
-        });
-    });
-
-    $(document).on('click', '.add-to-wishlist', async function(e) {
-        e.preventDefault();
-        const btn = $(this);
-        const originalText = btn.text();
-        btn.text('Adding...').prop('disabled', true);
-
-        $.post(comicbooks_fetchers_data.ajax_url, {
-            action: 'add_to_wishlist',
-            security: comicbooks_fetchers_data.nonce,
-            data: btn.data()
-        }, function(response) {
-            if (response.success) {
-                btn.text('Added to Wishlist');
-            } else {
-                btn.text('Error Adding');
-                console.error('Wishlist error:', response.data);
-                setTimeout(() => btn.text(originalText), 2000);
-            }
-        }).fail(function(jqXHR, textStatus, errorThrown) {
-            console.error('Wishlist AJAX failed:', textStatus, errorThrown);
-            btn.text('Error Adding');
             setTimeout(() => btn.text(originalText), 2000);
         }).always(function() {
             btn.prop('disabled', false);

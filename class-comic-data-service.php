@@ -467,6 +467,14 @@ class ComicDataService {
                 $url = $this->client->api_base . "series/{$sid}/";
                 $series = $this->client->api_get( $url );
 
+                if (
+                    !is_array($series) ||
+                    isset($series['error'])
+                ) {
+                    $map[$sid] = null;
+                    continue;
+                }
+
                 /*
                 * Keep the complete series metadata too, since other methods
                 * already use this transient.
@@ -576,6 +584,14 @@ class ComicDataService {
             );
 
             $found = [];
+
+            if ($body === null) {
+                foreach ($chunk as $cv_id) {
+                    $images[$cv_id] = '';
+                }
+            
+                continue;
+            }
 
             if (!empty($body['results']) && is_array($body['results'])) {
                 foreach ($body['results'] as $result) {
@@ -993,6 +1009,20 @@ class ComicDataService {
         $url = $this->client->api_base . "publisher/{$publisher_id}/series_list/?page={$api_page}&page_size={$api_page_size}";
 
         $response = $this->client->api_get( $url );
+
+        if (
+            !is_array($response) ||
+            isset($response['error'])
+        ) {
+            return [
+                'items'           => [],
+                'total'           => 0,
+                'has_next'        => false,
+                'temporary_error' => is_array($response)
+                    ? (string) ($response['error'] ?? 'Temporary Metron error')
+                    : 'Invalid Metron response',
+            ];
+        }
 
         /*
         * At this point the request succeeded, so an empty results array can
