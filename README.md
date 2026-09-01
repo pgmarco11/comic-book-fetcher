@@ -70,9 +70,9 @@ The catalog follows this general navigation structure:
 
 ```text
 Publishers
-â””â”€â”€ Series
-    â””â”€â”€ Issues
-        â””â”€â”€ Issue details
+└── Series
+    └── Issues
+        └── Issue details
 ```
 
 The primary catalog routes are:
