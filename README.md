@@ -38,7 +38,7 @@ The plugin also provides collection and wish-list functionality for logged-in us
 
 2. Activate **Comic Books Fetcher & Manager** from the WordPress Plugins screen.
 
-3. Open **Comic Books → API Settings** in the WordPress dashboard.
+3. Open **Comic Books â†’ API Settings** in the WordPress dashboard.
 
 4. Enter your Metron username and password.
 
@@ -60,7 +60,7 @@ The API credentials are stored as WordPress options:
 * `metron_api_password`
 * `comic_vine_api_key`
 
-Credentials can be entered through the plugin’s administrative settings screen.
+Credentials can be entered through the pluginâ€™s administrative settings screen.
 
 Do not commit API credentials directly to the repository.
 
@@ -70,9 +70,9 @@ The catalog follows this general navigation structure:
 
 ```text
 Publishers
-└── Series
-    └── Issues
-        └── Issue details
+â””â”€â”€ Series
+    â””â”€â”€ Issues
+        â””â”€â”€ Issue details
 ```
 
 The primary catalog routes are:
@@ -105,9 +105,26 @@ The primary AJAX handlers include:
 * `load_series_images_batch`
 * `load_publisher_images_batch`
 
-Additional AJAX handlers manage collection and wish-list actions.
+Collection actions for logged-in users include:
 
-AJAX requests use the `comicbooks_fetchers_data` nonce.
+* `add_comic_to_collection`
+* `remove_comic_from_collection`
+
+Wish-list actions for logged-in users are implemented in
+`includes/wish-list.php`:
+
+* `check_wishlist_status_batch` checks all wish-list buttons on the page in one
+  request.
+* `add_to_wishlist` stores an item in the current user's `user_wishlist` user
+  meta.
+* `remove_from_wishlist` removes an item from that user meta.
+
+Catalog AJAX requests use the `comicbooks_fetchers_data` nonce. Wish-list
+requests use the separate `wishlist_nonce` nonce. These user-specific actions
+are intentionally registered only for authenticated users.
+
+The `[user_wishlist]` shortcode renders the current user's saved wish-list and
+shows a login message to visitors who are not authenticated.
 
 ## Caching
 
