@@ -477,6 +477,24 @@ jQuery(document).ready(function($){
     const pendingPublisherMap = new Map();
     let publisherBatchTimer = null;
 
+    const enrichmentRetryLimit = 2;
+
+    function requeueEnrichment(element, retryKey, queueCallback) {
+        const retryCount = Number(element.dataset[retryKey] || 0);
+
+        if (retryCount >= enrichmentRetryLimit) {
+            return;
+        }
+
+        element.dataset[retryKey] = String(retryCount + 1);
+
+        window.setTimeout(() => {
+            if (element.isConnected) {
+                queueCallback(element);
+            }
+        }, 500 * (retryCount + 1));
+    }
+
     function queuePublisher(card) {
         const publisherId = card.dataset.publisherId;
 
@@ -574,6 +592,7 @@ jQuery(document).ready(function($){
                         }
     
                         delete card.dataset.publisherLoading;
+                        delete card.dataset.publisherRetryCount;
                         card.dataset.publisherLoaded = 'true';
                     });
                 });
@@ -585,6 +604,12 @@ jQuery(document).ready(function($){
     
                     cards.forEach(card => {
                         delete card.dataset.publisherLoading;
+                    
+                        requeueEnrichment(
+                            card,
+                            'publisherRetryCount',
+                            queuePublisher
+                        );
                     });
                 });
             },
@@ -673,20 +698,28 @@ jQuery(document).ready(function($){
     
                     imgs.forEach(img => {
                         delete img.dataset.loading;
-    
+                    
                         if (!imageUrl) {
+                            delete img.dataset.seriesRetryCount;
                             img.dataset.loaded = 'true';
                             return;
                         }
-    
+                    
                         img.onload = () => {
+                            delete img.dataset.seriesRetryCount;
                             img.dataset.loaded = 'true';
                         };
-    
+                    
                         img.onerror = () => {
                             delete img.dataset.loading;
+                    
+                            requeueEnrichment(
+                                img,
+                                'seriesRetryCount',
+                                queueSeriesImage
+                            );
                         };
-    
+                    
                         img.src = imageUrl;
                     });
                 });
@@ -698,6 +731,12 @@ jQuery(document).ready(function($){
     
                     imgs.forEach(img => {
                         delete img.dataset.loading;
+                    
+                        requeueEnrichment(
+                            img,
+                            'seriesRetryCount',
+                            queueSeriesImage
+                        );
                     });
                 });
             },
