@@ -100,11 +100,8 @@ Series covers use cached images and batched Comic Vine requests when the Metron 
 The primary AJAX handlers include:
 
 * `load_publishers`
-* `load_publisher_info`
 * `load_book`
 * `load_issues`
-* `load_comic_vine_batch`
-* `load_cv_issue_images_batch`
 * `load_series_images_batch`
 * `load_publisher_images_batch`
 

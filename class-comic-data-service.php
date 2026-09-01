@@ -145,53 +145,6 @@ class ComicDataService {
         ];
     }
 
-    public function get_enriched_publishers( $page = 1, $per_page = 50, $letter = 'all', $bypass_cache = false ) {
-        $key = "metron:publishers:{$page}:{$per_page}:{$letter}";
-    
-        // Only bypass cache when explicitly asked (e.g. admin “refresh” button)    
-        if ( ! $bypass_cache ) {
-            $cached = get_transient( $key );
-            if ( $cached !== false ) {       
-                return $cached;
-            }         
-        } else {
-            error_log("CACHE BYPASSED → forcing API call");
-        }
-    
-        // No cache (or forced bypass) → fetch from API
-        $raw = $this->get_publishers( '', $page, $per_page, $letter, false );
-    
-        $items = [];
-        foreach ( $raw['items'] ?? [] as $pub ) {
-            $info    = $this->get_publisher_info( $pub['id'] );
-
-            if ( empty( $info['founded'] ) ) {
-                $info['founded'] = 'Unknown';
-            }
-        
-            if ( empty( $info['desc'] ) ) {
-                $info['desc'] = 'No description available.';
-            }   
-
-            $items[] = [
-                'id'      => $info['id'] ?? $pub['id'],
-                'name'    => $info['name'] ?? $pub['name'],
-                'image'   => $info['image'] ?? PUBLISHER_PLACEHOLDER_IMAGE_URL,
-                'founded' => $info['founded'] ?? '',
-                'desc'    => $info['desc'] ?? '',
-            ];
-        }  
-        
-        
-        $result = [
-            'items' => $items,
-            'total' => $raw['total'] ?? 0,
-        ];    
-        // Cache for 12 hours (same as before)
-        set_transient( $key, $result, 12 * HOUR_IN_SECONDS );        
-        return $result;
-    }
-
     /* -----------------------------------------------------------------
     *  PUBLISHER INFO (single record)
     * ----------------------------------------------------------------- */
@@ -1441,6 +1394,55 @@ class ComicDataService {
     
         return $result;
     }
+
+    public function normalize_publisher_description(
+        $description,
+        $fallback = 'No description available.'
+    ) {
+        $description = html_entity_decode(
+            (string) $description,
+            ENT_QUOTES | ENT_HTML5,
+            'UTF-8'
+        );
+    
+        $description = preg_replace(
+            [
+                '#<br\s*/?>#i',
+                '#</p\s*>#i',
+                '#</h[1-6]\s*>#i',
+                '#</li\s*>#i',
+                '#</(?:div|ul|ol)\s*>#i',
+            ],
+            [
+                ' ',
+                ' ',
+                ': ',
+                ' ',
+                ' ',
+            ],
+            $description
+        );
+    
+        $description = wp_strip_all_tags(
+            $description,
+            true
+        );
+    
+        $description = preg_replace(
+            '/\s+/u',
+            ' ',
+            $description
+        );
+    
+        $description = rtrim(
+            trim($description),
+            " ;"
+        );
+    
+        return $description !== ''
+            ? $description
+            : $fallback;
+    }
     
     /* -----------------------------------------------------------------
     *  COMIC VINE issue image only
@@ -1602,6 +1604,8 @@ class ComicDataService {
 
         return $merged;
     }
+
+    
 
     /* -----------------------------------------------------------------
      *  Helper – clean ComicVine description

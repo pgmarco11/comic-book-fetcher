@@ -652,7 +652,9 @@ add_action('wp_ajax_remove_comic_from_collection', function () {
     check_ajax_referer('comicbooks_fetchers_data', 'security');
 
     $user_id = get_current_user_id();
-    $post_id = intval($_POST['post_id'] ?? 0);
+    $post_id = isset($_POST['post_id'])
+    ? absint(wp_unslash($_POST['post_id']))
+    : 0;
 
     if (!$post_id) {
         wp_send_json_error('Invalid post.');

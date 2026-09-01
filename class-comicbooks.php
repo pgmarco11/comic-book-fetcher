@@ -53,9 +53,23 @@ class Comicbooks {
             wp_send_json_error( [ 'message' => 'Invalid security token' ], 400 );
         }
 
-        $name     = isset( $_POST['name'] ) ? sanitize_text_field( $_POST['name'] ) : '';
-        $page     = isset( $_POST['page'] ) ? max( 1, intval( $_POST['page'] ) ) : 1;
-        $letter   = isset( $_POST['letter'] ) && $_POST['letter'] !== '' ? sanitize_text_field( $_POST['letter'] ) : 'all';
+        $name = isset($_POST['name'])
+            ? sanitize_text_field(
+                wp_unslash($_POST['name'])
+            )
+            : '';
+    
+        $page = isset($_POST['page'])
+            ? max(1, absint(wp_unslash($_POST['page'])))
+            : 1;
+        
+        $letter = isset($_POST['letter'])
+            ? sanitize_text_field(
+                wp_unslash($_POST['letter'])
+            )
+            : 'all';
+        
+        $letter = $letter !== '' ? $letter : 'all';
         $per_page = 10;
 
         $publisher_data = $this->data_service->get_publishers( $name, $page, $per_page, $letter, false );
@@ -98,11 +112,31 @@ class Comicbooks {
     public function ajax_load_book() {
         check_ajax_referer( 'comicbooks_fetchers_data', 'nonce' );
 
-        $publisher_id = isset( $_POST['publisher_id'] ) ? intval( $_POST['publisher_id'] ) : 0;
-        $page         = isset( $_POST['page'] ) ? max( 1, intval( $_POST['page'] ) ) : 1;
-        $per_page     = isset( $_POST['per_page'] ) ? intval( $_POST['per_page'] ) : 10;
-        $name         = isset( $_POST['name'] ) ? sanitize_text_field( $_POST['name'] ) : '';
-        $letter       = isset( $_POST['letter'] ) && $_POST['letter'] !== '' ? sanitize_text_field( $_POST['letter'] ) : 'all';
+        $publisher_id = isset($_POST['publisher_id'])
+            ? absint(wp_unslash($_POST['publisher_id']))
+            : 0;
+        
+        $page = isset($_POST['page'])
+            ? max(1, absint(wp_unslash($_POST['page'])))
+            : 1;
+        
+        $per_page = isset($_POST['per_page'])
+            ? absint(wp_unslash($_POST['per_page']))
+            : 10;
+        
+        $name = isset($_POST['name'])
+            ? sanitize_text_field(
+                wp_unslash($_POST['name'])
+            )
+            : '';
+        
+        $letter = isset($_POST['letter'])
+            ? sanitize_text_field(
+                wp_unslash($_POST['letter'])
+            )
+            : 'all';
+        
+        $letter = $letter !== '' ? $letter : 'all';
 
         $series_data = $this->data_service->get_series( $publisher_id, $page, $per_page, $name, $letter );
 
@@ -116,8 +150,6 @@ class Comicbooks {
                 503
             );
         }
-
-        $is_total_exact = $series_data['is_total_exact'] ?? true;
 
         wp_send_json_success( [
             'series'         => $series_data['items'],
@@ -451,49 +483,12 @@ class Comicbooks {
                 $publisher_id
             );
 
-            $description = (string) ($info['desc'] ?? '');
+            $description =
+                $this->data_service->normalize_publisher_description(
+                    $info['desc'] ?? ''
+                );       
 
-            /*
-             * Decode entities first so encoded HTML can also be cleaned.
-             */
-            $description = html_entity_decode(
-                $description,
-                ENT_QUOTES | ENT_HTML5,
-                'UTF-8'
-            );            
- 
-            $description = preg_replace(
-                [
-                    '#<br\s*/?>#i',
-                    '#</p\s*>#i',
-                    '#</h[1-6]\s*>#i',
-                    '#</li\s*>#i',
-                    '#</(?:div|ul|ol)\s*>#i',
-                ],
-                [
-                    ' ',
-                    ' ',
-                    ': ',
-                    ' ',
-                    ' ',
-                ],
-                $description
-            );            
 
-            $description = wp_strip_all_tags(
-                $description,
-                true
-            );            
-
-            $description = preg_replace(
-                '/\s+/u',
-                ' ',
-                $description
-            );
-            
-            $description = trim($description);
-            $description = rtrim($description, " ;");
-            
             $publishers[$publisher_id] = [
                 'image'   => $info['image'] ?? '',
                 'founded' => $info['founded'] ?? '',

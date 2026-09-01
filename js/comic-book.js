@@ -109,39 +109,71 @@ jQuery(document).ready(function($){
     // ===================================================================
     // Cache Helpers
     // ===================================================================
-    const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+    const CACHE_TTL =
+    24 * 60 * 60 * 1000;
+
+    const CACHE_PREFIX =
+        'tcs:comic-catalog:v3:';
+
+    function browserCacheKey(key) {
+        return CACHE_PREFIX + key;
+    }
 
     function getCachedData(key) {
-        const cached = localStorage.getItem(key);
-        if (!cached) return null;
+        const versionedKey = browserCacheKey(key);
+        const cached = localStorage.getItem(versionedKey);
+    
+        if (!cached) {
+            return null;
+        }
+    
         try {
             const { value, expiry } = JSON.parse(cached);
+    
             if (Date.now() > expiry) {
-                localStorage.removeItem(key);
+                localStorage.removeItem(versionedKey);
                 return null;
             }
+    
             return value;
-        } catch (e) {
-            console.error('Cache error:', e);
-            localStorage.removeItem(key);
+        } catch (error) {
+            console.error('Cache error:', error);
+            localStorage.removeItem(versionedKey);
             return null;
         }
     }
-
+    
     function setCachedData(key, data) {
+        const versionedKey = browserCacheKey(key);
         const expiry = Date.now() + CACHE_TTL;
+    
         try {
-            localStorage.setItem(key, JSON.stringify({ value: data, expiry }));
-        } catch (e) {
-            console.warn('localStorage quota exceeded:', e);
+            localStorage.setItem(
+                versionedKey,
+                JSON.stringify({
+                    value: data,
+                    expiry,
+                })
+            );
+        } catch (error) {
+            console.warn(
+                'localStorage quota exceeded:',
+                error
+            );
         }
     }
-
+    
     function clearCachedData(key) {
         try {
-            localStorage.removeItem(key);    
-        } catch (e) {
-            console.warn('Failed to clear cache:', key, e);
+            localStorage.removeItem(
+                browserCacheKey(key)
+            );
+        } catch (error) {
+            console.warn(
+                'Failed to clear cache:',
+                key,
+                error
+            );
         }
     }
 

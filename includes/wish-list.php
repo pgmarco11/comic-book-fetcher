@@ -10,7 +10,11 @@ function check_wishlist_status_batch() {
 
     $user_id = get_current_user_id();
     $wishlist = get_user_meta($user_id, 'user_wishlist', true) ?: [];
-    $item_ids = array_map('sanitize_text_field', (array)($_POST['item_ids'] ?? []));
+    $request = wp_unslash($_POST);
+    $item_ids = array_map(
+        'sanitize_text_field',
+        (array) ($request['item_ids'] ?? [])
+    );
 
     $in_wishlist = array_intersect(array_column($wishlist, 'item_id'), $item_ids);
     wp_send_json_success(array_values($in_wishlist));
@@ -25,13 +29,13 @@ function add_to_wishlist_ajax() {
     $wishlist = get_user_meta($user_id, 'user_wishlist', true) ?: [];
 
     $new = [
-        'type'      => sanitize_text_field($_POST['type']),
-        'item_id'   => sanitize_text_field($_POST['item_id']),
-        'title'     => sanitize_text_field($_POST['title']),
-        'item_url'  => esc_url_raw($_POST['item_url']),
-        'image_url' => esc_url_raw($_POST['image_url']),
-        'volume'    => sanitize_text_field($_POST['volume'] ?? ''),
-        'ebay_id'   => sanitize_text_field($_POST['ebay_id'] ?? ''),
+        'type'      => sanitize_text_field($request['type'] ?? ''),
+        'item_id'   => sanitize_text_field($request['item_id'] ?? ''),
+        'title'     => sanitize_text_field($request['title'] ?? ''),
+        'item_url'  => esc_url_raw($request['item_url'] ?? ''),
+        'image_url' => esc_url_raw($request['image_url'] ?? ''),
+        'volume'    => sanitize_text_field($request['volume'] ?? ''),
+        'ebay_id'   => sanitize_text_field($request['ebay_id'] ?? ''),
         'added_at'  => current_time('mysql'),
     ];
 

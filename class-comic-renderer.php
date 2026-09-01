@@ -29,11 +29,15 @@ class ComicRenderer {
     public function get_publisher_info( $publisher_id ) {
         return $this->data_service->get_publisher_info( $publisher_id );
     }
-
-   
-    public function get_enriched_publishers( $page = 1, $per_page = 50, $letter = 'all', $bypass_cache = false ) {
-        $result = $this->data_service->get_enriched_publishers( $page, $per_page, $letter, $bypass_cache );
-        return $result;
+    public function normalize_publisher_description(
+        $description,
+        $fallback = 'No description available.'
+    ) {
+        return $this->data_service
+            ->normalize_publisher_description(
+                $description,
+                $fallback
+            );
     }
 
     /** -----------------------------------------------------------------
