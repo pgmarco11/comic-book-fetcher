@@ -25,7 +25,7 @@ class Comicbooks {
         // 2. Register AJAX actions
         // -----------------------------------------------------------------
 
-        add_action('wp_ajax_load_publishers', [$this, 'ajax_load_publishers']);
+       /* add_action('wp_ajax_load_publishers', [$this, 'ajax_load_publishers']);
         add_action('wp_ajax_nopriv_load_publishers', [$this, 'ajax_load_publishers']);     
 
         add_action('wp_ajax_load_book', [$this, 'ajax_load_book']);
@@ -39,6 +39,48 @@ class Comicbooks {
 
         add_action( 'wp_ajax_load_publisher_images_batch',[ $this, 'ajax_load_publisher_images_batch' ] );
         add_action( 'wp_ajax_nopriv_load_publisher_images_batch',[ $this, 'ajax_load_publisher_images_batch' ] );
+        */
+
+        $ajax_actions = [
+            'load_publishers' => 'ajax_load_publishers',
+            'load_book' => 'ajax_load_book',
+            'load_issues' => 'ajax_load_issues',
+            'load_series_images_batch' => 'ajax_load_series_images_batch',
+            'load_publisher_images_batch' => 'ajax_load_publisher_images_batch',
+        ];
+        
+        foreach ($ajax_actions as $action => $method) {
+            $callback = function () use ($method) {
+                MetronClient::enable_ajax_errors();
+        
+                try {
+                    $this->$method();
+                } catch (ComicApiTemporaryException $error) {
+                    header('Retry-After: ' . $error->retry_after);
+        
+                    wp_send_json_error(
+                        [
+                            'message' => $error->getMessage(),
+                            'temporary' => true,
+                            'retry_after' => $error->retry_after,
+                        ],
+                        503
+                    );
+                } finally {
+                    MetronClient::disable_ajax_errors();
+                }
+            };
+        
+            add_action(
+                'wp_ajax_' . $action,
+                $callback
+            );
+        
+            add_action(
+                'wp_ajax_nopriv_' . $action,
+                $callback
+            );
+        }
 
         add_action( 'template_redirect', [ $this, 'check_collection_redirect' ] );
 

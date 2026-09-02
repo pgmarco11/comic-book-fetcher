@@ -289,7 +289,7 @@ class ComicDataService {
             $endpoint
         );
 
-        $res = wp_remote_get(
+        $res = $this->client->http_get(
             $url,
             [
                 'timeout' => 30,
@@ -342,7 +342,7 @@ class ComicDataService {
             'https://comicvine.gamespot.com/api/issues/'        );
     
     
-        $res = wp_remote_get(
+        $res = $this->client->http_get(
             $url,
             [
                 'timeout' => 30,
@@ -900,6 +900,18 @@ class ComicDataService {
                         DAY_IN_SECONDS
                     );
                 }
+
+            } catch (ComicApiTemporaryException $error) {
+                // Keep any pages successfully processed before the interruption.
+                if (!empty($progress_changed)) {
+                    set_transient(
+                        $progress_key,
+                        $progress,
+                        DAY_IN_SECONDS
+                    );
+                }
+            
+                throw $error;
             } finally {
                 $this->release_scan_lock($publisher_id);
             }
@@ -925,17 +937,16 @@ class ComicDataService {
         ];
     }
 
-    private function acquire_scan_lock( int $publisher_id ): bool {
-        $lock_key = "metron:series_scan_lock:{$publisher_id}";
-        if ( get_transient( $lock_key ) ) {
-            return false; // another request is already scanning this publisher
-        }
-        set_transient( $lock_key, 1, 20 ); // short TTL — auto-releases if a worker dies mid-scan
-        return true;
+    private function acquire_scan_lock(int $publisher_id): bool {
+        return MetronClient::acquire_lock(
+            "series-scan:{$publisher_id}"
+        );
     }
     
-    private function release_scan_lock( int $publisher_id ): void {
-        delete_transient( "metron:series_scan_lock:{$publisher_id}" );
+    private function release_scan_lock(int $publisher_id): void {
+        MetronClient::release_lock(
+            "series-scan:{$publisher_id}"
+        );
     }
 
     /** -----------------------------------------------------------------
@@ -1264,7 +1275,13 @@ class ComicDataService {
                     'error' => is_array($series)
                         ? ($series['error'] ?? 'Temporary Metron error')
                         : 'Invalid Metron response',
-                    'temporary_error' => true,
+
+                    'temporary_error' => !is_array($series) ||
+                        !empty($series['temporary_error']),
+
+                    'retry_after' => is_array($series)
+                        ? max(1, (int) ($series['retry_after'] ?? 2))
+                        : 2,
                 ];
             }
             
@@ -1323,7 +1340,13 @@ class ComicDataService {
                         'error' => is_array($current_resp)
                             ? ($current_resp['error'] ?? 'Temporary Metron error')
                             : 'Invalid Metron response',
-                        'temporary_error' => true,
+                
+                        'temporary_error' => !is_array($current_resp) ||
+                            !empty($current_resp['temporary_error']),
+                
+                        'retry_after' => is_array($current_resp)
+                            ? max(1, (int) ($current_resp['retry_after'] ?? 2))
+                            : 2,
                     ];
                 }
     
@@ -1483,7 +1506,7 @@ class ComicDataService {
             'https://comicvine.gamespot.com/api/publisher/4010-' . absint( $cv_id ) . '/'
         );
     
-        $response = wp_remote_get(
+        $response = $this->client->http_get(
             $url,
             [
                 'timeout' => 30,
@@ -1659,7 +1682,7 @@ class ComicDataService {
             "https://comicvine.gamespot.com/api/issue/4000-{$cv_id}/"
         );
         
-        $res = wp_remote_get(
+        $res = $this->client->http_get(
             $url,
             [
                 'timeout' => 30,

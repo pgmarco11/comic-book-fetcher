@@ -7,6 +7,11 @@ window.DEBUG = false;
 
 jQuery(document).ready(function($){    
 
+    // The temporary issues-page response handles its own retry.
+    if (document.getElementById('metron-retry-message')) {
+        return;
+    }
+
     setTimeout(() => {
 
         const serverRenderedItems = document.querySelectorAll(`
@@ -492,7 +497,7 @@ jQuery(document).ready(function($){
 
             const request = enrichmentRequestQueue.shift();
 
-            $.ajax(request.options)
+            $.ajax(Object.assign({ timeout: 30000 }, request.options))
                 .done(response => {
                     if (typeof request.done === 'function') {
                         request.done(response);
@@ -526,20 +531,43 @@ jQuery(document).ready(function($){
 
     const enrichmentRetryLimit = 2;
 
-    function requeueEnrichment(element, retryKey, queueCallback) {
-        const retryCount = Number(element.dataset[retryKey] || 0);
+    function apiRetryDelay(xhr, fallback = 2500) {
+        const seconds = Number(
+            xhr?.getResponseHeader('Retry-After')
+        );
+    
+        return Number.isFinite(seconds) && seconds > 0
+            ? Math.min(
+                2147483647,
+                Math.max(1000, seconds * 1000)
+            )
+            : fallback;
+    }
 
+    function requeueEnrichment(
+        element,
+        retryKey,
+        queueCallback,
+        minimumDelay = 0
+    ) {
+        const retryCount = Number(
+            element.dataset[retryKey] || 0
+        );
+    
         if (retryCount >= enrichmentRetryLimit) {
             return;
         }
-
+    
         element.dataset[retryKey] = String(retryCount + 1);
-
-        window.setTimeout(() => {
+    
+        setTimeout(() => {
             if (element.isConnected) {
                 queueCallback(element);
             }
-        }, 500 * (retryCount + 1));
+        }, Math.max(
+            minimumDelay,
+            500 * (retryCount + 1)
+        ));
     }
 
     function queuePublisher(card) {
@@ -645,7 +673,7 @@ jQuery(document).ready(function($){
                 });
             },
     
-            fail() {
+            fail(xhr) {
                 publisherIds.forEach(publisherId => {
                     const cards = batch.get(publisherId) || [];
     
@@ -655,7 +683,8 @@ jQuery(document).ready(function($){
                         requeueEnrichment(
                             card,
                             'publisherRetryCount',
-                            queuePublisher
+                            queuePublisher,
+                            apiRetryDelay(xhr)
                         );
                     });
                 });
@@ -772,7 +801,7 @@ jQuery(document).ready(function($){
                 });
             },
     
-            fail() {
+            fail(xhr) {
                 seriesIds.forEach(seriesId => {
                     const imgs = batch.get(seriesId) || [];
     
@@ -782,7 +811,8 @@ jQuery(document).ready(function($){
                         requeueEnrichment(
                             img,
                             'seriesRetryCount',
-                            queueSeriesImage
+                            queueSeriesImage,
+                            apiRetryDelay(xhr)
                         );
                     });
                 });
@@ -941,14 +971,7 @@ jQuery(document).ready(function($){
                 }
         
                 const publishers = response.data.publishers || [];
-                const total = response.data.total || 0;
-        
-                // Empty result + retries → retry
-                /*if (publishers.length === 0 && typeof retries !== 'undefined' && retries > 0) {
-                    console.warn(`Empty publishers for page ${page}, retrying... (${retries} left)`);
-                    setTimeout(() => fetchPublishers(name, page, letter, retries - 1), 1000);
-                    return;
-                }*/        
+                const total = response.data.total || 0;   
                 
                 setCachedData(cacheKey, { 
                     publishers, 
@@ -971,7 +994,10 @@ jQuery(document).ready(function($){
         
                 if (typeof retries !== 'undefined' && retries > 0) {
                     console.warn('Retrying fetchPublishers...', retries, 'left');
-                    setTimeout(() => fetchPublishers(name, page, letter, retries - 1), 2000);
+                    setTimeout(
+                        () => fetchPublishers(name, page, letter, retries - 1),
+                        apiRetryDelay(xhr)
+                    );
                 } else {                
                     $('#book-container')
                     .attr('aria-busy', 'false')
@@ -1011,7 +1037,7 @@ jQuery(document).ready(function($){
             hideSpinner();
             return;
         }   
-;
+
     
         const cacheKey = `metron_books_${publisherId}_${page}_${name}_${letter}`;
         const cached = getCachedData(cacheKey);
@@ -1176,18 +1202,19 @@ jQuery(document).ready(function($){
                     ) &&
                     retries > 0
                 ) {
-                    setTimeout(
-                        () => {
-                            fetchBooks(
-                                publisherId,
-                                page,
-                                name,
-                                letter,
-                                retries - 1
-                            );
-                        },
-                        2500
-                    );
+                    setTimeout(() => {
+                        if (requestId !== booksRequestId) {
+                            return;
+                        }
+                    
+                        fetchBooks(
+                            publisherId,
+                            page,
+                            name,
+                            letter,
+                            retries - 1
+                        );
+                    }, apiRetryDelay(xhr));
             
                     return;
                 }
@@ -1392,7 +1419,7 @@ jQuery(document).ready(function($){
                 ) {
                     setTimeout(
                         () => fetchIssues(titleId, page, search, retries - 1),
-                        2000
+                        apiRetryDelay(xhr)
                     );
                 } else {
                     $('#issues-list').html('<p>Error loading issues.</p>').addClass('loaded');
