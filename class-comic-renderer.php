@@ -65,14 +65,20 @@ class ComicRenderer {
 
     // === RENDER MAIN LIST PAGE ===
     public function render_template($initial_data = []) {
-        $items            = $initial_data['items']        ?? [];
-        $total            = $initial_data['total']        ?? 0;
-        $type             = $initial_data['type']         ?? '';
-        $page             = $initial_data['page']         ?? 1;
-        $per_page         = $initial_data['per_page']     ?? 10;
-        $letter           = $initial_data['letter']       ?? 'all';
+
+        $initial_data['items'] = $this->data_service->with_cached_catalog_details(
+            $initial_data['items'] ?? [],
+            $initial_data['type'] ?? ''
+        );
+
+        $items              = $initial_data['items'] ?? [];
+        $total              = $initial_data['total'] ?? 0;
+        $type               = $initial_data['type'] ?? '';
+        $page               = $initial_data['page'] ?? 1;
+        $per_page           = $initial_data['per_page'] ?? 10;
+        $letter             = $initial_data['letter'] ?? 'all';
         $selected_publisher = $initial_data['publisher_id'] ?? 0;
-        $search           = $initial_data['search']       ?? '';
+        $search             = $initial_data['search'] ?? '';
     
         wp_add_inline_script(
             'comicbook-script',
@@ -146,11 +152,18 @@ class ComicRenderer {
     }
     
 
-    public function get_comicvine_issue_info( $cv_id ) {
-        if ( ! $cv_id ) {
+    public function get_comicvine_issue_info(
+        $cv_id,
+        array $metron_issue = []
+    ) {
+        if (!$cv_id) {
             return null;
-        }     
-        return $this->data_service->get_comicvine_issue_info( $cv_id );
+        }
+    
+        return $this->data_service->get_comicvine_issue_info(
+            $cv_id,
+            $metron_issue
+        );
     }
 
     public function clean_cv_description($desc) {

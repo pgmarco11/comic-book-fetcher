@@ -134,6 +134,25 @@ jQuery(document).ready(function($){
                 localStorage.removeItem(versionedKey);
                 return null;
             }
+
+            // Let PHP attach current cached publisher details when this
+            // browser snapshot was saved before enrichment finished.
+            if (
+                Array.isArray(value?.publishers) &&
+                value.publishers.some(item => item.publisher_loaded !== true)
+            ) {
+                return null;
+            }
+
+            // Let PHP recheck unresolved or confirmed-missing covers.
+            // This also avoids retaining a six-hour missing-image result
+            // for the browser cache's longer 24-hour lifetime.
+            if (
+                Array.isArray(value?.series) &&
+                value.series.some(item => !item.image)
+            ) {
+                return null;
+            }
     
             return value;
         } catch (error) {
@@ -235,6 +254,21 @@ jQuery(document).ready(function($){
         $('#letter-buttons').toggle(show);
     }
 
+    function escapeCatalogHtml(value) {
+        const entities = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        };
+    
+        return String(value ?? '').replace(
+            /[&<>"']/g,
+            character => entities[character]
+        );
+    }
+
     function renderItems(items, type, page, total, search = '', letter = '', perPage,  isTotalExact = true) {  
         const isPublisher = type === 'publishers';
         const container   = $('#book-container');  
@@ -275,16 +309,22 @@ jQuery(document).ready(function($){
 
                 if (isPublisher) {           
                 
+                    const loaded = item.publisher_loaded === true;
+                    const imageUrl = loaded && item.image
+                        ? item.image
+                        : placeholder;
+                
                     html += `
                         <div
                             class="publisher-item"
-                            data-publisher-id="${item.id}">
+                            data-publisher-id="${item.id}"
+                            ${loaded ? 'data-publisher-loaded="true"' : ''}>
                 
                             <a href="/comic-catalog/?publisher_id=${item.id}&letter=all&page=1">
                                 <div class="publisher-image">
                                     <img
-                                        src="${placeholder}"
-                                        alt="${item.name}"
+                                        src="${escapeCatalogHtml(imageUrl)}"
+                                        alt="${escapeCatalogHtml(item.name)}"
                                         width="100"
                                         height="100"
                                         loading="lazy"
@@ -292,17 +332,25 @@ jQuery(document).ready(function($){
                                 </div>
                 
                                 <div class="publisher-info">
-                                    <h3>${item.name}</h3>
+                                    <h3>${escapeCatalogHtml(item.name)}</h3>
                 
                                     <p>
                                         <strong>Founded:</strong>
                                         <span class="publisher-founded">
-                                            Loading…
+                                            ${escapeCatalogHtml(
+                                                loaded
+                                                    ? (item.founded || 'Unknown')
+                                                    : 'Loading…'
+                                            )}
                                         </span>
                                     </p>
                 
                                     <p class="publisher-description">
-                                        Loading publisher information…
+                                        ${escapeCatalogHtml(
+                                            loaded
+                                                ? (item.desc || 'No description available.')
+                                                : 'Loading publisher information…'
+                                        )}
                                     </p>
                                 </div>
                             </a>
@@ -310,32 +358,31 @@ jQuery(document).ready(function($){
                     `;
                 } else {  
                     const hasImage = !!item.image;
-
-                    const imgSrc = hasImage
-                    ? item.image
-                    : placeholder;
-                
-                    const imgAttrs = hasImage
-                        ? `data-loaded="true"`
+                    const resolved = hasImage || item.image_resolved === true;
+                    const imgSrc = hasImage ? item.image : placeholder;
+                    
+                    const imgAttrs = resolved
+                        ? 'data-loaded="true"'
                         : `data-series-id="${item.series_id}" class="lazy-placeholder"`;
                 
                     html += `
                     <div class="comic-title" data-series-id="${item.series_id}">
                             <a href="/comic-catalog/issues/?title_id=${item.series_id}&page=1">
                                 <div class="comic-image">
-                                    <img src="${imgSrc}"
+                                    <img src="${escapeCatalogHtml(imgSrc)}"
                                         ${imgAttrs}
-                                        alt="${item.name}"   
+                                        alt="${escapeCatalogHtml(item.name)}"
                                         loading="lazy"                                 
                                         width="100"
                                         height="150">
                                 </div>
                                 <div class="comic-info">
-                                    <div class="comic-title-name">${item.name}</div>
+                                    <div class="comic-title-name">${escapeCatalogHtml(item.name)}</div>
+
                                     <div class="comic-title-meta">
-                                        <p>Vol. <span>${item.volume || 1}</span></p>
-                                        <p>Issues: <span>${item.issue_count || 0}</span></p>
-                                        <p>Started: <span>${item.year_began || 'N/A'}</span></p>
+                                        <p>Vol. <span>${escapeCatalogHtml(item.volume || 1)}</span></p>
+                                        <p>Issues: <span>${escapeCatalogHtml(item.issue_count || 0)}</span></p>
+                                        <p>Started: <span>${escapeCatalogHtml(item.year_began || 'N/A')}</span></p>
                                     </div>
                                 </div>
                             </a>
@@ -1042,28 +1089,24 @@ jQuery(document).ready(function($){
                     const scanComplete =
                         response.data.scan_complete !== false;
     
-                    if (!scanComplete) {    
-    
-                        // Do NOT render an empty result while scanning.
-                        setTimeout(() => {
-    
-                            // Don't restart this scan if user has moved
-                            // to another publisher/search/page meanwhile.
-                            if (requestId !== booksRequestId) {
-                                return;
-                            }
-    
-                            fetchBooks(
-                                publisherId,
-                                page,
-                                name,
-                                letter
-                            );
-    
-                        }, 3500);
-    
-                        return;
-                    }
+                        if (!scanComplete) {
+                            setTimeout(() => {
+                                // Stop if the user changed publisher, search, or page.
+                                if (requestId !== booksRequestId) {
+                                    return;
+                                }
+                        
+                                fetchBooks(
+                                    publisherId,
+                                    page,
+                                    name,
+                                    letter,
+                                    retries
+                                );
+                            }, 250);
+                        
+                            return;
+                        }
     
                     // Scan is definitely complete now.
                     allSeries = response.data.series || [];

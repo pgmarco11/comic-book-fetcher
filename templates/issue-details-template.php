@@ -31,16 +31,25 @@
   
 
     // ─────────────────────────────────────────────────────────────
-    //  ComicVine enrichment (same as before)
+    //  ComicVine enrichment 
     // ───────────────────────────────────────────────────────────── 
 
-    $cv_issue_id = $issue['cv_id']
-        ?? $comic_renderer->get_metron_cv_id( $title_id )
-        ?? null;
+        /*
+        * Use the mapping already supplied with this issue.
+        * Only look it up separately if the cv_id field is absent.
+        */
+        $cv_issue_id = array_key_exists('cv_id', $issue)
+            ? absint($issue['cv_id'])
+            : absint($comic_renderer->get_metron_cv_id($issue_id));
 
-    $cv_issue = $cv_issue_id
-        ? $comic_renderer->get_comicvine_issue_info( $cv_issue_id )
-        : [];
+        $cv_issue = $cv_issue_id
+            ? (
+                $comic_renderer->get_comicvine_issue_info(
+                    $cv_issue_id,
+                    $issue
+                ) ?? []
+            )
+            : [];
 
     // CV uses its own IDs; passing a Metron ID can return a wrong issue.
     $metron_issue_number = $issue['number'] ?? null;

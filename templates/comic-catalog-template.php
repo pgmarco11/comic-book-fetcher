@@ -87,10 +87,14 @@ $is_publisher = $type === 'publishers';
                 <?php foreach ( $items as $item ) :                        
                         if ($is_publisher) :
                             $publisher_id = absint($item['id'] ?? 0);
+                            $publisher_loaded = !empty($item['publisher_loaded']);
                         ?>
-                            <div
-                                class="publisher-item"
-                                data-publisher-id="<?php echo esc_attr($publisher_id); ?>">
+                        <div
+                            class="publisher-item"
+                            data-publisher-id="<?php echo esc_attr($publisher_id); ?>"
+                            <?php if ($publisher_loaded) : ?>
+                                data-publisher-loaded="true"
+                            <?php endif; ?>>
 
                                 <a href="<?php
                                     echo esc_url(
@@ -104,12 +108,13 @@ $is_publisher = $type === 'publishers';
                                         )
                                     );
                                 ?>">
-
                                     <div class="publisher-image">
                                         <img
                                             src="<?php
                                                 echo esc_url(
-                                                    PUBLISHER_PLACEHOLDER_IMAGE_URL
+                                                    !empty($item['image'])
+                                                        ? $item['image']
+                                                        : PUBLISHER_PLACEHOLDER_IMAGE_URL
                                                 );
                                             ?>"
                                             alt="<?php
@@ -135,12 +140,24 @@ $is_publisher = $type === 'publishers';
                                         <p>
                                             <strong>Founded:</strong>
                                             <span class="publisher-founded">
-                                                Loading…
+                                                <?php
+                                                echo esc_html(
+                                                    $publisher_loaded
+                                                        ? ($item['founded'] ?: 'Unknown')
+                                                        : 'Loading…'
+                                                );
+                                                ?>
                                             </span>
                                         </p>
 
                                         <p class="publisher-description">
-                                            Loading publisher information…
+                                            <?php
+                                            echo esc_html(
+                                                $publisher_loaded
+                                                    ? ($item['desc'] ?: 'No description available.')
+                                                    : 'Loading publisher information…'
+                                            );
+                                            ?>
                                         </p>
                                     </div>
                                 </a>
@@ -156,11 +173,13 @@ $is_publisher = $type === 'publishers';
                                 ? (string) $item['image']
                                 : '';
 
-                            $needs_cv_fallback = empty($metron_image_url);
+                            $needs_cv_fallback = empty($metron_image_url) &&
+                                empty($item['image_resolved']);                            
+                            
+                            $display_image_url = $metron_image_url !== ''
+                                ? $metron_image_url
+                                : COMICBOOKS_PLUGIN_URL . 'images/placeholder.png';
 
-                            $display_image_url = $needs_cv_fallback
-                                ? COMICBOOKS_PLUGIN_URL . 'images/placeholder.png'
-                                : $metron_image_url;
                             ?>
 
                             <div

@@ -94,6 +94,11 @@ class Comicbooks {
             ] );
         }
 
+        $publisher_data['items'] = $this->data_service->with_cached_catalog_details(
+            $publisher_data['items'] ?? [],
+            'publishers'
+        );
+
         wp_send_json_success([
             'publishers' => $publisher_data['items'] ?? [],
             'total'      => (int) ($publisher_data['total'] ?? 0),
@@ -150,6 +155,11 @@ class Comicbooks {
                 503
             );
         }
+
+        $series_data['items'] = $this->data_service->with_cached_catalog_details(
+            $series_data['items'] ?? [],
+            'books'
+        );
 
         wp_send_json_success( [
             'series'         => $series_data['items'],

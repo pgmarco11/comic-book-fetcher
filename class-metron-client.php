@@ -84,7 +84,12 @@
     }
 
 
-    public function api_get($url, $retries = 3, $backoff = 1) {
+    public function api_get(
+        $url,
+        $retries = 3,
+        $backoff = 1,
+        bool $cache_only = false
+    ) {
 
         $url = esc_url_raw($url);
 
@@ -96,8 +101,14 @@
 
         $cache_key = 'metron:api:' . md5($url);
         $cached = get_transient($cache_key);
+        
         if ($cached !== false) {
             return $cached;
+        }
+        
+        // Report a cache miss without acquiring the lock or calling Metron.
+        if ($cache_only) {
+            return ['cache_miss' => true];
         }
 
         if (!$this->metron_request_lock()) {
