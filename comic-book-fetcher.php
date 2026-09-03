@@ -27,8 +27,9 @@ require_once COMICBOOKS_PLUGIN_DIR . 'class-comic-renderer.php';
 require_once COMICBOOKS_PLUGIN_DIR . 'class-comicbooks.php';
 
 // === INCLUDE FUNCTIONS ===
-require_once COMICBOOKS_PLUGIN_DIR . '/includes/wish-list.php';
-require_once COMICBOOKS_PLUGIN_DIR . '/includes/comic-collection.php';
+require_once COMICBOOKS_PLUGIN_DIR . 'includes/wish-list.php';
+require_once COMICBOOKS_PLUGIN_DIR . 'includes/comic-collection.php';
+require_once COMICBOOKS_PLUGIN_DIR . 'includes/collection-inventory.php';
 
 add_action(
     'comicbooks_refresh_publisher_list',

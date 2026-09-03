@@ -2147,3 +2147,239 @@ jQuery(document).ready(function($){
     }
 
 });
+
+jQuery(function ($) {
+    const config = window.comicbooks_fetchers_data;
+
+    if (!config?.ajax_url || !config?.nonce) return;
+    if (window.tcsCollectionMetadataStarted) return;
+
+    window.tcsCollectionMetadataStarted = true;
+
+    const selector =
+        '.add-to-collection[data-issue-id][data-title-id]';
+
+    const records = new Map();
+    const watched = new Set();
+
+    let busy = false;
+
+    function apply(button, attributes) {
+        for (const [name, value] of Object.entries(attributes)) {
+            const key = name.replace(
+                /-([a-z])/g,
+                (_, character) => character.toUpperCase()
+            );
+
+            $(button)
+                .attr('data-' + name, value)
+                .data(key, value);
+        }
+
+        button.setAttribute(
+            'data-catalog-state',
+            attributes['catalog-state'] || 'ready'
+        );
+    }
+
+    function wanted(button) {
+        if (!button.isConnected) return false;
+        if (button === document.activeElement) return true;
+
+        const rect = button.getBoundingClientRect();
+
+        return (
+            rect.width > 0 &&
+            rect.height > 0 &&
+            rect.bottom > 0 &&
+            rect.top < window.innerHeight &&
+            rect.right > 0 &&
+            rect.left < window.innerWidth
+        );
+    }
+
+    async function pump() {
+        if (busy) return;
+
+        const record = [...records.values()].find(item =>
+            !item.attributes &&
+            item.attempts < 2 &&
+            item.retryAt <= Date.now() &&
+            [...item.buttons].some(wanted)
+        );
+
+        if (!record) return;
+
+        busy = true;
+        record.attempts++;
+
+        record.buttons.forEach(button => {
+            if (button.isConnected) {
+                button.setAttribute('data-catalog-state', 'loading');
+            }
+        });
+
+        try {
+            const response = await $.ajax({
+                url: config.ajax_url,
+                method: 'POST',
+                dataType: 'json',
+                timeout: 90000,
+                data: {
+                    action: 'tcs_collection_button_data',
+                    security: config.nonce,
+                    issue_id: record.issueId,
+                    title_id: record.titleId
+                }
+            });
+
+            const attributes = response?.data?.attributes;
+
+            if (
+                response?.success !== true ||
+                !attributes ||
+                attributes['issue-id'] !== record.issueId ||
+                attributes['title-id'] !== record.titleId
+            ) {
+                throw new Error(
+                    response?.data?.message ||
+                    'Invalid issue metadata response.'
+                );
+            }
+
+            record.attributes = attributes;
+
+            if (attributes['catalog-warning']) {
+                console.warn(attributes['catalog-warning']);
+            }
+
+            record.buttons.forEach(button => {
+                if (button.isConnected) {
+                    apply(button, attributes);
+                }
+            });
+        } catch (error) {
+            const payload = error?.responseJSON?.data;
+
+            const message =
+                (typeof payload === 'string' ? payload : payload?.message) ||
+                error?.message ||
+                error?.responseText?.slice(0, 500) ||
+                'The server returned no error details.';
+            
+            const code = payload?.code || 'request_failed';
+            
+            console.error(
+                `Collection metadata: issue ${record.issueId}, ` +
+                `series ${record.titleId}, ` +
+                `HTTP ${error?.status ?? 'unknown'}, ` +
+                `${code}: ${message}`
+            );
+
+            record.retryAt = Date.now() + 3000;
+
+            record.buttons.forEach(button => {
+                if (button.isConnected) {
+                    button.setAttribute('data-catalog-state', 'error');
+                }
+            });
+
+            // One automatic retry for this issue.
+            if (record.attempts < 2) {
+                setTimeout(pump, 3100);
+            }
+        } finally {
+            busy = false;
+            pump();
+        }
+    }
+
+    const observer = 'IntersectionObserver' in window
+        ? new IntersectionObserver(
+            () => pump(),
+            { threshold: 0 }
+        )
+        : null;
+
+    function scan() {
+        // Release buttons removed by pagination.
+        for (const button of watched) {
+            if (!button.isConnected) {
+                observer?.unobserve(button);
+                watched.delete(button);
+            }
+        }
+
+        records.forEach(record => {
+            record.buttons.forEach(button => {
+                if (!button.isConnected) {
+                    record.buttons.delete(button);
+                }
+            });
+        });
+
+        document.querySelectorAll(selector).forEach(button => {
+            if (watched.has(button)) return;
+
+            const issueId = button.getAttribute('data-issue-id');
+            const titleId = button.getAttribute('data-title-id');
+
+            if (
+                !/^[1-9]\d*$/.test(issueId) ||
+                !/^[1-9]\d*$/.test(titleId)
+            ) {
+                return;
+            }
+
+            const key = titleId + ':' + issueId;
+
+            if (!records.has(key)) {
+                records.set(key, {
+                    issueId,
+                    titleId,
+                    buttons: new Set(),
+                    attributes: null,
+                    attempts: 0,
+                    retryAt: 0
+                });
+            }
+
+            const record = records.get(key);
+
+            record.buttons.add(button);
+            watched.add(button);
+
+            if (record.attributes) {
+                apply(button, record.attributes);
+            } else {
+                button.setAttribute('data-catalog-state', 'pending');
+            }
+
+            observer?.observe(button);
+        });
+
+        pump();
+    }
+
+    $(document).on(
+        'comicbooks:issues-rendered.tcsMetadata',
+        scan
+    );
+
+    $(document).on(
+        'focusin.tcsMetadata',
+        selector,
+        scan
+    );
+
+    $(window).on('pageshow.tcsMetadata', scan);
+
+    if (!observer) {
+        $(window).on(
+            'scroll.tcsMetadata resize.tcsMetadata',
+            pump
+        );
+    }
+
+    scan();
+});

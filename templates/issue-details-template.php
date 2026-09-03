@@ -28,6 +28,15 @@
     // Normalize structure
     $series    = $issue['series'] ?? [];
     $publisher = $issue['publisher'] ?? [];   
+
+    $cached_series = get_transient("metron:series:{$title_id}");
+
+    if (
+        is_array($cached_series) &&
+        (int) ($cached_series['id'] ?? 0) === (int) $title_id
+    ) {
+        $series = array_replace($series, $cached_series);
+    }
   
 
     // ─────────────────────────────────────────────────────────────
@@ -96,16 +105,14 @@
     $creator_info_string = implode("\n", $creator_infos);
 
 
-    // Genres (Metron -> CV concepts)
-    if (!empty($series['genres'])) {
-        $genre_sources = array_column($series['genres'], 'name');
-    } elseif (!empty($cv_issue['concept_credits'])) {
-        $genre_sources = array_column($cv_issue['concept_credits'], 'name');
-    } else {
-        $genre_sources = [];
-    }
+    $genre_sources = tcs_catalog_names($series['genres'] ?? []);
 
-    $genre_string = implode(', ', $genre_sources);   
+    $genre_string = implode(', ', $genre_sources);
+    
+    $concept_string = implode(
+        ', ',
+        tcs_catalog_names($cv_issue['concept_credits'] ?? [])
+    );
 
     // Optional: more fallbacks
     $series_name   = $series['name'] ?? 'Series';
@@ -203,9 +210,10 @@
                                                         type="button"
                                                         class="add-to-collection <?php echo $in_collection ? 'in-collection' : ''; ?>"
                                                         style="<?php echo $in_collection ? 'background-color: red; color: white;' : ''; ?>"
-                                                        data-title="<?php echo esc_attr($issue_title); ?>"                                                    
+                                                        data-title="<?php echo esc_attr($series['name'] ?? ''); ?>"                                                  
                                                         data-description="<?php echo esc_attr(wp_strip_all_tags($description)); ?>"
                                                         data-issue-id="<?php echo esc_attr($issue_id); ?>"
+                                                        data-cv-issue-id="<?php echo esc_attr($metron_cv_id ?: ''); ?>"
                                                         data-title-id="<?php echo esc_attr($title_id); ?>"
                                                         data-creators="<?php echo esc_attr($creator_info_string ?: ''); ?>"
                                                         data-date="<?php echo esc_attr($date_raw); ?>"
@@ -298,24 +306,22 @@
                                                 <?php endforeach; ?>
                                             </ul>
                                         </div>
-                                    <?php endif; ?>
+                                    <?php endif; ?> 
     
-                                    <?php
-                                    $genre_label = 'Genres';
-                                    if (empty($series['genres']) && !empty($cv_issue['concept_credits'])) {
-                                        $genre_label = 'Concepts';
-                                    }
-                                    ?>
-    
-                                    <?php if (!empty($genre_string)): ?>
+                                    <?php if ($genre_string !== ''): ?>
                                         <div class="issue-section genre">
-                                            <h3><?php echo esc_html($genre_label); ?></h3>
-                                            <ul>
-                                                <li><?php echo esc_html($genre_string); ?></li>
-                                            </ul>
+                                            <h3>Genres</h3>
+                                            <p><?php echo esc_html($genre_string); ?></p>
                                         </div>
                                     <?php endif; ?>
-    
+
+                                    <?php if ($concept_string !== ''): ?>
+                                        <div class="issue-section concepts">
+                                            <h3>Concepts</h3>
+                                            <p><?php echo esc_html($concept_string); ?></p>
+                                        </div>
+                                    <?php endif; ?>
+                                    
                                     <?php if (!empty($issue['reprints'])): ?>
                                         <div class="issue-section reprints">
                                             <h3>Reprints</h3>

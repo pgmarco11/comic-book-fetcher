@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/collection-catalog-data.php';
+
 /**
  * Compute comic era from year
  */
@@ -767,4 +769,91 @@ add_action('wp_ajax_check_collection_status_batch', function () {
     wp_send_json_success(
         ComicRenderer::get_collection_status($issue_ids)
     );
+});
+
+add_action('wp_ajax_tcs_collection_button_data', function () {
+    if (
+        !is_user_logged_in() ||
+        !check_ajax_referer(
+            'comicbooks_fetchers_data',
+            'security',
+            false
+        )
+    ) {
+        wp_send_json_error(
+            ['message' => 'Please reload the page and sign in.'],
+            403
+        );
+    }
+
+    $issue_id = isset($_POST['issue_id'])
+        && is_scalar($_POST['issue_id'])
+        ? absint(wp_unslash($_POST['issue_id']))
+        : 0;
+
+    $title_id = isset($_POST['title_id'])
+        && is_scalar($_POST['title_id'])
+        ? absint(wp_unslash($_POST['title_id']))
+        : 0;
+
+    if (!$issue_id || !$title_id) {
+        wp_send_json_error(
+            ['message' => 'Missing issue or series ID.'],
+            400
+        );
+    }
+
+    if (!function_exists('tcs_collection_catalog_data')) {
+        wp_send_json_error(
+            [
+                'message' =>
+                    'The collection catalog helper must be installed first.',
+            ],
+            500
+        );
+    }
+
+    $catalog = tcs_collection_catalog_data($title_id, $issue_id);
+
+    if (is_wp_error($catalog)) {
+        wp_send_json_error(
+            [
+                'code'     => $catalog->get_error_code(),
+                'message'  => $catalog->get_error_message(),
+                'issue_id' => $issue_id,
+                'title_id' => $title_id,
+            ],
+            503
+        );
+    }
+
+    $meta = $catalog['meta'];
+
+    $attributes = [
+        'issue-id'     => (string) $meta['issue_id'],
+        'title-id'     => (string) $meta['title_id'],
+        'cv-issue-id'  => $meta['cv_issue_id']
+            ? (string) $meta['cv_issue_id']
+            : '',
+        'title'        => $catalog['title'],
+        'description'  => wp_strip_all_tags($catalog['description']),
+        'creators'     => $meta['creators'],
+        'date'         => $meta['date_published'],
+        'genres'       => $meta['genres'],
+        'concepts'     => $meta['concepts'],
+        'characters'   => $meta['characters'],
+        'publisher'    => $catalog['publisher'],
+        'volume'       => $meta['volume'],
+        'issue-number' => $meta['issue_number'],
+        'image-url'    => $meta['cover_image_url'],
+    ];
+
+    $warnings = $catalog['warnings'] ?? [];
+
+    $attributes['catalog-state'] = $warnings ? 'partial' : 'ready';
+    $attributes['catalog-warning'] = implode(' ', $warnings);
+
+    wp_send_json_success([
+        'attributes' => array_map('strval', $attributes),
+    ]);
 });

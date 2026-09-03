@@ -1,0 +1,336 @@
+<?php
+/** Owner-scoped collection inventory. No Metron or Comic Vine requests. */
+defined('ABSPATH') || exit;
+
+// Keep existing frontend URLs; remove collection records from public discovery.
+add_filter('register_post_type_args', function ($args, $post_type) {
+    if ($post_type === 'collection') {
+        $args['exclude_from_search'] = true;
+        $args['show_in_rest'] = false;
+    }
+    return $args;
+}, 10, 2);
+add_filter('wp_sitemaps_post_types', function ($types) {
+    unset($types['collection']);
+    return $types;
+});
+add_filter('wp_sitemaps_taxonomies', function ($taxonomies) {
+    // The existing publisher taxonomy also contains series derived from collections.
+    unset($taxonomies['publisher'], $taxonomies['comic_genre']);
+    return $taxonomies;
+});
+add_filter('oembed_response_data', function ($data, $post) {
+    return $post->post_type === 'collection' ? false : $data;
+}, 10, 2);
+add_action('pre_get_posts', function ($query) {
+    if (is_admin()) return;
+    $types = (array) $query->get('post_type');
+    if (in_array('collection', $types, true) || ($query->is_main_query() && ($query->is_post_type_archive('collection') || $query->is_tax(['publisher', 'comic_genre'])))) {
+        $query->set('post_type', 'collection');
+        if (is_user_logged_in()) {
+            $query->set('author', get_current_user_id());
+            $query->set('author__in', [get_current_user_id()]);
+        } else {
+            $query->set('post__in', [0]);
+        }
+    }
+});
+add_action('template_redirect', function () {
+    if (is_singular('collection') || is_post_type_archive('collection') || is_tax(['publisher', 'comic_genre'])) {
+        if (!defined('DONOTCACHEPAGE')) define('DONOTCACHEPAGE', true);
+        nocache_headers();
+        header('X-Robots-Tag: noindex, nofollow', true);
+    }
+    if (is_singular('collection')) {
+        $post = get_queried_object();
+        if (!is_user_logged_in() || (int) $post->post_author !== get_current_user_id()) {
+            status_header(404);
+            wp_die('This collection entry is unavailable.', 'Collection entry unavailable', ['response' => 404]);
+        }
+    }
+}, 0);
+
+function tcs_inventory_text($value): string {
+    return is_scalar($value) ? sanitize_text_field((string) $value) : '';
+}
+
+function tcs_inventory_asset_setup(): void {
+    if (!is_post_type_archive('collection')) return;
+    wp_enqueue_style('tcs-inventory', COMICBOOKS_PLUGIN_URL . 'css/collection-inventory.css', [], filemtime(COMICBOOKS_PLUGIN_DIR . 'css/collection-inventory.css'));
+    wp_enqueue_script('tcs-inventory', COMICBOOKS_PLUGIN_URL . 'js/collection-inventory.js', [], filemtime(COMICBOOKS_PLUGIN_DIR . 'js/collection-inventory.js'), true);
+    wp_localize_script('tcs-inventory', 'tcsInventory', [
+        'ajaxUrl' => admin_url('admin-ajax.php'),
+        'nonce' => wp_create_nonce('tcs_inventory'),
+    ]);
+}
+add_action('wp_enqueue_scripts', 'tcs_inventory_asset_setup', 30);
+
+function tcs_inventory_record(int $id): array {
+    $meta = get_post_meta($id);
+    $read = static function ($key, $fallback = '') use ($meta) {
+        return isset($meta[$key][0]) ? (string) $meta[$key][0] : $fallback;
+    };
+    $record = [
+        'id' => $id,
+        'title' => get_the_title($id),
+        'issue' => $read('issue_number'),
+        'volume' => $read('volume'),
+        'series_id' => absint($read('title_id')),
+        'issue_id' => absint($read('issue_id')),
+        'qty' => max(1, (int) $read('qty', '1')),
+        'condition' => $read('condition'),
+        'price' => $read('price'),
+        'notes' => $read('notes'),
+        'storage_location' => $read('storage_location'),
+        'cover' => esc_url_raw($read('cover_image_url')),
+        'publisher' => '',
+    ];
+    $terms = get_the_terms($id, 'publisher');
+    if ($terms && !is_wp_error($terms)) {
+        foreach ($terms as $term) {
+            if ((int) $term->parent === 0) {
+                $record['publisher'] = $term->name;
+                break;
+            }
+        }
+    }
+    $record['version'] = hash('sha256', wp_json_encode([
+        $record['qty'], $record['condition'], $record['price'],
+        $record['notes'], $record['storage_location'],
+    ]));
+    $record['catalog_url'] = $record['issue_id'] && $record['series_id']
+        ? add_query_arg(['issue_id' => $record['issue_id'], 'title_id' => $record['series_id']], home_url('/comic-catalog/issue/'))
+        : get_permalink($id);
+    return $record;
+}
+
+/** Facets and totals include only the current owner's published collection. */
+function tcs_inventory_overview(int $user_id): array {
+    global $wpdb;
+    $publisher_sql = $wpdb->prepare(
+        "SELECT DISTINCT t.term_id AS id, t.name
+        FROM {$wpdb->posts} p
+        JOIN {$wpdb->term_relationships} tr ON tr.object_id = p.ID
+        JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id
+        JOIN {$wpdb->terms} t ON t.term_id = tt.term_id
+        WHERE p.post_type = 'collection' AND p.post_status = 'publish'
+        AND p.post_author = %d AND tt.taxonomy = 'publisher' AND tt.parent = 0
+        ORDER BY t.name ASC", $user_id
+    );
+    $series_sql = $wpdb->prepare(
+        "SELECT DISTINCT CAST(pm.meta_value AS UNSIGNED) AS id, p.post_title AS name,
+        (SELECT MAX(v.meta_value) FROM {$wpdb->postmeta} v WHERE v.post_id = p.ID AND v.meta_key = 'volume') AS volume
+        FROM {$wpdb->posts} p
+        JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID AND pm.meta_key = 'title_id'
+        WHERE p.post_type = 'collection' AND p.post_status = 'publish'
+        AND p.post_author = %d AND CAST(pm.meta_value AS UNSIGNED) > 0
+        ORDER BY p.post_title ASC", $user_id
+    );
+    $summary_sql = $wpdb->prepare(
+        "SELECT COUNT(*) AS entries,
+        COALESCE(SUM(GREATEST(1, COALESCE((SELECT MAX(CAST(q.meta_value AS UNSIGNED))
+        FROM {$wpdb->postmeta} q WHERE q.post_id = p.ID AND q.meta_key = 'qty'), 1))), 0) AS copies
+        FROM {$wpdb->posts} p WHERE p.post_type = 'collection'
+        AND p.post_status = 'publish' AND p.post_author = %d", $user_id
+    );
+    $publishers = $wpdb->get_results($publisher_sql, ARRAY_A) ?: [];
+    $series_rows = $wpdb->get_results($series_sql, ARRAY_A) ?: [];
+    $series = [];
+    foreach ($series_rows as $row) {
+        if (!isset($series[(int) $row['id']])) {
+            $series[(int) $row['id']] = ['id' => (int) $row['id'], 'name' => $row['name'] . (!empty($row['volume']) ? ' · Vol. ' . $row['volume'] : '')];
+        }
+    }
+    $summary = $wpdb->get_row($summary_sql, ARRAY_A) ?: ['entries' => 0, 'copies' => 0];
+    return ['publishers' => $publishers, 'series' => array_values($series), 'summary' => [
+        'entries' => (int) $summary['entries'], 'copies' => (int) $summary['copies'],
+        'series' => count($series),
+    ]];
+}
+
+function tcs_inventory_results(array $input): array {
+    $page = max(1, absint(tcs_inventory_text($input['collection_page'] ?? 1)));
+    $sort = tcs_inventory_text($input['collection_sort'] ?? 'recent');
+    $args = [
+        'post_type' => 'collection', 'post_status' => 'publish',
+        'author' => get_current_user_id(), 'posts_per_page' => 24, 'paged' => $page,
+        'orderby' => ['date' => 'DESC', 'ID' => 'DESC'],
+        'ignore_sticky_posts' => true,
+    ];
+    $search = tcs_inventory_text($input['collection_search'] ?? '');
+    if ($search !== '') {
+        $args['s'] = $search;
+        $args['search_columns'] = ['post_title'];
+    }
+    $meta = [];
+    $series_id = absint(tcs_inventory_text($input['collection_series'] ?? 0));
+    if ($series_id) $meta[] = ['key' => 'title_id', 'value' => $series_id, 'compare' => '='];
+    if (($input['collection_duplicates'] ?? '') === '1') {
+        $meta[] = ['key' => 'qty', 'value' => 1, 'compare' => '>', 'type' => 'NUMERIC'];
+    }
+    if ($meta) $args['meta_query'] = $meta;
+    $publisher = absint(tcs_inventory_text($input['collection_publisher'] ?? 0));
+    if ($publisher) $args['tax_query'] = [[
+        'taxonomy' => 'publisher', 'field' => 'term_id', 'terms' => [$publisher], 'include_children' => true,
+    ]];
+    if ($sort === 'title') $args['orderby'] = ['title' => 'ASC', 'ID' => 'ASC'];
+    if ($sort === 'oldest') $args['orderby'] = ['date' => 'ASC', 'ID' => 'ASC'];
+    // Named optional clause includes legacy records with no issue_number meta.
+    if ($sort === 'issue') {
+        $args['meta_query']['issue_order_group'] = [
+            'relation' => 'OR',
+            'issue_order' => ['key' => 'issue_number', 'compare' => 'EXISTS', 'type' => 'DECIMAL(12,3)'],
+            ['key' => 'issue_number', 'compare' => 'NOT EXISTS'],
+        ];
+        $args['orderby'] = ['title' => 'ASC', 'issue_order' => 'ASC', 'ID' => 'ASC'];
+    }
+    $query = new WP_Query($args);
+    // WordPress skips found_rows when an offset returns no posts. Read page one
+    // to recover the real last page after deletions or an out-of-range URL.
+    if ($page > 1 && !$query->posts) {
+        $args['paged'] = 1;
+        $query = new WP_Query($args);
+        $page = min($page, max(1, (int) $query->max_num_pages));
+        if ($page > 1) {
+            $args['paged'] = $page;
+            $query = new WP_Query($args);
+        }
+    }
+    $pages = max(1, (int) $query->max_num_pages);
+    $records = array_map(static function ($post) { return tcs_inventory_record((int) $post->ID); }, $query->posts);
+    return [
+        'records' => $records, 'total' => (int) $query->found_posts,
+        'page' => $page, 'pages' => $pages,
+        'html' => tcs_inventory_items_html($records),
+    ];
+}
+
+function tcs_inventory_items_html(array $records): string {
+    ob_start();
+    if (!$records) {
+        echo '<div class="tci-empty"><span aria-hidden="true">✦</span><h3>No issues here yet</h3><p>Try another filter, or add a comic from the catalog.</p><a class="tci-button tci-button-primary" href="' . esc_url(home_url('/comic-catalog/')) . '">Explore the comic catalog</a></div>';
+    } else {
+        echo '<ul class="tci-items" aria-label="Collection issues">';
+        foreach ($records as $record) {
+            $id = $record['id'];
+            $name = $record['title'] . ($record['issue'] !== '' ? ' #' . $record['issue'] : '');
+            ?>
+            <li class="tci-item" data-record="<?php echo esc_attr(wp_json_encode($record)); ?>">
+                <article aria-labelledby="tci-title-<?php echo (int) $id; ?>">
+                    <label class="tci-select"><input type="checkbox" name="inventory_selected[]" value="<?php echo (int) $id; ?>"><span class="tci-sr-only">Select <?php echo esc_html($name); ?></span></label>
+                    <a class="tci-cover" href="<?php echo esc_url($record['catalog_url']); ?>" aria-label="View <?php echo esc_attr($name); ?> in the catalog">
+                        <?php if ($record['cover']) : ?><img src="<?php echo esc_url($record['cover']); ?>" alt="" loading="lazy" decoding="async" width="260" height="400"><?php else : ?><span class="tci-cover-placeholder"><span><?php echo esc_html($record['publisher'] ?: 'COLLECTION'); ?></span><strong><?php echo esc_html($record['title']); ?></strong><b>#<?php echo esc_html($record['issue'] ?: '—'); ?></b></span><?php endif; ?>
+                        <?php if ($record['qty'] > 1) : ?><span class="tci-copy-badge"><?php echo (int) $record['qty']; ?> copies</span><?php endif; ?>
+                    </a>
+                    <div class="tci-item-info">
+                        <p class="tci-publisher"><?php echo esc_html($record['publisher'] ?: 'Publisher not set'); ?></p>
+                        <h3 id="tci-title-<?php echo (int) $id; ?>"><a href="<?php echo esc_url($record['catalog_url']); ?>"><?php echo esc_html($record['title']); ?> <span>#<?php echo esc_html($record['issue'] ?: '—'); ?></span></a></h3>
+                        <p class="tci-volume">Volume <?php echo esc_html($record['volume'] ?: '—'); ?></p>
+                    </div>
+                    <dl class="tci-item-facts">
+                        <div><dt>Quantity</dt><dd><?php echo (int) $record['qty']; ?></dd></div>
+                        <div><dt>Condition</dt><dd><?php echo esc_html($record['condition'] ?: 'Not set'); ?></dd></div>
+                        <div><dt>Price</dt><dd><?php echo $record['price'] === '' ? 'Not set' : esc_html($record['price']); ?></dd></div>
+                        <div><dt>Location</dt><dd><?php echo esc_html($record['storage_location'] ?: 'Not filed'); ?></dd></div>
+                    </dl>
+                    <button type="button" class="tci-edit tci-button" aria-label="Edit <?php echo esc_attr($name); ?>">Edit inventory <span aria-hidden="true">↗</span></button>
+                </article>
+            </li>
+            <?php
+        }
+        echo '</ul>';
+    }
+    return (string) ob_get_clean();
+}
+
+function tcs_inventory_authorize(): void {
+    if (!is_user_logged_in()) wp_send_json_error('Please sign in again.', 401);
+    if (!check_ajax_referer('tcs_inventory', 'nonce', false)) wp_send_json_error('Your session expired. Refresh the page.', 403);
+}
+
+function tcs_inventory_owned_post(int $id, array $statuses = ['publish']): WP_Post {
+    $post = get_post($id);
+    if (!$post || $post->post_type !== 'collection' || (int) $post->post_author !== get_current_user_id() || !in_array($post->post_status, $statuses, true)) {
+        wp_send_json_error('This collection entry is unavailable.', 403);
+    }
+    return $post;
+}
+
+add_action('wp_ajax_tcs_inventory_list', function () {
+    tcs_inventory_authorize();
+    $results = tcs_inventory_results(wp_unslash($_POST));
+    unset($results['records']);
+    wp_send_json_success(array_merge($results, tcs_inventory_overview(get_current_user_id())));
+});
+
+add_action('wp_ajax_tcs_inventory_save', function () {
+    tcs_inventory_authorize();
+    $input = wp_unslash($_POST);
+    $id = absint(tcs_inventory_text($input['post_id'] ?? 0));
+    tcs_inventory_owned_post($id);
+    $current = tcs_inventory_record($id);
+    if (!hash_equals($current['version'], tcs_inventory_text($input['version'] ?? ''))) {
+        wp_send_json_error('This entry changed elsewhere. Close the editor, refresh the collection, and try again.', 409);
+    }
+    $qty = tcs_inventory_text($input['qty'] ?? '');
+    $price = tcs_inventory_text($input['price'] ?? '');
+    if (!ctype_digit($qty) || (int) $qty < 1 || (int) $qty > 9999) wp_send_json_error('Quantity must be a whole number from 1 to 9,999.', 422);
+    if ($price !== '' && !preg_match('/^\d{1,7}(\.\d{1,2})?$/D', $price)) wp_send_json_error('Price must be a non-negative amount with up to two decimal places, or blank.', 422);
+    $condition = tcs_inventory_text($input['condition'] ?? '');
+    $location = tcs_inventory_text($input['storage_location'] ?? '');
+    $notes = isset($input['notes']) && is_scalar($input['notes']) ? sanitize_textarea_field((string) $input['notes']) : '';
+    if (strlen($condition) > 120 || strlen($location) > 120 || strlen($notes) > 10000) wp_send_json_error('One of the fields is too long.', 422);
+    $fields = ['qty' => (string) (int) $qty, 'price' => $price, 'condition' => $condition, 'notes' => $notes, 'storage_location' => $location];
+    foreach ($fields as $key => $value) update_post_meta($id, $key, wp_slash($value));
+    foreach ($fields as $key => $value) {
+        if ((string) get_post_meta($id, $key, true) !== $value) wp_send_json_error('Some changes could not be saved. Refresh before retrying.', 500);
+    }
+    clean_post_cache($id);
+    wp_send_json_success(['record' => tcs_inventory_record($id)]);
+});
+
+add_action('wp_ajax_tcs_inventory_bulk', function () {
+    tcs_inventory_authorize();
+    $input = wp_unslash($_POST);
+    $ids = array_values(array_unique(array_filter(array_map('absint', (array) ($input['post_ids'] ?? [])))));
+    $operation = tcs_inventory_text($input['operation'] ?? '');
+    if (!$ids || count($ids) > 24 || !in_array($operation, ['location', 'trash', 'restore'], true)) wp_send_json_error('Select up to 24 entries and a valid action.', 422);
+    // Validate every entry before applying any mutation.
+    foreach ($ids as $id) tcs_inventory_owned_post($id, $operation === 'restore' ? ['trash'] : ['publish']);
+    if ($operation === 'trash' && (!defined('EMPTY_TRASH_DAYS') || !EMPTY_TRASH_DAYS)) wp_send_json_error('Trash is disabled on this site; no entries were removed.', 409);
+    $location = tcs_inventory_text($input['storage_location'] ?? '');
+    if ($operation === 'location' && ($location === '' || strlen($location) > 120)) wp_send_json_error('Enter a storage location of up to 120 characters.', 422);
+    $completed = [];
+    foreach ($ids as $id) {
+        if ($operation === 'location') {
+            update_post_meta($id, 'storage_location', wp_slash($location));
+            $ok = get_post_meta($id, 'storage_location', true) === $location;
+        } elseif ($operation === 'trash') {
+            $ok = wp_trash_post($id);
+        } else {
+            $restore_status = static function ($status, $post_id, $previous) use ($id) {
+                return (int) $post_id === $id ? 'publish' : $status;
+            };
+            add_filter('wp_untrash_post_status', $restore_status, 10, 3);
+            $ok = wp_untrash_post($id);
+            remove_filter('wp_untrash_post_status', $restore_status, 10);
+        }
+        if (!$ok) {
+            wp_send_json_error(['message' => 'The operation stopped before all entries were updated. Refresh to see the result.', 'completed' => $completed, 'operation' => $operation], 500);
+        }
+        clean_post_cache($id);
+        $completed[] = $id;
+    }
+    wp_send_json_success(['completed' => $completed, 'operation' => $operation]);
+});
+
+function tcs_inventory_render_app(): void {
+    if (!is_user_logged_in()) {
+        echo '<div class="tci-empty"><h1>My collection</h1><p>Sign in to view and manage your comics.</p><a class="tci-button tci-button-primary" href="' . esc_url(wp_login_url(get_post_type_archive_link('collection'))) . '">Sign in</a></div>';
+        return;
+    }
+    $input = wp_unslash($_GET);
+    $results = tcs_inventory_results($input);
+    $overview = tcs_inventory_overview(get_current_user_id());
+    include COMICBOOKS_PLUGIN_DIR . 'templates/collection-inventory.php';
+}
