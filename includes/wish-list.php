@@ -1,4 +1,48 @@
 <?php
+function mwp_get_user_wishlist($user_id) {
+    $wishlist = get_user_meta($user_id, 'user_wishlist', true);
+
+    if (!is_array($wishlist)) {
+        return [];
+    }
+
+    $issue_path = untrailingslashit(
+        (string) wp_parse_url(
+            home_url('/comic-catalog/issue/'),
+            PHP_URL_PATH
+        )
+    );
+
+    foreach ($wishlist as &$item) {
+        if (!is_array($item) || ($item['type'] ?? '') !== 'post') {
+            continue;
+        }
+
+        $url = wp_parse_url((string) ($item['item_url'] ?? ''));
+
+        if (
+            !is_array($url) ||
+            untrailingslashit($url['path'] ?? '') !== $issue_path
+        ) {
+            continue;
+        }
+
+        parse_str($url['query'] ?? '', $query);
+        $issue_id = $query['issue_id'] ?? '';
+
+        if (
+            is_scalar($issue_id) &&
+            ctype_digit((string) $issue_id) &&
+            (int) $issue_id > 0
+        ) {
+            $item['item_id'] = 'metron:issue:' . (int) $issue_id;
+        }
+    }
+
+    unset($item);
+
+    return $wishlist;
+}
 
 /* ==================================================================
  *  WISHLIST FUNCTIONS
@@ -9,7 +53,7 @@ function check_wishlist_status_batch() {
     if (!is_user_logged_in()) wp_send_json_error();
 
     $user_id = get_current_user_id();
-    $wishlist = get_user_meta($user_id, 'user_wishlist', true) ?: [];
+    $wishlist = mwp_get_user_wishlist($user_id);
     $request = wp_unslash($_POST);
     $item_ids = array_map(
         'sanitize_text_field',
@@ -26,7 +70,7 @@ function add_to_wishlist_ajax() {
     if (!is_user_logged_in()) wp_send_json_error('Login required.');
 
     $user_id = get_current_user_id();
-    $wishlist = get_user_meta($user_id, 'user_wishlist', true) ?: [];
+    $wishlist = mwp_get_user_wishlist($user_id);
 
     $request = wp_unslash($_POST);
 
@@ -40,6 +84,12 @@ function add_to_wishlist_ajax() {
         'ebay_id'   => sanitize_text_field($request['ebay_id'] ?? ''),
         'added_at'  => current_time('mysql'),
     ];
+
+    if ($new['item_id'] === '' || $new['type'] === '') {
+        wp_send_json_error(
+            'Missing wishlist item information. Refresh the page and try again.'
+        );
+    }
 
     foreach ($wishlist as $item) {
         if ($item['type'] === $new['type'] && $item['item_id'] === $new['item_id']) {
@@ -59,7 +109,7 @@ function remove_from_wishlist_ajax() {
 
     $user_id = get_current_user_id();
     $item_id = sanitize_text_field($_POST['item_id']);
-    $wishlist = get_user_meta($user_id, 'user_wishlist', true) ?: [];
+    $wishlist = mwp_get_user_wishlist($user_id);
 
     $wishlist = array_filter($wishlist, fn($i) => $i['item_id'] !== $item_id);
     update_user_meta($user_id, 'user_wishlist', array_values($wishlist));
@@ -73,7 +123,7 @@ function check_wishlist_status_ajax() {
     if (!is_user_logged_in()) wp_send_json_success(['in_wishlist' => false]);
 
     $item_id = sanitize_text_field($_POST['item_id']);
-    $wishlist = get_user_meta(get_current_user_id(), 'user_wishlist', true) ?: [];
+    $wishlist = mwp_get_user_wishlist(get_current_user_id());
 
     $in = in_array($item_id, array_column($wishlist, 'item_id'), true);
     wp_send_json_success(['in_wishlist' => $in]);
@@ -85,7 +135,7 @@ function mwp_display_user_wishlist() {
         return '<p class="has-white-color">Please log in to view your wishlist.</p>';
     }
 
-    $wishlist = get_user_meta(get_current_user_id(), 'user_wishlist', true) ?: [];
+    $wishlist = mwp_get_user_wishlist(get_current_user_id());
     if (empty($wishlist)) {
         return '<p class="has-white-color">Your wishlist is empty.</p>';
     }

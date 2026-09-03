@@ -1561,6 +1561,9 @@ jQuery(document).ready(function($){
                     .attr('data-page', currentPageFromResponse)
                     .addClass('loaded')
                     .css('opacity', '1');
+                
+                // New buttons now exist; refresh their saved status.
+                $(document).trigger('comicbooks:issues-rendered');
             
                 renderIssuePagination(titleId, currentPageFromResponse, search, data.total_issues || 0);
                        
@@ -1655,7 +1658,7 @@ jQuery(document).ready(function($){
         const search = urlParams.get('search') || '';
     
         if (titleId) {
-            fetchIssues(titleId, page, search);
+            fetchIssues(titleId, page, search);       
         } else {
             $('#book-container')
             .attr('aria-busy', 'false')
@@ -1705,7 +1708,7 @@ jQuery(document).ready(function($){
                 }
             
                 if (titleId) {
-                    fetchIssues(titleId, 1, searchQuery);
+                    fetchIssues(titleId, 1, searchQuery);                 
                 } else {
                     console.warn('No title_id found for issue search');
             }
@@ -1786,8 +1789,8 @@ jQuery(document).ready(function($){
         }   
         if (isIssuesPage && hasTitleId) {
             updateIssuesUrl(titleId, page, search);
-            fetchIssues(titleId, page, search);
-    
+            fetchIssues(titleId, page, search);        
+
             $('html, body').animate({
                 scrollTop: $('#issues-list').offset().top
             }, 100);
@@ -1875,6 +1878,86 @@ jQuery(document).ready(function($){
         }, 120);
     });
 
+    let collectionStatusRequestId = 0;
+
+    function checkCollectionStatusBatch() {
+        const requestId = ++collectionStatusRequestId;
+        const buttons = $('.add-to-collection[data-issue-id]');
+        const issueIds = [...new Set(
+            buttons.map(function () {
+                return Number($(this).attr('data-issue-id'));
+            }).get().filter(id => Number.isInteger(id) && id > 0)
+        )];
+
+        if (!issueIds.length) return;
+
+        $.ajax({
+            url: comicbooks_fetchers_data.ajax_url,
+            method: 'POST',
+            dataType: 'json',
+            data: {
+                action: 'check_collection_status_batch',
+                security: comicbooks_fetchers_data.nonce,
+                issue_ids: issueIds
+            },
+            success: function (response) {
+                if (
+                    requestId !== collectionStatusRequestId ||
+                    !response || !response.success || !response.data
+                ) {
+                    return;
+                }
+
+                buttons.each(function () {
+                    const button = $(this);
+
+                    if (!this.isConnected || button.prop('disabled')) return;
+
+                    const issueId = Number(button.attr('data-issue-id'));
+                    const status = response.data[issueId];
+                    if (!status) return;
+
+                    const postId = Number(status.post_id || 0);
+                    const owned = Boolean(status.owned) && postId > 0;
+                    const action = owned ? 'remove' : 'add';
+
+                    button
+                        .toggleClass('in-collection', owned)
+                        .css({
+                            'background-color': owned ? 'red' : '',
+                            'color': owned ? 'white' : ''
+                        })
+                        .text(
+                            owned
+                                ? 'Remove from Collection'
+                                : 'Add to My Collection'
+                        )
+                        .attr('data-action', action)
+                        .data('action', action);
+
+                    if (owned) {
+                        button
+                            .attr('data-post-id', postId)
+                            .data('post-id', postId);
+                    } else {
+                        button
+                            .removeAttr('data-post-id')
+                            .removeData('post-id');
+                    }
+                });
+            },
+            error: function () {
+                console.warn('Could not refresh collection status.');
+            }
+        });
+    }
+
+    $(document).on(
+        'comicbooks:issues-rendered comicbooks:collection-changed',
+        checkCollectionStatusBatch
+    );
+
+    checkCollectionStatusBatch();
 
     $(document).on('click', '.add-to-collection', async function(e) {
         e.preventDefault();
@@ -1893,22 +1976,26 @@ jQuery(document).ready(function($){
         $.post(comicbooks_fetchers_data.ajax_url, {
             action: isRemove ? 'remove_comic_from_collection' : 'add_comic_to_collection',
             security: comicbooks_fetchers_data.nonce,
+            post_id: isRemove ? btn.data('post-id') : 0,
             data: btn.data()
         }, function(response) {
             if (response.success) {
                 if (isRemove) {
                     btn.text('Add to My Collection')
-                       .removeClass('in-collection')
-                       .css({'background-color': '', 'color': ''})
-                       .data('action', 'add')
-                       .removeData('post-id');
+                        .removeClass('in-collection')
+                        .css({'background-color': '', 'color': ''})
+                        .data('action', 'add')
+                        .removeAttr('data-post-id')
+                        .removeData('post-id');
                 } else {
                     btn.text('Remove from Collection')
-                       .addClass('in-collection')
-                       .css({'background-color': 'red', 'color': 'white'})
-                       .data('action', 'remove')
-                       .data('post-id', response.data.post_id);
+                        .addClass('in-collection')
+                        .css({'background-color': 'red', 'color': 'white'})
+                        .data('action', 'remove')
+                        .data('post-id', response.data.post_id);
                 }
+
+                $(document).trigger('comicbooks:collection-changed');
             } else {
                 btn.text(isRemove ? 'Error Removing' : 'Error Adding');
                 console.error('Error:', response.data);
@@ -1953,7 +2040,7 @@ jQuery(document).ready(function($){
         currentPublisherId = publisherId;
     
         if (titleId) {
-            fetchIssues(titleId, page, search);
+            fetchIssues(titleId, page, search);      
         } else if (publisherId) {
             fetchBooks(publisherId, page, search, letter);
         } else {

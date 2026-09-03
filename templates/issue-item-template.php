@@ -108,6 +108,7 @@ if (is_user_logged_in() && !empty($collection_status[$metron_id]['owned'])) {
         <?php if (is_user_logged_in()): ?>
             <div class="d-flex flex-nowrap align-items-end gap-3">
             <button 
+                type="button"
                 class="add-to-collection <?php echo $in_collection ? 'in-collection' : ''; ?>"
                 data-issue-id="<?php echo esc_attr($metron_id); ?>"
                 data-cv-issue-id="<?php echo esc_attr($metron_cv_id); ?>"
@@ -126,8 +127,10 @@ if (is_user_logged_in() && !empty($collection_status[$metron_id]['owned'])) {
             </button>
 
                 <button 
+                    type="button"
                     class="add-to-wishlist"
                     data-type="post"
+                    data-item-id="metron:issue:<?php echo esc_attr($metron_id); ?>"
                     data-issue-id="<?php echo esc_attr($metron_id); ?>"
                     data-cv-issue-id="<?php echo esc_attr($metron_cv_id); ?>"
                     data-title-id="<?php echo esc_attr($title_id); ?>"

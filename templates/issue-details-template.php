@@ -200,6 +200,7 @@
                                                 <!-- Collection Button -->
                                                 <div class="text-center">
                                                 <button
+                                                        type="button"
                                                         class="add-to-collection <?php echo $in_collection ? 'in-collection' : ''; ?>"
                                                         style="<?php echo $in_collection ? 'background-color: red; color: white;' : ''; ?>"
                                                         data-title="<?php echo esc_attr($issue_title); ?>"                                                    
@@ -233,9 +234,10 @@
                                                 );
                                                 ?>
                                                 <button
+                                                    type="button"
                                                     class="add-to-wishlist"
                                                     data-type="post"
-                                                    data-item-id="<?php echo esc_attr($metron_cv_id); ?>"
+                                                    data-item-id="metron:issue:<?php echo esc_attr($issue_id); ?>"
                                                     data-title="<?php echo esc_attr($issue_title); ?>"
                                                     data-volume="<?php echo esc_attr($series['volume'] ?? ''); ?>"
                                                     data-item-url="<?php echo esc_url($url); ?>"

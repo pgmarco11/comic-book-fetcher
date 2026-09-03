@@ -217,6 +217,11 @@ jQuery(document).ready(function($) {
         }
     });
 
-    // Initial batch check on page load
+    // Recheck wishlist buttons after AJAX replaces the issues.
+    $(document).on('comicbooks:issues-rendered', function () {
+        checkWishlistStatusBatch();
+    });
+
+    // Check buttons rendered during the initial page load.
     checkWishlistStatusBatch();
 });

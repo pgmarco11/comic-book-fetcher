@@ -747,36 +747,24 @@ add_filter('wp_terms_checklist_args', function ($args, $post_id) {
 
 }, 10, 2);
 
-add_action('wp_ajax_check_collection_status_batch', function() {
+add_action('wp_ajax_check_collection_status_batch', function () {
     check_ajax_referer('comicbooks_fetchers_data', 'security');
-    if (!is_user_logged_in()) wp_send_json_error('Not logged in.');
 
-    $user_id = get_current_user_id();
-    $issue_ids = array_map('intval', (array)($_POST['issue_ids'] ?? []));
-
-    if (empty($issue_ids)) wp_send_json_success([]);
-
-    $in_collection = [];
-
-    foreach ($issue_ids as $issue_id) {
-        $posts = get_posts([
-            'post_type'   => 'collection',
-            'meta_query'  => [
-                [
-                    'key'     => 'issue_id',
-                    'value'   => $issue_id,
-                    'compare' => '=',
-                ],
-            ],
-            'author'      => $user_id,
-            'fields'      => 'ids',
-            'posts_per_page' => 1
-        ]);
-
-        if (!empty($posts)) {
-            $in_collection[] = $issue_id;
-        }
+    if (!is_user_logged_in()) {
+        wp_send_json_error('Not logged in.');
     }
 
-    wp_send_json_success($in_collection);
+    $request = wp_unslash($_POST);
+    $issue_ids = array_values(array_unique(array_filter(
+        array_map('absint', (array) ($request['issue_ids'] ?? []))
+    )));
+
+    if (!$issue_ids) {
+        wp_send_json_success([]);
+    }
+
+    // Includes membership and the WordPress collection post ID.
+    wp_send_json_success(
+        ComicRenderer::get_collection_status($issue_ids)
+    );
 });
