@@ -372,136 +372,40 @@ class Comicbooks {
     /* -----------------------------------------------------------------
      *  AJAX – Batch series images
      * ----------------------------------------------------------------- */
-    public function ajax_load_series_images_batch()
-    {
+    public function ajax_load_series_images_batch() {
         check_ajax_referer(
             'comicbooks_fetchers_data',
             'nonce'
         );
     
-        $series_ids = isset($_POST['series_ids'])
-            ? array_values(
-                array_unique(
-                    array_filter(
-                        array_map(
-                            'absint',
-                            (array) wp_unslash($_POST['series_ids'])
+        $series_ids = array_values(
+            array_unique(
+                array_filter(
+                    array_map(
+                        'absint',
+                        (array) wp_unslash(
+                            $_POST['series_ids'] ?? []
                         )
                     )
                 )
             )
-            : [];
+        );
     
-        if (empty($series_ids)) {
+        if (!$series_ids) {
             wp_send_json_error(
                 ['message' => 'No series IDs provided'],
                 400
             );
         }
     
-        /*
-         * Prevent unusually large public batch requests.
-         */
+        // Retain the existing batch limit.
         $series_ids = array_slice($series_ids, 0, 2);
     
-        $images   = [];
-        $uncached = [];
-    
-        /*
-         * Separate cached images, confirmed missing images and uncached IDs.
-         */
-        foreach ($series_ids as $sid) {
-            $cache_key = "metron:series_image:{$sid}";
-            $cached    = get_transient($cache_key);
-    
-            /*
-             * This series was recently confirmed to have no usable image.
-             * Return an empty URL without calling either API again.
-             */
-            if ($cached === '__missing__') {
-                $images[$sid] = '';
-                continue;
-            }
-    
-            /*
-             * A usable image URL is already cached.
-             */
-            if ($cached !== false) {
-                $images[$sid] = (string) $cached;
-                continue;
-            }
-    
-            /*
-             * No cached result exists.
-             */
-            $uncached[$sid] = true;
-        }
-    
-        if (!empty($uncached)) {
-            /*
-             * Resolve known Comic Vine volume IDs.
-             */
-            $series_to_cv_id =
-                $this->data_service->get_known_cv_ids(
-                    array_keys($uncached)
-                );
-    
-            /*
-             * Retrieve Comic Vine first-issue covers in a batch.
-             */
-            $cv_images =
-                $this->data_service
-                    ->get_comicvine_first_issues_batch(
-                        $series_to_cv_id
-                    );
-    
-            foreach (array_keys($uncached) as $sid) {
-                $img = $cv_images[$sid] ?? '';
-    
-                /*
-                 * Only use the Metron issue-list fallback when the series
-                 * does not have a known Comic Vine ID.
-                 */
-                if (
-                    empty($img) &&
-                    empty($series_to_cv_id[$sid])
-                ) {
-                    $img =
-                        $this->data_service
-                            ->get_series_first_issue_image($sid);
-                }
-    
-                $cache_key = "metron:series_image:{$sid}";
-    
-                if (!empty($img)) {
-                    /*
-                     * Cache successful images for 30 days.
-                     */
-                    set_transient(
-                        $cache_key,
-                        $img,
-                        30 * DAY_IN_SECONDS
-                    );
-    
-                    $images[$sid] = $img;
-                } else {
-                    /*
-                     * Cache a sentinel for six hours. Never return the
-                     * sentinel itself to JavaScript.
-                     */
-                    set_transient(
-                        $cache_key,
-                        '__missing__',
-                        6 * HOUR_IN_SECONDS
-                    );
-    
-                    $images[$sid] = '';
-                }
-            }
-        }
-    
         wp_send_json_success([
-            'images' => $images,
+            'results' =>
+                $this->data_service->get_series_cover_results(
+                    $series_ids
+                ),
         ]);
     }
 

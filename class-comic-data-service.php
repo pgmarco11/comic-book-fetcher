@@ -32,6 +32,8 @@ class ComicDataService {
             ? (int) $this->client->dataset_ttl
             : self::DEFAULT_DATASET_TTL;
     }   
+
+    
     
     public function with_cached_catalog_details(array $items, string $type): array
         {
@@ -66,16 +68,15 @@ class ComicDataService {
                     }
 
                     $id = absint($item['series_id'] ?? 0);
-                    $cached = $id
-                        ? get_transient("metron:series_image:{$id}")
-                        : false;
-
-                    if ($cached === '__missing__') {
-                        // Keep the placeholder, but skip another enrichment request.
+                    $result = $id
+                    ? $this->get_cached_series_cover_result($id)
+                    : null;
+                
+                    if (($result['status'] ?? '') === 'found') {
+                        $item['image'] = $result['url'];
                         $item['image_resolved'] = true;
-                    } elseif (is_string($cached) && $cached !== '') {
-                        $item['image'] = esc_url_raw($cached);
-                        $item['image_resolved'] = $item['image'] !== '';
+                    } elseif (($result['status'] ?? '') === 'missing') {
+                        $item['image_resolved'] = true;
                     }
                 }
             }
@@ -467,7 +468,7 @@ class ComicDataService {
             MetronClient::release_lock(self::PUBLISHER_LOCK);
         }
     }
-    
+
     /* -----------------------------------------------------------------
     *  PUBLISHER INFO (single record)
     * ----------------------------------------------------------------- */
@@ -1694,6 +1695,570 @@ class ComicDataService {
         ];
     }
             
+    
+    private static function cover_url($value): string {
+        if (
+            !is_string($value) ||
+            !preg_match('~^https?://~i', trim($value))
+        ) {
+            return '';
+        }
+    
+        $url = esc_url_raw(trim($value), ['http', 'https']);
+        $parts = wp_parse_url($url);
+    
+        return is_array($parts) &&
+            !empty($parts['host']) &&
+            in_array(
+                strtolower($parts['scheme'] ?? ''),
+                ['http', 'https'],
+                true
+            )
+                ? $url
+                : '';
+    }
+    
+    private static function cover_failure(
+        RuntimeException $error
+    ): array {
+        if ($error instanceof ComicApiTemporaryException) {
+            return [
+                'status' => 'retry',
+                'retry_after' => $error->retry_after,
+                'message' => $error->getMessage(),
+            ];
+        }
+    
+        return [
+            'status' => 'error',
+            'message' => $error->getMessage(),
+        ];
+    }
+    
+    public function get_cached_series_cover_result(
+        int $sid
+    ): ?array {
+        $cached = get_transient(
+            "metron:series_cover_result:v1:{$sid}"
+        );
+    
+        if (is_array($cached)) {
+            if (($cached['status'] ?? '') === 'missing') {
+                return ['status' => 'missing'];
+            }
+    
+            $url = self::cover_url($cached['url'] ?? '');
+    
+            if (
+                ($cached['status'] ?? '') === 'found' &&
+                $url !== ''
+            ) {
+                return [
+                    'status' => 'found',
+                    'url' => $url,
+                ];
+            }
+        }
+    
+        // Preserve old positive caches.
+        // Old __missing__ values do not pass URL validation.
+        $url = self::cover_url(
+            get_transient("metron:series_image:{$sid}")
+        );
+    
+        return $url !== ''
+            ? ['status' => 'found', 'url' => $url]
+            : null;
+    }
+    
+    private function cover_metron_data(
+        string $path,
+        callable $valid
+    ): array {
+        $url = $this->client->api_base . $path;
+        $data = $this->client->api_get($url, 1);
+    
+        if (is_array($data) && isset($data['error'])) {
+            if (!empty($data['temporary_error'])) {
+                throw new ComicApiTemporaryException(
+                    'Metron cover lookup is temporarily unavailable.',
+                    $data['retry_after'] ?? 2
+                );
+            }
+    
+            throw new RuntimeException(
+                'Metron cover lookup failed. Check API access.'
+            );
+        }
+    
+        if (!is_array($data) || !$valid($data)) {
+            // Invalidate only this malformed API response.
+            delete_transient(
+                'metron:api:' . md5(esc_url_raw($url))
+            );
+    
+            throw new ComicApiTemporaryException(
+                'Metron returned incomplete cover data.'
+            );
+        }
+    
+        return $data;
+    }
+    
+    private function series_cover_cv_id(int $sid): int {
+        $cached = get_transient(
+            "metron:series_cvid:{$sid}"
+        );
+    
+        if (
+            is_scalar($cached) &&
+            ctype_digit((string) $cached) &&
+            (int) $cached > 0
+        ) {
+            return (int) $cached;
+        }
+    
+        $valid = static function (array $series) use ($sid): bool {
+            $cv = $series['cv_id'] ?? null;
+    
+            return (int) ($series['id'] ?? 0) === $sid &&
+                is_string($series['name'] ?? null) &&
+                $series['name'] !== '' &&
+                array_key_exists('cv_id', $series) &&
+                (
+                    $cv === null ||
+                    (is_int($cv) && $cv >= 0) ||
+                    (is_string($cv) && ctype_digit($cv))
+                );
+        };
+    
+        $series = get_transient(
+            "metron:series:{$sid}"
+        );
+    
+        if (!is_array($series) || !$valid($series)) {
+            $series = $this->cover_metron_data(
+                "series/{$sid}/",
+                $valid
+            );
+    
+            set_transient(
+                "metron:series:{$sid}",
+                $series,
+                14 * DAY_IN_SECONDS
+            );
+        }
+    
+        $cv_id = (int) ($series['cv_id'] ?? 0);
+    
+        if ($cv_id > 0) {
+            set_transient(
+                "metron:series_cvid:{$sid}",
+                $cv_id,
+                YEAR_IN_SECONDS
+            );
+        }
+    
+        return $cv_id;
+    }
+    
+    private static function cover_from_url($value): array {
+        if (
+            $value === null ||
+            (is_string($value) && trim($value) === '')
+        ) {
+            return ['status' => 'missing'];
+        }
+    
+        $url = self::cover_url($value);
+    
+        if ($url === '') {
+            throw new ComicApiTemporaryException(
+                'The API returned an invalid cover URL.'
+            );
+        }
+    
+        return [
+            'status' => 'found',
+            'url' => $url,
+        ];
+    }
+    
+    private function metron_first_cover_result(int $sid): array {
+        $data = $this->cover_metron_data(
+            "series/{$sid}/issue_list/?page=1&page_size=1",
+            static function (array $data): bool {
+                return is_array($data['results'] ?? null) &&
+                    is_int($data['count'] ?? null) &&
+                    $data['count'] >= count($data['results']) &&
+                    (
+                        $data['count'] === 0 ||
+                        !empty($data['results'][0])
+                    );
+            }
+        );
+    
+        if ($data['count'] === 0) {
+            return ['status' => 'missing'];
+        }
+    
+        $issue = $data['results'][0];
+    
+        if (
+            !is_array($issue) ||
+            !array_key_exists('image', $issue)
+        ) {
+            throw new ComicApiTemporaryException(
+                'Metron omitted the issue image field.'
+            );
+        }
+    
+        return self::cover_from_url($issue['image']);
+    }
+    
+    private static function cv_cover_result(array $issue): array {
+        if (!array_key_exists('image', $issue)) {
+            throw new ComicApiTemporaryException(
+                'Comic Vine omitted the image field.'
+            );
+        }
+    
+        if ($issue['image'] === null) {
+            return ['status' => 'missing'];
+        }
+    
+        if (!is_array($issue['image'])) {
+            throw new ComicApiTemporaryException(
+                'Comic Vine returned invalid image data.'
+            );
+        }
+    
+        $saw_field = false;
+        $invalid = false;
+    
+        foreach (
+            ['small_url', 'medium_url', 'original_url']
+            as $field
+        ) {
+            if (!array_key_exists($field, $issue['image'])) {
+                continue;
+            }
+    
+            $saw_field = true;
+    
+            try {
+                $result = self::cover_from_url(
+                    $issue['image'][$field]
+                );
+    
+                if ($result['status'] === 'found') {
+                    return $result;
+                }
+            } catch (ComicApiTemporaryException $error) {
+                $invalid = true;
+            }
+        }
+    
+        if (!$saw_field || $invalid) {
+            throw new ComicApiTemporaryException(
+                'Comic Vine returned incomplete image data.'
+            );
+        }
+    
+        return ['status' => 'missing'];
+    }
+    
+    private function cv_first_cover_results(
+        array $series_to_cv
+    ): array {
+        $key = get_option('comic_vine_api_key', '');
+    
+        if (!is_string($key) || trim($key) === '') {
+            throw new RuntimeException(
+                'Comic Vine API key is not configured.'
+            );
+        }
+    
+        $volume_ids = array_values(
+            array_unique(array_values($series_to_cv))
+        );
+    
+        $response = $this->client->http_get(
+            add_query_arg(
+                [
+                    'api_key' => $key,
+                    'format' => 'json',
+                    'field_list' => 'id,volume,image,issue_number',
+                    'filter' =>
+                        'volume:' .
+                        implode('|', $volume_ids) .
+                        ',issue_number:1',
+                    'limit' => 100,
+                    'offset' => 0,
+                ],
+                'https://comicvine.gamespot.com/api/issues/'
+            ),
+            [
+                'headers' => [
+                    'User-Agent' =>
+                        'ComicBookFetcher/1.1 (+' .
+                        get_site_url() . ')',
+                ],
+            ]
+        );
+    
+        if (is_wp_error($response)) {
+            throw new ComicApiTemporaryException(
+                'Comic Vine cover request failed.'
+            );
+        }
+    
+        $header = trim(
+            (string) wp_remote_retrieve_header(
+                $response,
+                'retry-after'
+            )
+        );
+    
+        $retry_after = ctype_digit($header)
+            ? max(1, (int) $header)
+            : 30;
+    
+        if ($header !== '' && !ctype_digit($header)) {
+            $date = strtotime($header);
+    
+            if ($date !== false) {
+                $retry_after = max(1, $date - time());
+            }
+        }
+    
+        $http = (int) wp_remote_retrieve_response_code($response);
+    
+        if (
+            in_array($http, [408, 425, 429], true) ||
+            $http >= 500
+        ) {
+            throw new ComicApiTemporaryException(
+                'Comic Vine is temporarily unavailable.',
+                $retry_after
+            );
+        }
+    
+        if ($http !== 200) {
+            throw new RuntimeException(
+                "Comic Vine returned HTTP {$http}. Check API access."
+            );
+        }
+    
+        $body = json_decode(
+            wp_remote_retrieve_body($response),
+            true
+        );
+    
+        if (
+            json_last_error() !== JSON_ERROR_NONE ||
+            !is_array($body) ||
+            !is_scalar($body['status_code'] ?? null) ||
+            !ctype_digit((string) $body['status_code'])
+        ) {
+            throw new ComicApiTemporaryException(
+                'Comic Vine returned invalid JSON data.'
+            );
+        }
+    
+        $code = (int) $body['status_code'];
+    
+        if (
+            in_array(
+                $code,
+                [100, 101, 102, 103, 104, 105],
+                true
+            )
+        ) {
+            throw new RuntimeException(
+                "Comic Vine rejected the request (code {$code}). " .
+                'Check API settings.'
+            );
+        }
+    
+        if ($code !== 1) {
+            throw new ComicApiTemporaryException(
+                "Comic Vine reported an API failure (code {$code}).",
+                $retry_after
+            );
+        }
+    
+        if (!is_array($body['results'] ?? null)) {
+            throw new ComicApiTemporaryException(
+                'Comic Vine omitted its results.'
+            );
+        }
+    
+        $rows = $body['results'];
+        $total = $body['number_of_total_results'] ?? null;
+        $page_count = $body['number_of_page_results'] ?? null;
+        $offset = $body['offset'] ?? null;
+    
+        // Absence is trustworthy only when the response is complete.
+        $complete =
+            is_scalar($total) &&
+            ctype_digit((string) $total) &&
+            is_scalar($page_count) &&
+            ctype_digit((string) $page_count) &&
+            is_scalar($offset) &&
+            ctype_digit((string) $offset) &&
+            (int) $offset === 0 &&
+            (int) $page_count === count($rows) &&
+            (int) $total === count($rows);
+    
+        $found = [];
+        $bad_volumes = [];
+        $unassigned_bad_row = false;
+    
+        foreach ($rows as $issue) {
+            $volume_data =
+                is_array($issue) &&
+                is_array($issue['volume'] ?? null)
+                    ? $issue['volume']
+                    : [];
+    
+            $raw_volume = $volume_data['id'] ?? null;
+    
+            $volume =
+                is_scalar($raw_volume) &&
+                ctype_digit((string) $raw_volume)
+                    ? (int) $raw_volume
+                    : 0;
+    
+            if (
+                !$volume ||
+                !in_array($volume, $volume_ids, true)
+            ) {
+                $unassigned_bad_row = true;
+                continue;
+            }
+    
+            try {
+                if (
+                    !is_scalar($issue['issue_number'] ?? null) ||
+                    trim((string) $issue['issue_number']) !== '1'
+                ) {
+                    throw new ComicApiTemporaryException(
+                        'Comic Vine returned an unexpected issue.'
+                    );
+                }
+    
+                $result = self::cv_cover_result($issue);
+    
+                if ($result['status'] === 'found') {
+                    $found[$volume] = $result;
+                }
+            } catch (ComicApiTemporaryException $error) {
+                $bad_volumes[$volume] = true;
+            }
+        }
+    
+        $results = [];
+    
+        foreach ($series_to_cv as $sid => $volume) {
+            if (isset($found[$volume])) {
+                $results[$sid] = $found[$volume];
+            } elseif (
+                $complete &&
+                !$unassigned_bad_row &&
+                empty($bad_volumes[$volume])
+            ) {
+                $results[$sid] = ['status' => 'missing'];
+            } else {
+                $results[$sid] = [
+                    'status' => 'retry',
+                    'retry_after' => 3,
+                    'message' =>
+                        'Comic Vine did not complete this cover lookup.',
+                ];
+            }
+        }
+    
+        return $results;
+    }
+    
+    public function get_series_cover_results(
+        array $series_ids
+    ): array {
+        $results = [];
+        $uncached = [];
+        $cv_map = [];
+    
+        // Collect cached entries before attempting external requests.
+        foreach ($series_ids as $sid) {
+            $cached = $this->get_cached_series_cover_result(
+                (int) $sid
+            );
+    
+            if ($cached !== null) {
+                $results[$sid] = $cached;
+            } else {
+                $uncached[] = (int) $sid;
+            }
+        }
+    
+        foreach ($uncached as $sid) {
+            try {
+                $cv_id = $this->series_cover_cv_id($sid);
+    
+                if ($cv_id > 0) {
+                    $cv_map[$sid] = $cv_id;
+                } else {
+                    $results[$sid] =
+                        $this->metron_first_cover_result($sid);
+                }
+            } catch (RuntimeException $error) {
+                $results[$sid] = self::cover_failure($error);
+            }
+        }
+    
+        if ($cv_map) {
+            try {
+                $cv_results = $this->cv_first_cover_results($cv_map);
+    
+                foreach ($cv_results as $sid => $result) {
+                    $results[$sid] = $result;
+                }
+            } catch (RuntimeException $error) {
+                foreach ($cv_map as $sid => $cv_id) {
+                    $results[$sid] = self::cover_failure($error);
+                }
+            }
+        }
+    
+        // Temporary/configuration failures never become negative caches.
+        foreach ($uncached as $sid) {
+            $result = $results[$sid] ?? [
+                'status' => 'retry',
+                'retry_after' => 3,
+            ];
+    
+            $results[$sid] = $result;
+    
+            if (
+                in_array(
+                    $result['status'],
+                    ['found', 'missing'],
+                    true
+                )
+            ) {
+                set_transient(
+                    "metron:series_cover_result:v1:{$sid}",
+                    $result,
+                    $result['status'] === 'found'
+                        ? 30 * DAY_IN_SECONDS
+                        : 6 * HOUR_IN_SECONDS
+                );
+            }
+        }
+    
+        return $results;
+    }
 
     /* -----------------------------------------------------------------
     **  SINGLE ISSUE

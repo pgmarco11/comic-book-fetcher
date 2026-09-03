@@ -710,6 +710,8 @@ jQuery(document).ready(function($){
     let seriesImageBatchTimer = null;
 
     function queueSeriesImage(img) {
+        if (img.dataset.coverStatus === 'error') return;
+
         const seriesId = img.dataset.seriesId;
 
         if (!seriesId) return;
@@ -730,95 +732,188 @@ jQuery(document).ready(function($){
         seriesImageBatchTimer = setTimeout(flushSeriesImageBatch, 400);
     }
 
-    function flushSeriesImageBatch()
-    {
-        if (!pendingSeriesImageMap.size) {
+    function retrySeriesCover(img, seconds = 3) {
+        delete img.dataset.loading;
+        delete img.dataset.loaded;
+
+        img.onload = null;
+        img.onerror = null;
+
+        if (
+            Number(img.dataset.seriesRetryCount || 0) >=
+            enrichmentRetryLimit
+        ) {
+            img.dataset.coverStatus = 'error';
             return;
         }
-    
-        /*
-         * Process only two visible series at a time.
-         */
+
+        img.dataset.coverStatus = 'retry';
+
+        const delay = Math.min(
+            2147483647,
+            Math.max(
+                1000,
+                (Number(seconds) || 3) * 1000
+            )
+        );
+
+        requeueEnrichment(
+            img,
+            'seriesRetryCount',
+            queueSeriesImage,
+            delay
+        );
+    }
+
+    function flushSeriesImageBatch() {
+        if (!pendingSeriesImageMap.size) return;
+
         const seriesIds = Array.from(
             pendingSeriesImageMap.keys()
         ).slice(0, 2);
-    
+
         const batch = new Map();
-    
+
         seriesIds.forEach(seriesId => {
             batch.set(
                 seriesId,
                 pendingSeriesImageMap.get(seriesId) || []
             );
-    
+
             pendingSeriesImageMap.delete(seriesId);
         });
-    
+
         enqueueEnrichmentRequest({
             options: {
                 url: comicbooks_fetchers_data.ajax_url,
                 method: 'POST',
                 dataType: 'json',
+
                 data: {
                     action: 'load_series_images_batch',
                     series_ids: seriesIds,
-                    nonce: comicbooks_fetchers_data.nonce,
-                },
+                    nonce: comicbooks_fetchers_data.nonce
+                }
             },
-    
+
             done(response) {
-                const images = response?.data?.images || {};
-    
+                const results = response?.success === true
+                    ? response?.data?.results
+                    : null;
+
                 seriesIds.forEach(seriesId => {
-                    const imageUrl = images[seriesId] || '';
+                    const result = results?.[seriesId];
                     const imgs = batch.get(seriesId) || [];
-    
+
                     imgs.forEach(img => {
-                        delete img.dataset.loading;
-                    
-                        if (!imageUrl) {
-                            delete img.dataset.seriesRetryCount;
-                            img.dataset.loaded = 'true';
+                        if (!img.isConnected) return;
+
+                        if (result?.status === 'found') {
+                            let url;
+
+                            try {
+                                url = new URL(result.url);
+
+                                if (
+                                    !['http:', 'https:'].includes(
+                                        url.protocol
+                                    )
+                                ) {
+                                    throw new Error(
+                                        'Invalid image protocol'
+                                    );
+                                }
+                            } catch {
+                                retrySeriesCover(img);
+                                return;
+                            }
+
+                            img.dataset.coverStatus = 'loading';
+                            img.dataset.loading = 'true';
+
+                            img.onload = () => {
+                                delete img.dataset.loading;
+                                delete img.dataset.seriesRetryCount;
+
+                                img.dataset.loaded = 'true';
+                                img.dataset.coverStatus = 'found';
+
+                                img.onload = null;
+                                img.onerror = null;
+                            };
+
+                            img.onerror = () => {
+                                retrySeriesCover(img);
+                            };
+
+                            img.src = url.href;
                             return;
                         }
-                    
-                        img.onload = () => {
-                            delete img.dataset.seriesRetryCount;
-                            img.dataset.loaded = 'true';
-                        };
-                    
-                        img.onerror = () => {
+
+                        if (result?.status === 'missing') {
                             delete img.dataset.loading;
-                    
-                            requeueEnrichment(
-                                img,
-                                'seriesRetryCount',
-                                queueSeriesImage
+                            delete img.dataset.seriesRetryCount;
+
+                            img.onload = null;
+                            img.onerror = null;
+
+                            img.dataset.loaded = 'true';
+                            img.dataset.coverStatus = 'missing';
+                            return;
+                        }
+
+                        if (result?.status === 'error') {
+                            delete img.dataset.loading;
+                            delete img.dataset.loaded;
+
+                            img.dataset.coverStatus = 'error';
+
+                            img.onload = null;
+                            img.onerror = null;
+
+                            console.warn(
+                                'Series cover unavailable:',
+                                seriesId,
+                                result.message
                             );
-                        };
-                    
-                        img.src = imageUrl;
-                    });
-                });
-            },
-    
-            fail(xhr) {
-                seriesIds.forEach(seriesId => {
-                    const imgs = batch.get(seriesId) || [];
-    
-                    imgs.forEach(img => {
-                        delete img.dataset.loading;
-                    
-                        requeueEnrichment(
+
+                            return;
+                        }
+
+                        // Missing or malformed entries are failures.
+                        // Only an explicit "missing" status confirms absence.
+                        retrySeriesCover(
                             img,
-                            'seriesRetryCount',
-                            queueSeriesImage,
-                            apiRetryDelay(xhr)
+                            result?.retry_after
                         );
                     });
                 });
             },
-    
+
+            fail(xhr) {
+                const retryable =
+                    xhr.status === 0 ||
+                    xhr.status === 408 ||
+                    xhr.status === 429 ||
+                    xhr.status >= 500;
+
+                seriesIds.forEach(seriesId => {
+                    (batch.get(seriesId) || []).forEach(img => {
+                        if (retryable) {
+                            retrySeriesCover(
+                                img,
+                                apiRetryDelay(xhr) / 1000
+                            );
+                        } else {
+                            delete img.dataset.loading;
+                            delete img.dataset.loaded;
+
+                            img.dataset.coverStatus = 'error';
+                        }
+                    });
+                });
+            },
+
             always() {
                 if (pendingSeriesImageMap.size) {
                     seriesImageBatchTimer = window.setTimeout(
@@ -826,7 +921,7 @@ jQuery(document).ready(function($){
                         100
                     );
                 }
-            },
+            }
         });
     }
     

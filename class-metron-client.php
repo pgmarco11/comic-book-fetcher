@@ -299,93 +299,93 @@
          $backoff = 1,
          bool $cache_only = false
      ) {
-         $url = esc_url_raw($url);
+        $url = esc_url_raw($url);
  
-         if ($url === '') {
+        if ($url === '') {
              return ['error' => 'Invalid Metron API URL'];
-         }
+        }
  
-         $cache_key = 'metron:api:' . md5($url);
-         $cached = get_transient($cache_key);
+        $cache_key = 'metron:api:' . md5($url);
+        $cached = get_transient($cache_key);
  
-         if ($cached !== false) {
+        if ($cached !== false) {
              return $cached;
-         }
+        }
  
-         if ($cache_only) {
+        if ($cache_only) {
              return ['cache_miss' => true];
-         }
+        }
  
-         $username = get_option('metron_api_username', '');
-         $password = get_option('metron_api_password', '');
+        $username = get_option('metron_api_username', '');
+        $password = get_option('metron_api_password', '');
  
-         if (!$username || !$password) {
+        if (!$username || !$password) {
              return ['error' => 'Missing Metron API credentials'];
-         }
+        }
  
-         $retries = is_numeric($retries)
+        $retries = is_numeric($retries)
              ? max(1, min(3, (int) $retries))
              : 3;
  
-         $backoff = is_numeric($backoff)
+        $backoff = is_numeric($backoff)
              ? max(1, (int) $backoff)
              : 1;
  
-         $scope = 'metron-request';
+        $scope = 'metron-request';
  
-         for ($attempt = 1; $attempt <= $retries; $attempt++) {
+        for ($attempt = 1; $attempt <= $retries; $attempt++) {
              if (self::remaining_seconds() < 1.0) {
                  return self::temporary_failure(
                      'The API time budget is exhausted. Please retry.'
                  );
-             }
+            }
  
-             // Wait briefly; return a retryable response if still busy.
-             if (!self::acquire_lock($scope, 1.0)) {
+            // Wait briefly; return a retryable response if still busy.
+            if (!self::acquire_lock($scope, 1.0)) {
                  return self::temporary_failure(
                      'The Metron request queue is busy. Please retry.'
                  );
-             }
+            }
  
-             $slot_wait = 0.0;
-             $retry_delay = $backoff;
-             $retryable = false;
-             $message = 'Metron request failed.';
+            $slot_wait = 0.0;
+            $retry_delay = $backoff;
+            $retryable = false;
+            $message = 'Metron request failed.';
  
-             try {
-                 // Another worker may have populated this cache.
-                 $cached = get_transient($cache_key);
+            try {
+                    // Another worker may have populated this cache.
+                    $cached = get_transient($cache_key);
+    
+                    if ($cached !== false) {
+                        return $cached;
+                    }
+    
+                    $next = self::read_gate();
+    
+                    if ($next === null) {
+                        return self::temporary_failure(
+                            'Cannot read the Metron rate limiter.'
+                        );
+                    }
+    
+                    $slot_wait = max(
+                        0.0,
+                        $next - microtime(true)
+                    );
+    
+                    if ($slot_wait <= 0) {
+                        $next = microtime(true) + self::MIN_INTERVAL;
  
-                 if ($cached !== false) {
-                     return $cached;
-                 }
- 
-                 $next = self::read_gate();
- 
-                 if ($next === null) {
-                     return self::temporary_failure(
-                         'Cannot read the Metron rate limiter.'
-                     );
-                 }
- 
-                 $slot_wait = max(
-                     0.0,
-                     $next - microtime(true)
-                 );
- 
-                 if ($slot_wait <= 0) {
-                     $next = microtime(true) + self::MIN_INTERVAL;
- 
-                     if (!self::write_gate($next)) {
+                    if (!self::write_gate($next)) {
                          return self::temporary_failure(
                              'Cannot update the Metron rate limiter.'
                          );
-                     }
+                    }
  
-                     $response = $this->http_get(
-                         $url,
-                         [
-                             'headers' => [
+                    $response = $this->http_get(
+                        $url,
+                        [
+                            'headers' => [
                                  'User-Agent' =>
                                      'ComicBookFetcher/1.1 (+' .
                                      get_site_url() . ')',
@@ -395,37 +395,37 @@
                                      base64_encode(
                                          $username . ':' . $password
                                      ),
-                             ],
-                             'httpversion' => '1.1',
-                         ],
-                         false
-                     );
+                            ],
+                            'httpversion' => '1.1',
+                        ],
+                        false
+                    );
  
-                     if (is_wp_error($response)) {
+                    if (is_wp_error($response)) {
                          $retryable = true;
                          $message =
                              'Metron could not respond in time. Please retry.';
-                     } else {
-                         $status = (int)
+                    } else {
+                        $status = (int)
                              wp_remote_retrieve_response_code($response);
  
-                         $burst = wp_remote_retrieve_header(
+                        $burst = wp_remote_retrieve_header(
                              $response,
                              'x-ratelimit-burst-remaining'
-                         );
+                        );
  
-                         $gate_changed = false;
+                        $gate_changed = false;
  
-                         if ($burst !== '' && (int) $burst <= 1) {
+                        if ($burst !== '' && (int) $burst <= 1) {
                              $next = max(
                                  $next,
                                  microtime(true) + 8.2
                              );
  
                              $gate_changed = true;
-                         }
+                        }
  
-                         if ($status === 429) {
+                        if ($status === 429) {
                              $retry_delay = self::retry_after(
                                  $response,
                                  $backoff
@@ -438,59 +438,57 @@
                              );
  
                              $gate_changed = true;
-                         }
- 
-                         if (
+                        } 
+                        if (
                              $gate_changed &&
                              !self::write_gate($next)
-                         ) {
+                        ) {
                              return self::temporary_failure(
                                  'Cannot update the Metron cooldown.'
                              );
-                         }
+                        }
  
-                         if ($status === 200) {
+                        if ($status === 200) {
                              $data = json_decode(
                                  wp_remote_retrieve_body($response),
                                  true
-                             );
- 
-                             if (
+                            );
+                            if (
                                  json_last_error() === JSON_ERROR_NONE &&
                                  is_array($data)
-                             ) {
-                                 $ttl = count($data['results'] ?? []) >= 100
+                            ) {
+                                $ttl = count($data['results'] ?? []) >= 100
                                      ? WEEK_IN_SECONDS
                                      : 2 * WEEK_IN_SECONDS;
  
-                                 set_transient(
+                                set_transient(
                                      $cache_key,
                                      $data,
                                      $ttl
-                                 );
+                                );
  
-                                 return $data;
-                             }
+                                return $data;
+                            }
  
-                             $retryable = true;
-                             $message =
+                            $retryable = true;
+                            $message =
                                  'Metron returned an invalid response. Please retry.';
-                         } else {
-                             $retryable =
+                        } else {
+                            $retryable =
                                  $status === 429 ||
                                  $status >= 500;
  
-                             $message =
+                            $message =
                                  "Metron API returned HTTP {$status}.";
-                         }
-                     }
-                 }
-             } finally {
+                        }
+                    }
+                }
+            } finally {
                  // Release before any rate-limit or retry sleep.
                  self::release_lock($scope);
-             }
+            }
  
-             if ($slot_wait > 0) {
+            if ($slot_wait > 0) {
                  if (!self::pause($slot_wait)) {
                      return self::temporary_failure(
                          'Metron is cooling down. Please retry.',
@@ -501,27 +499,27 @@
                  // Waiting for permission to send is not an HTTP attempt.
                  $attempt--;
                  continue;
-             }
+            }
  
-             if (!$retryable) {
+            if (!$retryable) {
                  return ['error' => $message];
-             }
+            }
  
-             if (
+            if (
                  $attempt === $retries ||
                  !self::pause($retry_delay)
-             ) {
+            ) {
                  return self::temporary_failure(
                      $message,
                      $retry_delay
                  );
-             }
+            }
  
-             $backoff = min($backoff * 2, 8);
-         }
+            $backoff = min($backoff * 2, 8);
+        }
  
-         return self::temporary_failure(
+        return self::temporary_failure(
              'Metron retries are exhausted. Please retry.'
-         );
-     }
- }
+        );
+    }
+}
