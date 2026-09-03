@@ -30,6 +30,17 @@ require_once COMICBOOKS_PLUGIN_DIR . 'class-comicbooks.php';
 require_once COMICBOOKS_PLUGIN_DIR . '/includes/wish-list.php';
 require_once COMICBOOKS_PLUGIN_DIR . '/includes/comic-collection.php';
 
+add_action(
+    'comicbooks_refresh_publisher_list',
+    function () {
+        $service = new ComicDataService(
+            new MetronClient()
+        );
+
+        $service->refresh_publishers_batch();
+    }
+);
+
 // === INITIALIZE CORE ===
 add_action('init', function () {
     // Start AJAX handler (Comicbooks class)

@@ -91,68 +91,81 @@ class Comicbooks {
      *  AJAX – Publishers (list + detailed info)
      * ----------------------------------------------------------------- */
     public function ajax_load_publishers() {
-        if ( ! isset( $_POST['nonce'] ) || ! wp_verify_nonce( $_POST['nonce'], 'comicbooks_fetchers_data' ) ) {
-            wp_send_json_error( [ 'message' => 'Invalid security token' ], 400 );
-        }
-
-        $name = isset($_POST['name'])
-            ? sanitize_text_field(
-                wp_unslash($_POST['name'])
-            )
-            : '';
+        check_ajax_referer(
+            'comicbooks_fetchers_data',
+            'nonce'
+        );
     
-        $page = isset($_POST['page'])
-            ? max(1, absint(wp_unslash($_POST['page'])))
-            : 1;
-        
-        $letter = isset($_POST['letter'])
-            ? sanitize_text_field(
-                wp_unslash($_POST['letter'])
-            )
-            : 'all';
-        
+        $name = sanitize_text_field(
+            wp_unslash($_POST['name'] ?? '')
+        );
+    
+        $page = max(
+            1,
+            absint($_POST['page'] ?? 1)
+        );
+    
+        $letter = sanitize_text_field(
+            wp_unslash($_POST['letter'] ?? 'all')
+        );
+    
         $letter = $letter !== '' ? $letter : 'all';
         $per_page = 10;
-
-        $publisher_data = $this->data_service->get_publishers( $name, $page, $per_page, $letter, false );
-
-        if (!empty($publisher_data['temporary_error'])) {
-            wp_send_json_error(
-                [
-                    'message' =>
-                        $publisher_data['temporary_error'],
-                    'temporary' => true,
-                ],
-                503
-            );
-        }
-
-        if ( empty( $publisher_data['items'] ) ) {
-            wp_send_json_success( [
-                'publishers' => [],
-                'total'      => $publisher_data['total'],
-                'page'       => $page,
-                'max_pages'  => ceil( $publisher_data['total'] / $per_page ),
-            ] );
-        }
-
-        $publisher_data['items'] = $this->data_service->with_cached_catalog_details(
-            $publisher_data['items'] ?? [],
-            'publishers'
+    
+        $data = $this->data_service->get_publishers(
+            $name,
+            $page,
+            $per_page,
+            $letter,
+            false
         );
-
-        wp_send_json_success([
-            'publishers' => $publisher_data['items'] ?? [],
-            'total'      => (int) ($publisher_data['total'] ?? 0),
-            'page'       => $page,
-            'per_page'   => $per_page,
-            'max_pages'  => (int) ceil(
-                ($publisher_data['total'] ?? 0) / $per_page
+    
+        if (!$data['ready']) {
+            header(
+                'Retry-After: ' . $data['retry_after']
+            );
+    
+            wp_send_json_success([
+                'ready' => false,
+                'publishers' => [],
+                'total' => 0,
+                'retry_after' => $data['retry_after'],
+            ]);
+        }
+    
+        $result = [
+            'ready' => true,
+            'stale' => $data['stale'],
+            'publishers' =>
+                $this->data_service->with_cached_catalog_details(
+                    $data['items'],
+                    'publishers'
+                ),
+            'total' => $data['total'],
+            'page' => $page,
+            'per_page' => $per_page,
+            'max_pages' => (int) ceil(
+                $data['total'] / $per_page
             ),
-        ]);
-        
+        ];
+    
+        if (!empty($_POST['include_options'])) {
+            // Populate a dropdown that was empty during the initial build.
+            $options = $this->data_service->get_publishers(
+                '',
+                1,
+                PHP_INT_MAX,
+                'all',
+                false
+            );
+    
+            $result['publisher_options'] = $options['items'];
+        }
+    
+        wp_send_json_success($result);
     }
 
+    
      /* -----------------------------------------------------------------
      *  AJAX – Load a page of series (books) for a publisher
      * ----------------------------------------------------------------- */

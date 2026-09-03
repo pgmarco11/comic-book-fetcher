@@ -54,6 +54,7 @@ jQuery(document).ready(function($){
     let currentPage = 1;
     let currentSearch = '';
     let booksRequestId = 0;
+    let publishersRequestId = 0;
     
     // Custom confirm dialog using Toastify and Promise
     function toastConfirm(message) {
@@ -896,122 +897,197 @@ jQuery(document).ready(function($){
     }
 
     // Fetch publishers
-    function fetchPublishers(name = '', page, letter = 'all', retries = 3) {
-        showSpinner();    
-
-        $('#book-container')
-        .attr('aria-busy', 'true')
-        .css('visibility', 'hidden');
-
-        const cacheKey = `metron_publishers_${name}_${page}_${letter}`;
-        const cached = getCachedData(cacheKey);  
-
-        const hasValidCachedPublishers =
-        cached &&
-        Array.isArray(cached.publishers) &&
-        cached.publishers.length > 0 &&
-        Number(cached.total) > 0;
+    function fetchPublishers(
+        name = '',
+        page = 1,
+        letter = 'all',
+        retries = 3,
+        polls = 0
+    ) {
+        const requestId = ++publishersRequestId;
     
-        if (hasValidCachedPublishers) {
-            allPublishers = cached.publishers;
-        
-            const total   = Number(cached.total);
-            const perPage = 10;
-        
-            renderItems(
-                allPublishers,
-                'publishers',
-                page,
-                total,
-                name,
-                letter,
-                perPage
-            );
-        
-            showLetterButtons(true);
-            updateActiveLetter(letter);
-
-            $('#book-container')
-            .attr('aria-busy', 'false')
-            .css('visibility', 'visible');
-
+        // Invalidate any older series request.
+        ++booksRequestId;
+    
+        const isCurrent = () =>
+            requestId === publishersRequestId;
+    
+        const container = $('#book-container');
+        const select = document.getElementById('publisher-select');
+    
+        function showRetry(message) {
+            if (!isCurrent()) return;
+    
             hideSpinner();
-        
-            return;
+    
+            container.empty()
+                .attr('aria-busy', 'false')
+                .css('visibility', 'visible')
+                .append($('<p>').text(message))
+                .append(
+                    $('<button>', {
+                        type: 'button',
+                        text: 'Try again'
+                    }).on('click', () => {
+                        fetchPublishers(name, page, letter);
+                    })
+                );
         }
-        
-        /*
-        * Remove an old empty result rather than displaying it.
-        */
-        if (cached) {
-            clearCachedData(cacheKey);
-        }
+    
+        showSpinner();
+    
+        container
+            .attr('aria-busy', 'true')
+            .css('visibility', 'visible');
+    
+        // Read the server snapshot so browser caching cannot suppress
+        // refresh scheduling or hide completion of the initial build.
         $.ajax({
             url: comicbooks_fetchers_data.ajax_url,
             method: 'POST',
             timeout: 30000,
+    
             data: {
                 action: 'load_publishers',
                 nonce: comicbooks_fetchers_data.nonce,
-                name: name,
-                page: page,
-                letter: letter
+                name,
+                page,
+                letter,
+                include_options:
+                    select && select.options.length <= 1 ? 1 : 0
             },
-            success: function(response) {           
-        
-                if (!response.success || !response.data?.publishers) {
-                    console.error('BAD RESPONSE — NO PUBLISHERS!', response);                    
-                    $('#book-container')
-                    .attr('aria-busy', 'false')
-                    .css('visibility', 'visible');
-                    
-                    $('#book-container').html('<p>Failed to load publishers.</p>');
-                    hideSpinner();
+    
+            success(response, textStatus, xhr) {
+                if (!isCurrent()) return;
+    
+                const data = response?.data;
+    
+                if (!response?.success || !data) {
+                    showRetry('Publishers could not be loaded.');
                     return;
                 }
-        
-                const publishers = response.data.publishers || [];
-                const total = response.data.total || 0;   
-                
-                setCachedData(cacheKey, { 
-                    publishers, 
-                    total, 
-                    maxPages: Math.ceil(total / 10) 
-                });
-        
-                renderItems(publishers, 'publishers', page, total, name, letter, 10);
+    
+                if (data.ready === false) {
+                    // Stop automatic polling after approximately two minutes.
+                    if (polls >= 24) {
+                        showRetry(
+                            'The publisher list is still being prepared. ' +
+                            'Please check again shortly.'
+                        );
+                        return;
+                    }
+    
+                    hideSpinner();
+    
+                    container.empty()
+                        .attr('aria-busy', 'true')
+                        .append(
+                            $('<p>', { role: 'status' }).text(
+                                'Preparing the publisher list. ' +
+                                'This can take a little while…'
+                            )
+                        );
+    
+                    setTimeout(() => {
+                        if (isCurrent()) {
+                            fetchPublishers(
+                                name,
+                                page,
+                                letter,
+                                retries,
+                                polls + 1
+                            );
+                        }
+                    }, apiRetryDelay(xhr, 5000));
+    
+                    return;
+                }
+    
+                if (!Array.isArray(data.publishers)) {
+                    showRetry('Publishers could not be loaded.');
+                    return;
+                }
+    
+                if (
+                    select &&
+                    Array.isArray(data.publisher_options)
+                ) {
+                    const selected = select.value;
+    
+                    select.replaceChildren(
+                        new Option('Select a publisher', '')
+                    );
+    
+                    data.publisher_options.forEach(publisher => {
+                        select.add(
+                            new Option(
+                                publisher.name,
+                                String(publisher.id)
+                            )
+                        );
+                    });
+    
+                    select.value = selected;
+                }
+    
+                allPublishers = data.publishers;
+    
+                renderItems(
+                    allPublishers,
+                    'publishers',
+                    page,
+                    Number(data.total || 0),
+                    name,
+                    letter,
+                    10
+                );
+    
                 showLetterButtons(true);
                 updateActiveLetter(letter);
-                $('#book-container')
-                .attr('aria-busy', 'false')
-                .css('visibility', 'visible');
-
-                hideSpinner();        
-       
-            },
-            error: function(xhr) {
-                console.error('AJAX FAILED', xhr.status, xhr.responseText);
-        
-                if (typeof retries !== 'undefined' && retries > 0) {
-                    console.warn('Retrying fetchPublishers...', retries, 'left');
-                    setTimeout(
-                        () => fetchPublishers(name, page, letter, retries - 1),
-                        apiRetryDelay(xhr)
-                    );
-                } else {                
-                    $('#book-container')
+    
+                container
                     .attr('aria-busy', 'false')
                     .css('visibility', 'visible');
-
-                    $('#book-container').html('<p>Error loading publishers for page ' + page + '. <button onclick="location.reload()">Retry</button></p>');
-                    hideSpinner();
+    
+                hideSpinner();
+            },
+    
+            error(xhr, status) {
+                if (!isCurrent()) return;
+    
+                const retryable =
+                    status === 'timeout' ||
+                    xhr.status === 0 ||
+                    xhr.status === 429 ||
+                    xhr.status >= 500;
+    
+                if (retryable && retries > 0) {
+                    setTimeout(() => {
+                        if (isCurrent()) {
+                            fetchPublishers(
+                                name,
+                                page,
+                                letter,
+                                retries - 1,
+                                polls
+                            );
+                        }
+                    }, apiRetryDelay(xhr));
+    
+                    return;
                 }
+    
+                showRetry(
+                    'Publishers could not be loaded. Please try again.'
+                );
             }
         });
     }
 
     // Fetch books
     function fetchBooks(publisherId, page = 1, name = '', letter = 'all', retries = 3) {
+
+        ++publishersRequestId;
 
         // Every new request invalidates any previous request.
         const requestId = ++booksRequestId;

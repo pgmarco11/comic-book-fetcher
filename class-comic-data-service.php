@@ -84,118 +84,390 @@ class ComicDataService {
         return $items;
     }
 
-    /**-----------------------------------------------------------------
-     *  PUBLISHERS – full list (cached once a week)
-     * ----------------------------------------------------------------- */
-    public function get_publishers(
-        $name        = '',
-        $page        = 1,
-        $per_page    = 50,    
-        $letter      = 'all',
-        $bypass_cache = false
-    ) {
-        $transient_key = 'metron:publishers:full:v2'; // versioned
-
-        $full = $bypass_cache ? false : get_transient($transient_key);
+    private const PUBLISHER_SNAPSHOT = 'comicbooks_publishers_snapshot_v1';
+    private const PUBLISHER_JOB = 'comicbooks_publishers_job_v1';
+    private const PUBLISHER_HOOK = 'comicbooks_refresh_publisher_list';
+    private const PUBLISHER_LOCK = 'publisher-list-refresh';
+    private const PUBLISHER_FRESH_SECONDS = 14 * DAY_IN_SECONDS;
     
-        if ($full === false) {
-            $full            = [];
-            $api_page        = 1;
-            $temporary_error = '';
-        
-            do {
-                $url =
-                    $this->client->api_base .
-                    "publisher/?page={$api_page}&page_size=100";
-        
-                $data = $this->client->api_get($url);
-
-        
-                /*
-                * Do not turn an API or lock failure into a cached empty list.
-                */
-                if (
-                    !is_array($data) ||
-                    isset($data['error'])
-                ) {
-                    $temporary_error = is_array($data)
-                        ? (string) ($data['error'] ?? 'Temporary Metron error')
-                        : 'Invalid Metron response';
-
-                    break;
-                }
-
-                /**
-                 * This was a successful response with no more results.
-                 */
-                if (empty($data['results'])) {
-                    break;
-                }
-        
-                foreach ($data['results'] as $publisher) {
-                    if (
-                        empty($publisher['id']) ||
-                        empty($publisher['name'])
-                    ) {
-                        continue;
-                    }
-        
-                    $full[] = [
-                        'id'   => (int) $publisher['id'],
-                        'name' => (string) $publisher['name'],
-                    ];
-                }
-        
-                $api_page++;
-            } while (!empty($data['next']));
-        
-            if ($temporary_error !== '') {
-                return [
-                    'items'           => [],
-                    'total'           => 0,
-                    'temporary_error' => $temporary_error,
-                ];
-            }
-        
-            /*
-             * Cache only after the complete operation succeeded.
-             */
-            set_transient(
-                $transient_key,
-                $full,
-                2 * WEEK_IN_SECONDS
+    private static function publisher_option($key) {
+        // Re-read these non-autoloaded options after acquiring the lock.
+        wp_cache_delete($key, 'options');
+        wp_cache_delete('notoptions', 'options');
+    
+        return get_option($key, false);
+    }
+    
+    private static function save_publisher_option(
+        $key,
+        array $value
+    ): void {
+        if (
+            !update_option($key, $value, false) &&
+            self::publisher_option($key) !== $value
+        ) {
+            throw new RuntimeException(
+                'Could not save publisher refresh progress.'
             );
         }
-
-        if ( $letter !== 'all' ) {
-            $full = array_filter(
-                $full,
-                function ( $p ) use ( $letter ) {
-                    $first = strtoupper( substr( $p['name'], 0, 1 ) );
-                    return $letter === '#' ? ! ctype_alpha( $first ) : $first === strtoupper( $letter );
-                }
+    }
+    
+    private static function schedule_publisher_refresh($delay = 5): void {
+        $when = time() + max(1, (int) $delay);
+        $existing = wp_next_scheduled(self::PUBLISHER_HOOK);
+    
+        if ($existing && $existing <= $when) {
+            return;
+        }
+    
+        if ($existing) {
+            wp_unschedule_event(
+                $existing,
+                self::PUBLISHER_HOOK
             );
         }
-
-        if ( $name ) {
-            $full = array_filter(
-                $full,
-                fn( $p ) => stripos( $p['name'], $name ) !== false
-            );
-        }
-
-        $full  = array_values( $full );
-        $total = count( $full );
-        $start = ( $page - 1 ) * $per_page;
-        $slice = array_slice( $full, $start, $per_page );        
-         
+    
+        wp_schedule_single_event(
+            $when,
+            self::PUBLISHER_HOOK
+        );
+    }
+    
+    private static function empty_publisher_job(): array {
         return [
-            'items'    => $slice,
-            'total'    => $total,
-            'has_next' => ($start + $per_page) < $total,
+            'started_at' => time(),
+            'page' => 1,
+            'items' => [],
+            'failures' => 0,
+            'retry_at' => 0,
         ];
     }
-
+    
+    private static function queue_publisher_refresh($force = false): void {
+        if (!MetronClient::acquire_lock(self::PUBLISHER_LOCK)) {
+            return;
+        }
+    
+        try {
+            $snapshot = self::publisher_option(
+                self::PUBLISHER_SNAPSHOT
+            );
+    
+            $job = self::publisher_option(
+                self::PUBLISHER_JOB
+            );
+    
+            if (!is_array($job)) {
+                if (
+                    !$force &&
+                    is_array($snapshot) &&
+                    is_array($snapshot['items'] ?? null) &&
+                    (int) ($snapshot['updated_at'] ?? 0) +
+                        self::PUBLISHER_FRESH_SECONDS > time()
+                ) {
+                    return;
+                }
+    
+                $job = self::empty_publisher_job();
+    
+                self::save_publisher_option(
+                    self::PUBLISHER_JOB,
+                    $job
+                );
+            }
+    
+            self::schedule_publisher_refresh(
+                max(
+                    5,
+                    (int) ($job['retry_at'] ?? 0) - time()
+                )
+            );
+        } catch (RuntimeException $error) {
+            error_log(
+                'Publisher refresh: ' . $error->getMessage()
+            );
+        } finally {
+            MetronClient::release_lock(self::PUBLISHER_LOCK);
+        }
+    }
+    
+    public function get_publishers(
+        $name = '',
+        $page = 1,
+        $per_page = 50,
+        $letter = 'all',
+        $bypass_cache = false
+    ) {
+        $page = max(1, (int) $page);
+        $per_page = max(1, (int) $per_page);
+    
+        $snapshot = get_option(
+            self::PUBLISHER_SNAPSHOT,
+            false
+        );
+    
+        // Preserve an existing usable cache when installing this change.
+        if (
+            !is_array($snapshot) ||
+            !is_array($snapshot['items'] ?? null)
+        ) {
+            $legacy = get_transient(
+                'metron:publishers:full:v2'
+            );
+    
+            if (is_array($legacy)) {
+                $snapshot = [
+                    'items' => $legacy,
+                    'updated_at' => 0,
+                ];
+    
+                // Cannot overwrite another worker's completed snapshot.
+                add_option(
+                    self::PUBLISHER_SNAPSHOT,
+                    $snapshot,
+                    '',
+                    false
+                );
+            }
+        }
+    
+        $ready = is_array($snapshot) &&
+            is_array($snapshot['items'] ?? null);
+    
+        $stale = !$ready ||
+            (int) ($snapshot['updated_at'] ?? 0) +
+                self::PUBLISHER_FRESH_SECONDS <= time();
+    
+        if ($bypass_cache || $stale) {
+            // Scheduling only: this method makes no external HTTP calls.
+            self::queue_publisher_refresh(
+                (bool) $bypass_cache
+            );
+        }
+    
+        $full = $ready ? $snapshot['items'] : [];
+    
+        if ($letter !== 'all') {
+            $full = array_filter(
+                $full,
+                static function ($publisher) use ($letter) {
+                    $first = strtoupper(
+                        substr($publisher['name'], 0, 1)
+                    );
+    
+                    return $letter === '#'
+                        ? !ctype_alpha($first)
+                        : $first === strtoupper($letter);
+                }
+            );
+        }
+    
+        if ($name !== '') {
+            $full = array_filter(
+                $full,
+                static function ($publisher) use ($name) {
+                    return stripos(
+                        $publisher['name'],
+                        $name
+                    ) !== false;
+                }
+            );
+        }
+    
+        $full = array_values($full);
+    
+        return [
+            'items' => array_slice(
+                $full,
+                ($page - 1) * $per_page,
+                $per_page
+            ),
+            'total' => count($full),
+            'has_next' => $page * $per_page < count($full),
+            'page' => $page,
+            'per_page' => $per_page,
+            'ready' => $ready,
+            'stale' => $ready && $stale,
+            'retry_after' => 5,
+        ];
+    }
+    
+    public function refresh_publishers_batch(): void {
+        if (!MetronClient::acquire_lock(self::PUBLISHER_LOCK)) {
+            return;
+        }
+    
+        $job = null;
+    
+        try {
+            $job = self::publisher_option(
+                self::PUBLISHER_JOB
+            );
+    
+            if (!is_array($job)) {
+                return;
+            }
+    
+            if ((int) ($job['retry_at'] ?? 0) > time()) {
+                self::schedule_publisher_refresh(
+                    $job['retry_at'] - time()
+                );
+                return;
+            }
+    
+            // Restart very old unfinished builds while retaining the
+            // last successfully published snapshot.
+            if (
+                (int) ($job['started_at'] ?? 0) <
+                time() - DAY_IN_SECONDS
+            ) {
+                $job = self::empty_publisher_job();
+    
+                self::save_publisher_option(
+                    self::PUBLISHER_JOB,
+                    $job
+                );
+            }
+    
+            // Recovery event if this PHP process exits unexpectedly.
+            self::schedule_publisher_refresh(60);
+    
+            if (MetronClient::remaining_seconds() < 2.0) {
+                self::schedule_publisher_refresh(10);
+                return;
+            }
+    
+            $api_page = max(1, (int) $job['page']);
+    
+            // One page, at most one HTTP attempt per worker invocation.
+            // Existing Metron response caches remain usable.
+            $response = $this->client->api_get(
+                $this->client->api_base .
+                    "publisher/?page={$api_page}&page_size=100",
+                1
+            );
+    
+            if (
+                !is_array($response) ||
+                isset($response['error']) ||
+                !is_array($response['results'] ?? null) ||
+                !array_key_exists('next', $response)
+            ) {
+                throw new ComicApiTemporaryException(
+                    'Publisher page could not be loaded.',
+                    is_array($response)
+                        ? ($response['retry_after'] ?? 30)
+                        : 30
+                );
+            }
+    
+            if (
+                !empty($response['next']) &&
+                !$response['results']
+            ) {
+                throw new ComicApiTemporaryException(
+                    'Publisher pagination returned an incomplete page.',
+                    60
+                );
+            }
+    
+            $items = $job['items'];
+    
+            foreach ($response['results'] as $publisher) {
+                if (
+                    !is_array($publisher) ||
+                    empty($publisher['id']) ||
+                    empty($publisher['name'])
+                ) {
+                    throw new ComicApiTemporaryException(
+                        'Publisher page contained an invalid entry.',
+                        60
+                    );
+                }
+    
+                $id = (int) $publisher['id'];
+    
+                // Index by ID to avoid duplicates across API pages.
+                $items[$id] = [
+                    'id' => $id,
+                    'name' => (string) $publisher['name'],
+                ];
+            }
+    
+            if (!empty($response['next'])) {
+                $job['items'] = $items;
+                $job['page'] = $api_page + 1;
+                $job['failures'] = 0;
+                $job['retry_at'] = 0;
+    
+                self::save_publisher_option(
+                    self::PUBLISHER_JOB,
+                    $job
+                );
+    
+                self::schedule_publisher_refresh(5);
+                return;
+            }
+    
+            // Replace the public snapshot only after every page succeeds.
+            $snapshot = [
+                'items' => array_values($items),
+                'updated_at' => time(),
+            ];
+    
+            self::save_publisher_option(
+                self::PUBLISHER_SNAPSHOT,
+                $snapshot
+            );
+    
+            // Maintain the existing transient for compatibility.
+            set_transient(
+                'metron:publishers:full:v2',
+                $snapshot['items'],
+                self::PUBLISHER_FRESH_SECONDS
+            );
+    
+            delete_option(self::PUBLISHER_JOB);
+        } catch (RuntimeException $error) {
+            if (is_array($job)) {
+                $failures = min(
+                    7,
+                    (int) ($job['failures'] ?? 0) + 1
+                );
+    
+                $delay = min(
+                    3600,
+                    30 * (2 ** ($failures - 1))
+                );
+    
+                if ($error instanceof ComicApiTemporaryException) {
+                    $delay = max(
+                        $delay,
+                        $error->retry_after
+                    );
+                }
+    
+                $job['failures'] = $failures;
+                $job['retry_at'] = time() + $delay;
+    
+                // A failed save leaves the previous checkpoint intact.
+                update_option(
+                    self::PUBLISHER_JOB,
+                    $job,
+                    false
+                );
+    
+                self::schedule_publisher_refresh($delay);
+            }
+    
+            error_log(
+                'Publisher refresh: ' . $error->getMessage()
+            );
+        } finally {
+            MetronClient::release_lock(self::PUBLISHER_LOCK);
+        }
+    }
+    
     /* -----------------------------------------------------------------
     *  PUBLISHER INFO (single record)
     * ----------------------------------------------------------------- */
