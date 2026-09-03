@@ -28,6 +28,8 @@ function add_to_wishlist_ajax() {
     $user_id = get_current_user_id();
     $wishlist = get_user_meta($user_id, 'user_wishlist', true) ?: [];
 
+    $request = wp_unslash($_POST);
+
     $new = [
         'type'      => sanitize_text_field($request['type'] ?? ''),
         'item_id'   => sanitize_text_field($request['item_id'] ?? ''),
@@ -101,7 +103,7 @@ function mwp_display_user_wishlist() {
                         <small><a href="https://thecollectiblespot.com/tools/?item_id=<?php echo urlencode($item['ebay_id']); ?>">eBay <?php echo esc_html($item['ebay_id']); ?></a></small>
                     <?php endif; ?>
                 </div>
-                <button class="remove-from-wishlist button" data-item-id="<?php echo esc_attr($item['item_id']); ?>">Remove</button>
+                <button type="button" class="remove-from-wishlist button" data-item-id="<?php echo esc_attr($item['item_id']); ?>">Remove</button>
             </li>
         <?php endforeach; ?>
     </ul>

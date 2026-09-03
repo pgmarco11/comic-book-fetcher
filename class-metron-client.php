@@ -449,40 +449,41 @@
                         }
  
                         if ($status === 200) {
-                             $data = json_decode(
-                                 wp_remote_retrieve_body($response),
-                                 true
+                            
+                            $data = json_decode(
+                                wp_remote_retrieve_body($response),
+                                true
                             );
-
-                            if (
-                                array_key_exists('results', $data) &&
-                                !is_array($data['results'])
-                            ) {
-                                return self::temporary_failure(
-                                    'Metron returned invalid results. Please retry.'
-                                );
-                            }
                             
                             if (
-                                 json_last_error() === JSON_ERROR_NONE &&
-                                 is_array($data)
+                                json_last_error() === JSON_ERROR_NONE &&
+                                is_array($data)
                             ) {
+                                if (
+                                    array_key_exists('results', $data) &&
+                                    !is_array($data['results'])
+                                ) {
+                                    return self::temporary_failure(
+                                        'Metron returned invalid results. Please retry.'
+                                    );
+                                }
+                            
                                 $ttl = count($data['results'] ?? []) >= 100
-                                     ? WEEK_IN_SECONDS
-                                     : 2 * WEEK_IN_SECONDS;
- 
+                                    ? WEEK_IN_SECONDS
+                                    : 2 * WEEK_IN_SECONDS;
+                            
                                 set_transient(
-                                     $cache_key,
-                                     $data,
-                                     $ttl
+                                    $cache_key,
+                                    $data,
+                                    $ttl
                                 );
- 
+                            
                                 return $data;
                             }
- 
+                            
                             $retryable = true;
-                            $message =
-                                 'Metron returned an invalid response. Please retry.';
+                            $message = 'Metron returned an invalid response. Please retry.';
+
                         } else {
                             $retryable =
                                  $status === 429 ||

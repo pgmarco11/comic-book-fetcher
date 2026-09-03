@@ -126,8 +126,8 @@ function comicbooks_enqueue_scripts() {
     wp_enqueue_script(
         'wishlist-script',
         COMICBOOKS_PLUGIN_URL . 'js/wishlist.js',
-        ['jquery'],
-        COMICBOOKS_PLUGIN_DIR . 'js/wishlist.js',
+        ['jquery', 'toastify-js'],
+        filemtime(COMICBOOKS_PLUGIN_DIR . 'js/wishlist.js'),
         true
     );
 

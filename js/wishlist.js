@@ -160,6 +160,63 @@ jQuery(document).ready(function($) {
         });
     });
 
+    // Remove an item from the [user_wishlist] list.
+    $(document).on('click', '.remove-from-wishlist', async function(e) {
+            e.preventDefault();
+    
+            const button = $(this);
+            if (button.prop('disabled')) return;
+    
+            const originalText = button.text();
+            button.prop('disabled', true);
+    
+        try {
+            const message = 'Remove this item from your wishlist?';
+            const confirmed = typeof Toastify === 'function'
+                    ? await toastConfirm(message)
+                    : window.confirm(message);
+    
+                if (!confirmed) return;
+    
+                button.text('Removing...');
+    
+                const response = await $.ajax({
+                    url: wishlist_ajax_obj.ajax_url,
+                    method: 'POST',
+                    dataType: 'json',
+                    data: {
+                        action: 'remove_from_wishlist',
+                        nonce: wishlist_ajax_obj.nonce,
+                        item_id: button.attr('data-item-id')
+                    }
+                });
+    
+                if (!response || !response.success) {
+                    throw new Error(
+                        response && typeof response.data === 'string'
+                            ? response.data
+                            : 'Could not remove the item. Please try again.'
+                    );
+                }
+    
+                const list = button.closest('.user-wishlist');
+                button.closest('li').remove();
+    
+                if (!list.children('li').length) {
+                    list.replaceWith(
+                        '<p class="has-white-color">Your wishlist is empty.</p>'
+                    );
+                }
+        } catch (error) {
+                window.alert(
+                    error.message ||
+                    'Removal failed. Refresh the page and try again.'
+                );
+        } finally {
+                button.prop('disabled', false).text(originalText);
+        }
+    });
+
     // Initial batch check on page load
     checkWishlistStatusBatch();
 });
