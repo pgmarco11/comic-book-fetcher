@@ -453,6 +453,16 @@
                                  wp_remote_retrieve_body($response),
                                  true
                             );
+
+                            if (
+                                array_key_exists('results', $data) &&
+                                !is_array($data['results'])
+                            ) {
+                                return self::temporary_failure(
+                                    'Metron returned invalid results. Please retry.'
+                                );
+                            }
+                            
                             if (
                                  json_last_error() === JSON_ERROR_NONE &&
                                  is_array($data)
