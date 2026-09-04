@@ -123,7 +123,26 @@
         refresh(true);
     }
     filters.addEventListener('submit', event => { event.preventDefault(); clearTimeout(searchTimer); filterChanged(); });
-    filters.addEventListener('change', event => { if (event.target.matches('select,input[type=checkbox]')) filterChanged(); });
+    filters.addEventListener('change', event => {
+        if (
+            event.target.name ===
+            'collection_publisher'
+        ) {
+            /*
+             * A series selected under the previous publisher
+             * may not belong to the new publisher.
+             */
+            filters.elements.collection_series.value = '';
+        }
+    
+        if (
+            event.target.matches(
+                'select,input[type=checkbox]'
+            )
+        ) {
+            filterChanged();
+        }
+    });
     $('#tci-search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(filterChanged, 350); });
     $('#tci-reset').addEventListener('click', event => {
         event.preventDefault(); clearTimeout(searchTimer);

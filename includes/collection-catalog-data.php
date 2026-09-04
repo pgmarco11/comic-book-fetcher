@@ -25,12 +25,33 @@ function tcs_catalog_description(array $record): string {
 }
 
 /** Never associate Comic Vine metadata by an issue number alone. */
-function tcs_catalog_cv_matches(array $cv, int $cv_id, string $number, int $cv_volume_id = 0): bool {
+function tcs_catalog_cv_matches(
+    array $cv,
+    int $cv_id,
+    string $number,
+    int $cv_volume_id = 0
+): bool {
+    $actual_volume_id = 0;
+
+    if (is_array($cv['volume'] ?? null)) {
+        $actual_volume_id = absint($cv['volume']['id'] ?? 0);
+    }
+
+    /*
+     * Comic Vine occasionally returns volume: null.
+     * Only reject the volume when both IDs exist and differ.
+     * The issue ID and issue number must always match.
+     */
+    $volume_matches =
+        !$cv_volume_id ||
+        !$actual_volume_id ||
+        $actual_volume_id === $cv_volume_id;
+
     return $cv_id > 0
         && (int) ($cv['id'] ?? 0) === $cv_id
         && array_key_exists('issue_number', $cv)
         && trim((string) $cv['issue_number']) === $number
-        && (!$cv_volume_id || (int) ($cv['volume']['id'] ?? 0) === $cv_volume_id);
+        && $volume_matches;
 }
 
 /** One cached series lookup; never enumerate its issues to obtain publisher/genres. */
@@ -83,50 +104,49 @@ function tcs_collection_catalog_data(int $title_id, int $issue_id) {
         return new WP_Error('collection_identity_incomplete', 'The series title, issue number, or publisher is missing from the catalog. No collection entry was changed.');
     }
 
-    // Use Comic Vine fields only when the issue mapping matches.
    // Use Comic Vine fields only when the issue mapping matches.
-$cv_id = absint($issue['cv_id'] ?? 0);
-$cv = [];
-$catalog_warnings = [];
+    $cv_id = absint($issue['cv_id'] ?? 0);
+    $cv = [];
+    $catalog_warnings = [];
 
-if ($cv_id) {
-    $candidate = tcs_get_comicvine_issue_basic($cv_id);
+    if ($cv_id) {
+        $candidate = tcs_get_comicvine_issue_basic($cv_id);
 
-    if (is_wp_error($candidate)) {
-        return $candidate;
+        if (is_wp_error($candidate)) {
+            return $candidate;
+        }
+
+        $expected_volume = absint($series['cv_id'] ?? 0);
+
+        if (
+            tcs_catalog_cv_matches(
+                $candidate,
+                $cv_id,
+                $number,
+                $expected_volume
+            )
+        ) {
+            $cv = $candidate;
+        } else {
+            $catalog_warnings[] = sprintf(
+                'Comic Vine enrichment skipped for Metron issue %d. ' .
+                'Expected CV issue %d, number %s, volume %s; ' .
+                'received CV issue %d, number %s, volume %s.',
+                $issue_id,
+                $cv_id,
+                wp_json_encode($number),
+                $expected_volume
+                    ? (string) $expected_volume
+                    : '(not checked)',
+                (int) ($candidate['id'] ?? 0),
+                wp_json_encode($candidate['issue_number'] ?? null),
+                wp_json_encode($candidate['volume']['id'] ?? null)
+            );
+
+            // Keep Metron metadata; exclude the rejected Comic Vine ID.
+            $cv_id = 0;
+        }
     }
-
-    $expected_volume = absint($series['cv_id'] ?? 0);
-
-    if (
-        tcs_catalog_cv_matches(
-            $candidate,
-            $cv_id,
-            $number,
-            $expected_volume
-        )
-    ) {
-        $cv = $candidate;
-    } else {
-        $catalog_warnings[] = sprintf(
-            'Comic Vine enrichment skipped for Metron issue %d. ' .
-            'Expected CV issue %d, number %s, volume %s; ' .
-            'received CV issue %d, number %s, volume %s.',
-            $issue_id,
-            $cv_id,
-            wp_json_encode($number),
-            $expected_volume
-                ? (string) $expected_volume
-                : '(not checked)',
-            (int) ($candidate['id'] ?? 0),
-            wp_json_encode($candidate['issue_number'] ?? null),
-            wp_json_encode($candidate['volume']['id'] ?? null)
-        );
-
-        // Keep Metron metadata; exclude the rejected Comic Vine ID.
-        $cv_id = 0;
-    }
-}
     $description = tcs_catalog_description($issue);
 
     if ($description === '') $description = tcs_catalog_description($cv);
@@ -140,53 +160,307 @@ if ($cv_id) {
     $image = is_string($issue['image'] ?? null) ? esc_url_raw($issue['image']) : '';
     if ($image === '') $image = tcs_get_cv_image_url($cv);
 
+    $clean_description = $description !== ''
+        ? $renderer->clean_cv_description($description)
+        : '';
+
+    $image_url = esc_url_raw($image);
+
     return [
-        'title' => $title, 
-        'publisher' => $publisher, 
-        'genres' => $genres,
-        'description' => $description !== '' ? $renderer->clean_cv_description($description) : '',
-        'warnings' => $catalog_warnings,
+        'title'       => $title,
+        'publisher'   => $publisher,
+        'genres'      => $genres,
+        'description' => $clean_description,
+        'warnings'    => $catalog_warnings,
+    
         'meta' => [
-            'issue_id' => $issue_id, 'title_id' => $title_id, 'cv_issue_id' => $cv_id,
-            'issue_number' => $number, 'volume' => tcs_catalog_text($series['volume'] ?? $issue['series']['volume'] ?? ''),
-            'date_published' => tcs_catalog_text($issue['cover_date'] ?? ''),
-            'creators' => $creators, 'genres' => implode(', ', $genres),
-            'concepts' => implode("\n", $concepts), 'characters' => implode("\n", $characters),
-            'cover_image_url' => esc_url_raw($image),
+            'issue_id'         => $issue_id,
+            'title_id'         => $title_id,
+            'cv_issue_id'      => $cv_id,
+            'series_name'      => $title,
+            'issue_number'     => $number,
+            'volume'           => tcs_catalog_text(
+                $series['volume'] ?? $issue['series']['volume'] ?? ''
+            ),
+            'date_published'    => tcs_catalog_text(
+                $issue['cover_date'] ?? ''
+            ),
+            'description'      => $clean_description,
+            'creators'         => $creators,
+            'genres'           => implode(', ', $genres),
+            'concepts'         => implode("\n", $concepts),
+            'characters'       => implode("\n", $characters),
+    
+            // Keep the existing name for backward compatibility.
+            'cover_image_url'  => $image_url,
+    
+            // Your ACF field.
+            'image_url'        => $image_url,
         ],
     ];
+}
+
+function tcs_find_collection_acf_field_key(
+    array $fields,
+    string $field_name
+): string {
+    foreach ($fields as $field) {
+        if (($field['name'] ?? '') === $field_name) {
+            return (string) ($field['key'] ?? '');
+        }
+
+        if (!empty($field['sub_fields']) && is_array($field['sub_fields'])) {
+            $key = tcs_find_collection_acf_field_key(
+                $field['sub_fields'],
+                $field_name
+            );
+
+            if ($key !== '') {
+                return $key;
+            }
+        }
+    }
+
+    return '';
+}
+
+function tcs_collection_acf_field_key(
+    int $post_id,
+    string $field_name
+): string {
+    static $cache = [];
+
+    if (isset($cache[$post_id][$field_name])) {
+        return $cache[$post_id][$field_name];
+    }
+
+    $cache[$post_id][$field_name] = '';
+
+    if (
+        !function_exists('acf_get_field_groups') ||
+        !function_exists('acf_get_fields')
+    ) {
+        return '';
+    }
+
+    $groups = acf_get_field_groups([
+        'post_id' => $post_id,
+    ]);
+
+    foreach ($groups as $group) {
+        $fields = acf_get_fields($group['key']);
+
+        if (!is_array($fields)) {
+            continue;
+        }
+
+        $key = tcs_find_collection_acf_field_key(
+            $fields,
+            $field_name
+        );
+
+        if ($key !== '') {
+            $cache[$post_id][$field_name] = $key;
+            return $key;
+        }
+    }
+
+    return '';
+}
+
+function tcs_update_collection_value(
+    int $post_id,
+    string $field_name,
+    $value
+): bool {
+    $value = is_scalar($value) ? (string) $value : '';
+    $field_key = tcs_collection_acf_field_key(
+        $post_id,
+        $field_name
+    );
+
+    /*
+     * Saving with the field key creates ACF's hidden
+     * _field_name reference on newly created posts.
+     */
+    if ($field_key !== '' && function_exists('update_field')) {
+        update_field($field_key, $value, $post_id);
+    } else {
+        update_post_meta(
+            $post_id,
+            $field_name,
+            wp_slash($value)
+        );
+    }
+
+    return (string) get_post_meta(
+        $post_id,
+        $field_name,
+        true
+    ) === $value;
 }
 
 /** Replace only catalog fields on one owned entry. Personal inventory metadata is untouched. */
 function tcs_store_collection_catalog(int $post_id, array $catalog) {
     $post = get_post($post_id);
+
     if (!$post || $post->post_type !== 'collection' || (int) $post->post_author !== get_current_user_id() || !in_array($post->post_status, ['publish', 'draft'], true)) {
         return new WP_Error('collection_owner', 'This collection entry is unavailable.');
     }
+
     $existing_issue = (int) get_post_meta($post_id, 'issue_id', true);
+
     if ($existing_issue && $existing_issue !== (int) $catalog['meta']['issue_id']) {
         return new WP_Error('collection_identity', 'The collection entry belongs to a different issue.');
     }
-    $terms = ensure_publisher_terms($catalog['publisher']);
-    if (!$terms) return new WP_Error('collection_publisher', 'Could not save the publisher.');
-    $publisher_id = (int) $terms['publisher_id'];
-    $title_term_id = ensure_title_term($catalog['title'], $publisher_id);
-    if (!$title_term_id) return new WP_Error('collection_series_term', 'Could not save the series title.');
-    $updated = wp_update_post(wp_slash(['ID' => $post_id, 'post_title' => $catalog['title'], 'post_content' => $catalog['description']]), true);
-    if (is_wp_error($updated) || !$updated) return new WP_Error('collection_save', 'Could not save the collection entry.');
-    foreach ($catalog['meta'] as $key => $value) {
-        update_post_meta($post_id, $key, wp_slash((string) $value));
-        if ((string) get_post_meta($post_id, $key, true) !== (string) $value) return new WP_Error('collection_meta', 'Some catalog fields could not be saved. Retry the metadata refresh.');
+    $publisher_name = trim(
+        (string) ($catalog['publisher'] ?? '')
+    );
+    
+    $series_name = trim(
+        (string) ($catalog['title'] ?? '')
+    );
+    
+    $issue_number = trim(
+        (string) ($catalog['meta']['issue_number'] ?? '')
+    );
+    
+    if (
+        $publisher_name === '' ||
+        $series_name === ''
+    ) {
+        return new WP_Error(
+            'collection_identity',
+            'The publisher or series name is missing.'
+        );
     }
-    $assigned = wp_set_object_terms($post_id, [$publisher_id, (int) $title_term_id], 'publisher', false);
+    
+    $publisher_id = tcs_ensure_collection_term(
+        $publisher_name,
+        'publisher'
+    );
+    
+    if (!$publisher_id) {
+        return new WP_Error(
+            'collection_publisher',
+            'Could not save the publisher.'
+        );
+    }
+    
+    $series_id = tcs_ensure_collection_term(
+        $series_name,
+        'comic_series'
+    );
+    
+    if (!$series_id) {
+        return new WP_Error(
+            'collection_series',
+            'Could not save the comic series.'
+        );
+    }
+
+    $issue_title = $series_name;
+    
+    if ($issue_number !== '') {
+        $issue_title .= ' #' . $issue_number;
+    }
+    
+    $updated = wp_update_post(
+        wp_slash([
+            'ID'           => $post_id,
+            'post_title'   => $issue_title,
+            'post_name'    => sanitize_title($issue_title),
+            'post_content' => $catalog['description'] ?? '',
+        ]),
+        true
+    );
+    
+    if (is_wp_error($updated) || !$updated) {
+        return new WP_Error(
+            'collection_save',
+            'Could not save the collection entry.'
+        );
+    }
+    
+    foreach ($catalog['meta'] as $key => $value) {
+        if (!tcs_update_collection_value($post_id, $key, $value)) {
+            return new WP_Error(
+                'collection_meta',
+                sprintf(
+                    'The collection field "%s" could not be saved.',
+                    $key
+                )
+            );
+        }
+    }
+    
+    // Publisher contains only "DC Comics".
+    $assigned = wp_set_object_terms(
+        $post_id,
+        [$publisher_id],
+        'publisher',
+        false
+    );
+
+    if (is_wp_error($assigned)) {
+        return $assigned;
+    }
+
+    // Series contains only "100 Bullets".
+    $assigned = wp_set_object_terms(
+        $post_id,
+        [$series_id],
+        'comic_series',
+        false
+    );
+
+    if (is_wp_error($assigned)) {
+        return $assigned;
+    }
+
+    $assigned = wp_set_object_terms($post_id, 
+        $catalog['genres'], 
+        'comic_genre', 
+        false
+    );
+
     if (is_wp_error($assigned)) return $assigned;
-    $assigned = wp_set_object_terms($post_id, $catalog['genres'], 'comic_genre', false);
-    if (is_wp_error($assigned)) return $assigned;
-    $date = $catalog['meta']['date_published'];
+
+    $date = (string) (
+        $catalog['meta']['date_published'] ?? ''
+    );
+
     if ($date !== '' && strtotime($date) !== false) {
-        $year = (int) date('Y', strtotime($date));
-        update_post_meta($post_id, 'year', $year);
-        update_post_meta($post_id, 'era', get_comic_era($year));
+        $year = (int) date(
+            'Y',
+            strtotime($date)
+        );
+
+        if (
+            !tcs_update_collection_value(
+                $post_id,
+                'year',
+                $year
+            )
+        ) {
+            return new WP_Error(
+                'collection_year',
+                'Could not save the publication year.'
+            );
+        }
+
+        if (
+            !tcs_update_collection_value(
+                $post_id,
+                'era',
+                get_comic_era($year)
+            )
+        ) {
+            return new WP_Error(
+                'collection_era',
+                'Could not save the comic era.'
+            );
+        }
     }
     clean_post_cache($post_id);
     return true;

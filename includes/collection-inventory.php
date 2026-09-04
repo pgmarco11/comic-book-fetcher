@@ -15,8 +15,11 @@ add_filter('wp_sitemaps_post_types', function ($types) {
     return $types;
 });
 add_filter('wp_sitemaps_taxonomies', function ($taxonomies) {
-    // The existing publisher taxonomy also contains series derived from collections.
-    unset($taxonomies['publisher'], $taxonomies['comic_genre']);
+    unset(
+        $taxonomies['publisher'],
+        $taxonomies['comic_series'],
+        $taxonomies['comic_genre']
+    );
     return $taxonomies;
 });
 add_filter('oembed_response_data', function ($data, $post) {
@@ -25,18 +28,31 @@ add_filter('oembed_response_data', function ($data, $post) {
 add_action('pre_get_posts', function ($query) {
     if (is_admin()) return;
     $types = (array) $query->get('post_type');
-    if (in_array('collection', $types, true) || ($query->is_main_query() && ($query->is_post_type_archive('collection') || $query->is_tax(['publisher', 'comic_genre'])))) {
-        $query->set('post_type', 'collection');
-        if (is_user_logged_in()) {
-            $query->set('author', get_current_user_id());
-            $query->set('author__in', [get_current_user_id()]);
-        } else {
-            $query->set('post__in', [0]);
+    if (in_array('collection', $types, true) ||
+        (
+            $query->is_main_query() && 
+            ($query->is_post_type_archive('collection') || $query->is_tax([
+                'publisher',
+                'comic_series',
+                'comic_genre',
+            ]))
+        ) 
+        ){            
+            $query->set('post_type', 'collection');
+            if (is_user_logged_in()) {
+                $query->set('author', get_current_user_id());
+                $query->set('author__in', [get_current_user_id()]);
+            } else {
+                $query->set('post__in', [0]);
+            }
         }
-    }
 });
 add_action('template_redirect', function () {
-    if (is_singular('collection') || is_post_type_archive('collection') || is_tax(['publisher', 'comic_genre'])) {
+    if (is_singular('collection') || is_post_type_archive('collection') || is_tax([
+        'publisher',
+        'comic_series',
+        'comic_genre',
+    ])) {
         if (!defined('DONOTCACHEPAGE')) define('DONOTCACHEPAGE', true);
         nocache_headers();
         header('X-Robots-Tag: noindex, nofollow', true);
@@ -85,15 +101,43 @@ function tcs_inventory_record(int $id): array {
         'cover' => esc_url_raw($read('cover_image_url')),
         'publisher' => '',
     ];
-    $terms = get_the_terms($id, 'publisher');
-    if ($terms && !is_wp_error($terms)) {
-        foreach ($terms as $term) {
-            if ((int) $term->parent === 0) {
-                $record['publisher'] = $term->name;
-                break;
-            }
+
+    $series_terms = get_the_terms(
+        $id,
+        'comic_series'
+    );
+    
+    if (
+        $series_terms &&
+        !is_wp_error($series_terms)
+    ) {
+        $series_term = reset($series_terms);
+    
+        if ($series_term instanceof WP_Term) {
+            /*
+             * The inventory's "title" value represents the
+             * series name. The post title itself includes #issue.
+             */
+            $record['title'] = $series_term->name;
         }
     }
+
+    $publisher_terms = get_the_terms(
+        $id,
+        'publisher'
+    );
+
+    if (
+        $publisher_terms &&
+        !is_wp_error($publisher_terms)
+    ) {
+        $publisher_term = reset($publisher_terms);
+
+        if ($publisher_term instanceof WP_Term) {
+            $record['publisher'] = $publisher_term->name;
+        }
+    }
+
     $record['version'] = hash('sha256', wp_json_encode([
         $record['qty'], $record['condition'], $record['price'],
         $record['notes'], $record['storage_location'],
@@ -104,48 +148,205 @@ function tcs_inventory_record(int $id): array {
     return $record;
 }
 
-/** Facets and totals include only the current owner's published collection. */
-function tcs_inventory_overview(int $user_id): array {
+function tcs_inventory_series_options(
+    int $user_id,
+    int $publisher_id = 0
+): array {
     global $wpdb;
-    $publisher_sql = $wpdb->prepare(
-        "SELECT DISTINCT t.term_id AS id, t.name
-        FROM {$wpdb->posts} p
-        JOIN {$wpdb->term_relationships} tr ON tr.object_id = p.ID
-        JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id
-        JOIN {$wpdb->terms} t ON t.term_id = tt.term_id
-        WHERE p.post_type = 'collection' AND p.post_status = 'publish'
-        AND p.post_author = %d AND tt.taxonomy = 'publisher' AND tt.parent = 0
-        ORDER BY t.name ASC", $user_id
-    );
-    $series_sql = $wpdb->prepare(
-        "SELECT DISTINCT CAST(pm.meta_value AS UNSIGNED) AS id, p.post_title AS name,
-        (SELECT MAX(v.meta_value) FROM {$wpdb->postmeta} v WHERE v.post_id = p.ID AND v.meta_key = 'volume') AS volume
-        FROM {$wpdb->posts} p
-        JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID AND pm.meta_key = 'title_id'
-        WHERE p.post_type = 'collection' AND p.post_status = 'publish'
-        AND p.post_author = %d AND CAST(pm.meta_value AS UNSIGNED) > 0
-        ORDER BY p.post_title ASC", $user_id
-    );
-    $summary_sql = $wpdb->prepare(
-        "SELECT COUNT(*) AS entries,
-        COALESCE(SUM(GREATEST(1, COALESCE((SELECT MAX(CAST(q.meta_value AS UNSIGNED))
-        FROM {$wpdb->postmeta} q WHERE q.post_id = p.ID AND q.meta_key = 'qty'), 1))), 0) AS copies
-        FROM {$wpdb->posts} p WHERE p.post_type = 'collection'
-        AND p.post_status = 'publish' AND p.post_author = %d", $user_id
-    );
-    $publishers = $wpdb->get_results($publisher_sql, ARRAY_A) ?: [];
-    $series_rows = $wpdb->get_results($series_sql, ARRAY_A) ?: [];
-    $series = [];
-    foreach ($series_rows as $row) {
-        if (!isset($series[(int) $row['id']])) {
-            $series[(int) $row['id']] = ['id' => (int) $row['id'], 'name' => $row['name'] . (!empty($row['volume']) ? ' · Vol. ' . $row['volume'] : '')];
-        }
+
+    $sql = "
+        SELECT DISTINCT
+            series_terms.term_id AS id,
+            series_terms.name
+        FROM {$wpdb->posts} posts
+
+        INNER JOIN {$wpdb->term_relationships} series_rel
+            ON series_rel.object_id = posts.ID
+
+        INNER JOIN {$wpdb->term_taxonomy} series_tax
+            ON series_tax.term_taxonomy_id =
+                series_rel.term_taxonomy_id
+
+        INNER JOIN {$wpdb->terms} series_terms
+            ON series_terms.term_id =
+                series_tax.term_id
+
+        WHERE posts.post_type = 'collection'
+            AND posts.post_status = 'publish'
+            AND posts.post_author = %d
+            AND series_tax.taxonomy = 'comic_series'
+    ";
+
+    $parameters = [$user_id];
+
+    if ($publisher_id > 0) {
+        $sql .= "
+            AND EXISTS (
+                SELECT 1
+                FROM {$wpdb->term_relationships} publisher_rel
+
+                INNER JOIN {$wpdb->term_taxonomy} publisher_tax
+                    ON publisher_tax.term_taxonomy_id =
+                        publisher_rel.term_taxonomy_id
+
+                WHERE publisher_rel.object_id = posts.ID
+                    AND publisher_tax.taxonomy = 'publisher'
+                    AND publisher_tax.term_id = %d
+            )
+        ";
+
+        $parameters[] = $publisher_id;
     }
-    $summary = $wpdb->get_row($summary_sql, ARRAY_A) ?: ['entries' => 0, 'copies' => 0];
-    return ['publishers' => $publishers, 'series' => array_values($series), 'summary' => [
-        'entries' => (int) $summary['entries'], 'copies' => (int) $summary['copies'],
-        'series' => count($series),
-    ]];
+
+    $sql .= ' ORDER BY series_terms.name ASC';
+
+    $prepared = $wpdb->prepare(
+        $sql,
+        ...$parameters
+    );
+
+    $rows = $wpdb->get_results(
+        $prepared,
+        ARRAY_A
+    ) ?: [];
+
+    return array_map(
+        static function (array $row): array {
+            return [
+                'id'   => (int) $row['id'],
+                'name' => (string) $row['name'],
+            ];
+        },
+        $rows
+    );
+}
+
+/** Facets and totals include only the current owner's published collection. */
+function tcs_inventory_overview(
+    int $user_id,
+    int $publisher_id = 0
+): array {
+    global $wpdb;
+    /*
+     * Publisher dropdown always contains every publisher
+     * represented in the user's collection.
+     */
+    $publisher_sql = $wpdb->prepare(
+        "SELECT DISTINCT
+            terms.term_id AS id,
+            terms.name
+
+        FROM {$wpdb->posts} posts
+
+        INNER JOIN {$wpdb->term_relationships} relationships
+            ON relationships.object_id = posts.ID
+
+        INNER JOIN {$wpdb->term_taxonomy} taxonomy
+            ON taxonomy.term_taxonomy_id =
+                relationships.term_taxonomy_id
+
+        INNER JOIN {$wpdb->terms} terms
+            ON terms.term_id = taxonomy.term_id
+
+        WHERE posts.post_type = 'collection'
+            AND posts.post_status = 'publish'
+            AND posts.post_author = %d
+            AND taxonomy.taxonomy = 'publisher'
+
+        ORDER BY terms.name ASC",
+        $user_id
+    );
+
+    /*
+     * Complete collection totals. These do not change
+     * when a publisher or series filter is selected.
+     */
+    $summary_sql = $wpdb->prepare(
+        "SELECT
+            COUNT(*) AS entries,
+
+            COALESCE(
+                SUM(
+                    GREATEST(
+                        1,
+                        COALESCE(
+                            (
+                                SELECT MAX(
+                                    CAST(
+                                        quantity.meta_value
+                                        AS UNSIGNED
+                                    )
+                                )
+                                FROM {$wpdb->postmeta} quantity
+                                WHERE quantity.post_id = posts.ID
+                                    AND quantity.meta_key = 'qty'
+                            ),
+                            1
+                        )
+                    )
+                ),
+                0
+            ) AS copies
+
+        FROM {$wpdb->posts} posts
+
+        WHERE posts.post_type = 'collection'
+            AND posts.post_status = 'publish'
+            AND posts.post_author = %d",
+        $user_id
+    );
+
+    $publishers = $wpdb->get_results(
+        $publisher_sql,
+        ARRAY_A
+    ) ?: [];
+
+    $publishers = array_map(
+        static function (array $publisher): array {
+            return [
+                'id'   => (int) $publisher['id'],
+                'name' => (string) $publisher['name'],
+            ];
+        },
+        $publishers
+    );
+
+    /*
+     * All series are used for the dashboard total.
+     */
+    $all_series = tcs_inventory_series_options(
+        $user_id
+    );
+
+    /*
+     * The dropdown is restricted to the selected
+     * publisher, when one is selected.
+     */
+    $series = $publisher_id > 0
+        ? tcs_inventory_series_options(
+            $user_id,
+            $publisher_id
+        )
+        : $all_series;
+
+    $summary = $wpdb->get_row(
+        $summary_sql,
+        ARRAY_A
+    ) ?: [
+        'entries' => 0,
+        'copies'  => 0,
+    ];
+
+    return [
+        'publishers' => $publishers,
+        'series'     => $series,
+
+        'summary' => [
+            'entries' => (int) $summary['entries'],
+            'copies'  => (int) $summary['copies'],
+            'series'  => count($all_series),
+        ],
+    ];
 }
 
 function tcs_inventory_results(array $input): array {
@@ -163,26 +364,77 @@ function tcs_inventory_results(array $input): array {
         $args['search_columns'] = ['post_title'];
     }
     $meta = [];
-    $series_id = absint(tcs_inventory_text($input['collection_series'] ?? 0));
-    if ($series_id) $meta[] = ['key' => 'title_id', 'value' => $series_id, 'compare' => '='];
+
+    $taxonomy_filters = [];
+
+    $publisher_id = absint(
+        tcs_inventory_text(
+            $input['collection_publisher'] ?? 0
+        )
+    );
+    
+    if ($publisher_id) {
+        $taxonomy_filters[] = [
+            'taxonomy'         => 'publisher',
+            'field'            => 'term_id',
+            'terms'            => [$publisher_id],
+            'include_children' => false,
+        ];
+    }
+    
+    $series_term_id = absint(
+        tcs_inventory_text(
+            $input['collection_series'] ?? 0
+        )
+    );
+    
+    if ($series_term_id) {
+        $taxonomy_filters[] = [
+            'taxonomy'         => 'comic_series',
+            'field'            => 'term_id',
+            'terms'            => [$series_term_id],
+            'include_children' => false,
+        ];
+    }
+    
+    if ($taxonomy_filters) {
+        $args['tax_query'] = array_merge(
+            ['relation' => 'AND'],
+            $taxonomy_filters
+        );
+    }
+
     if (($input['collection_duplicates'] ?? '') === '1') {
         $meta[] = ['key' => 'qty', 'value' => 1, 'compare' => '>', 'type' => 'NUMERIC'];
     }
+
     if ($meta) $args['meta_query'] = $meta;
-    $publisher = absint(tcs_inventory_text($input['collection_publisher'] ?? 0));
-    if ($publisher) $args['tax_query'] = [[
-        'taxonomy' => 'publisher', 'field' => 'term_id', 'terms' => [$publisher], 'include_children' => true,
-    ]];
+
     if ($sort === 'title') $args['orderby'] = ['title' => 'ASC', 'ID' => 'ASC'];
     if ($sort === 'oldest') $args['orderby'] = ['date' => 'ASC', 'ID' => 'ASC'];
     // Named optional clause includes legacy records with no issue_number meta.
     if ($sort === 'issue') {
-        $args['meta_query']['issue_order_group'] = [
-            'relation' => 'OR',
-            'issue_order' => ['key' => 'issue_number', 'compare' => 'EXISTS', 'type' => 'DECIMAL(12,3)'],
-            ['key' => 'issue_number', 'compare' => 'NOT EXISTS'],
+        if (!isset($args['meta_query'])) {
+            $args['meta_query'] = [];
+        }
+    
+        $args['meta_query']['series_order'] = [
+            'key'     => 'series_name',
+            'compare' => 'EXISTS',
+            'type'    => 'CHAR',
         ];
-        $args['orderby'] = ['title' => 'ASC', 'issue_order' => 'ASC', 'ID' => 'ASC'];
+    
+        $args['meta_query']['issue_order'] = [
+            'key'     => 'issue_number',
+            'compare' => 'EXISTS',
+            'type'    => 'DECIMAL(12,3)',
+        ];
+    
+        $args['orderby'] = [
+            'series_order' => 'ASC',
+            'issue_order'  => 'ASC',
+            'ID'           => 'ASC',
+        ];
     }
     $query = new WP_Query($args);
     // WordPress skips found_rows when an offset returns no posts. Read page one
@@ -258,9 +510,29 @@ function tcs_inventory_owned_post(int $id, array $statuses = ['publish']): WP_Po
 
 add_action('wp_ajax_tcs_inventory_list', function () {
     tcs_inventory_authorize();
-    $results = tcs_inventory_results(wp_unslash($_POST));
+
+    $input = wp_unslash($_POST);
+
+    $results = tcs_inventory_results($input);
     unset($results['records']);
-    wp_send_json_success(array_merge($results, tcs_inventory_overview(get_current_user_id())));
+
+    $publisher_id = absint(
+        tcs_inventory_text(
+            $input['collection_publisher'] ?? 0
+        )
+    );
+
+    $overview = tcs_inventory_overview(
+        get_current_user_id(),
+        $publisher_id
+    );
+
+    wp_send_json_success(
+        array_merge(
+            $results,
+            $overview
+        )
+    );
 });
 
 add_action('wp_ajax_tcs_inventory_save', function () {
@@ -331,6 +603,15 @@ function tcs_inventory_render_app(): void {
     }
     $input = wp_unslash($_GET);
     $results = tcs_inventory_results($input);
-    $overview = tcs_inventory_overview(get_current_user_id());
+    $publisher_id = absint(
+        tcs_inventory_text(
+            $input['collection_publisher'] ?? 0
+        )
+    );
+    
+    $overview = tcs_inventory_overview(
+        get_current_user_id(),
+        $publisher_id
+    );
     include COMICBOOKS_PLUGIN_DIR . 'templates/collection-inventory.php';
 }
