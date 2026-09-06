@@ -1510,7 +1510,13 @@ jQuery(document).ready(function($){
         /* ======================================================
         * AJAX PATH
         * ====================================================== */
-        $('#issues-list').removeClass('loaded').html('');
+        const $issuesList = $('#issues-list');
+
+        const fadeOutPromise = $issuesList
+            .stop(true, false)
+            .removeClass('loaded')
+            .fadeTo(450, 0)
+            .promise();
 
         $.ajax({
             url: comicbooks_fetchers_data.ajax_url,
@@ -1532,7 +1538,12 @@ jQuery(document).ready(function($){
                     .attr('aria-busy', 'false')
                     .css('visibility', 'visible');
 
-                    $('#issues-list').html('<p class="no-results">AJAX load failed (no success)</p>').addClass('loaded');
+                    $issuesList
+                        .stop(true, true)
+                        .html('<p>Error AJAX failure.</p>')
+                        .addClass('loaded')
+                        .css('opacity', 0)
+                        .fadeTo(250, 1);
                     hideSpinner();
                     return;
                 }
@@ -1546,7 +1557,12 @@ jQuery(document).ready(function($){
                     .attr('aria-busy', 'false')
                     .css('visibility', 'visible');
 
-                    $('#issues-list').html('<p class="no-results">No issues HTML returned</p>').addClass('loaded');
+                    $issuesList
+                        .stop(true, true)
+                        .html('<p>Error loading HTML.</p>')
+                        .addClass('loaded')
+                        .css('opacity', 0)
+                        .fadeTo(250, 1);
                     hideSpinner();
                     return;
                 }
@@ -1554,26 +1570,34 @@ jQuery(document).ready(function($){
                 const currentPageFromResponse = Number(data.current_page || page);
                 const totalPagesFromResponse = Number(data.total_pages || Math.ceil((data.total_issues || 0) / 10));
             
-                $('#issues-list')
-                    .removeClass('server-rendered')
-                    .html(html)
-                    .attr('data-total', Number(data.total_issues || 0))
-                    .attr('data-page', currentPageFromResponse)
-                    .addClass('loaded')
-                    .css('opacity', '1');
+                fadeOutPromise.done(function () {
+                    $issuesList
+                        .removeClass('server-rendered')
+                        .html(html)
+                        .attr('data-total', Number(data.total_issues || 0))
+                        .attr('data-page', currentPageFromResponse)
+                        .addClass('loaded')
+                        .css('opacity', 0)
+                        .fadeTo(500, 1, function () {
+                            hideSpinner();
+                        });
                 
-                // New buttons now exist; refresh their saved status.
-                $(document).trigger('comicbooks:issues-rendered');
-            
-                renderIssuePagination(titleId, currentPageFromResponse, search, data.total_issues || 0);
-                       
-                lazyLoadImages(); 
-
-                $('#book-container')
-                .attr('aria-busy', 'false')
-                .css('visibility', 'visible');
-
-                hideSpinner();  // always call at the end
+                    // New buttons now exist; refresh their saved status.
+                    $(document).trigger('comicbooks:issues-rendered');
+                
+                    renderIssuePagination(
+                        titleId,
+                        currentPageFromResponse,
+                        search,
+                        data.total_issues || 0
+                    );
+                
+                    lazyLoadImages();
+                
+                    $('#book-container')
+                        .attr('aria-busy', 'false')
+                        .css('visibility', 'visible');
+                });  
             },
 
             error(xhr, status) {
@@ -1596,7 +1620,12 @@ jQuery(document).ready(function($){
                         apiRetryDelay(xhr)
                     );
                 } else {
-                    $('#issues-list').html('<p>Error loading issues.</p>').addClass('loaded');
+                    $issuesList
+                        .stop(true, true)
+                        .html('<p>Error loading issues.</p>')
+                        .addClass('loaded')
+                        .css('opacity', 0)
+                        .fadeTo(250, 1);
                     $('#pagination-wrapper').empty();
                 }
             }
