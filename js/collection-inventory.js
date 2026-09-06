@@ -5,6 +5,8 @@
     const $ = (selector) => root.querySelector(selector);
     const filters = $('#tci-filters');
     const results = $('#tci-results');
+    const issueView = $('#tci-issue-view');
+    const seriesView = $('#tci-series-view');
     const editor = $('#tci-editor');
     const editorForm = $('#tci-editor-form');
     const actionDialog = $('#tci-action-dialog');
@@ -55,10 +57,46 @@
         $('#tci-bulk-trash').disabled = !selected.size;
     }
     function setView(view) {
-        root.dataset.view = view === 'inventory' ? 'inventory' : 'shelf';
-        filters.elements.collection_view.value = root.dataset.view;
-        root.querySelectorAll('.tci-view-switch button').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.view === root.dataset.view)));
-        $('#tci-results-heading').firstChild.textContent = root.dataset.view === 'inventory' ? 'Your inventory ' : 'Your comic shelf ';
+        const allowedViews = [
+            'shelf',
+            'inventory',
+            'series'
+        ];
+    
+        const selectedView = allowedViews.includes(view)
+            ? view
+            : 'shelf';
+    
+        const isSeriesView =
+            selectedView === 'series';
+    
+        root.dataset.view = selectedView;
+        filters.elements.collection_view.value =
+            selectedView;
+    
+        issueView.hidden = isSeriesView;
+        seriesView.hidden = !isSeriesView;
+    
+        root.querySelectorAll(
+            '.tci-view-switch button'
+        ).forEach(button => {
+            button.setAttribute(
+                'aria-pressed',
+                String(
+                    button.dataset.view ===
+                    selectedView
+                )
+            );
+        });
+    
+        const title = {
+            shelf: 'Your comic shelf',
+            inventory: 'Your inventory',
+            series: 'Browse by publisher'
+        };
+    
+        $('#tci-view-title').textContent =
+            title[selectedView];
     }
     function setUrl(push = false) {
         const url = new URL(filters.action, location.href);
@@ -98,10 +136,20 @@
         readController?.abort();
         readController = new AbortController();
         results.setAttribute('aria-busy', 'true');
+        seriesView.setAttribute(
+            'aria-busy',
+            'true'
+        );
         try {
             const data = await request('tcs_inventory_list', new FormData(filters), readController.signal);
             if (version !== readVersion) return;
             results.innerHTML = data.html;
+            if (
+                typeof data.taxonomy_html === 'string'
+            ) {
+                seriesView.innerHTML =
+                    data.taxonomy_html;
+            }
             filters.elements.collection_page.value = data.page;
             $('#tci-total').textContent = `${data.total} ${data.total === 1 ? 'entry' : 'entries'}`;
             Object.entries(data.summary).forEach(([key, value]) => { const el = $(`[data-stat="${key}"]`); if (el) el.textContent = value; });
@@ -115,7 +163,17 @@
         } catch (error) {
             if (error.name !== 'AbortError' && version === readVersion) message(error.message, true);
         } finally {
-            if (version === readVersion) results.setAttribute('aria-busy', 'false');
+            if (version === readVersion) {
+                results.setAttribute(
+                    'aria-busy',
+                    'false'
+                );
+            
+                seriesView.setAttribute(
+                    'aria-busy',
+                    'false'
+                );
+            }
         }
     }
     function filterChanged() {

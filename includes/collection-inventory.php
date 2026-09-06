@@ -131,10 +131,16 @@ function tcs_inventory_record(int $id): array {
         $publisher_terms &&
         !is_wp_error($publisher_terms)
     ) {
-        $publisher_term = reset($publisher_terms);
-
-        if ($publisher_term instanceof WP_Term) {
-            $record['publisher'] = $publisher_term->name;
+        foreach ($publisher_terms as $publisher_term) {
+            if (
+                (int) $publisher_term->parent === 0 &&
+                strpos($publisher_term->slug, 'all-') !== 0
+            ) {
+                $record['publisher'] =
+                    $publisher_term->name;
+    
+                break;
+            }
         }
     }
 
@@ -512,6 +518,7 @@ add_action('wp_ajax_tcs_inventory_list', function () {
     tcs_inventory_authorize();
 
     $input = wp_unslash($_POST);
+    $user_id = get_current_user_id();
 
     $results = tcs_inventory_results($input);
     unset($results['records']);
@@ -523,14 +530,25 @@ add_action('wp_ajax_tcs_inventory_list', function () {
     );
 
     $overview = tcs_inventory_overview(
-        get_current_user_id(),
+        $user_id,
         $publisher_id
+    );
+
+    $taxonomy_tree = tcs_inventory_taxonomy_tree(
+        $user_id
+    );
+
+    $taxonomy_html = tcs_inventory_taxonomy_html(
+        $taxonomy_tree
     );
 
     wp_send_json_success(
         array_merge(
             $results,
-            $overview
+            $overview,
+            [
+                'taxonomy_html' => $taxonomy_html,
+            ]
         )
     );
 });
@@ -596,6 +614,254 @@ add_action('wp_ajax_tcs_inventory_bulk', function () {
     wp_send_json_success(['completed' => $completed, 'operation' => $operation]);
 });
 
+function tcs_inventory_taxonomy_tree(
+    int $user_id
+): array {
+    global $wpdb;
+
+    $sql = $wpdb->prepare(
+        "SELECT
+            publisher_terms.term_id AS publisher_id,
+            publisher_terms.name AS publisher_name,
+            series_terms.term_id AS series_id,
+            series_terms.name AS series_name,
+            COUNT(DISTINCT posts.ID) AS issue_count,
+            SUM(
+                GREATEST(
+                    1,
+                    COALESCE(quantity.qty, 1)
+                )
+            ) AS copy_count
+
+        FROM {$wpdb->posts} posts
+
+        INNER JOIN {$wpdb->term_relationships} publisher_rel
+            ON publisher_rel.object_id = posts.ID
+
+        INNER JOIN {$wpdb->term_taxonomy} publisher_tax
+            ON publisher_tax.term_taxonomy_id =
+                publisher_rel.term_taxonomy_id
+            AND publisher_tax.taxonomy = 'publisher'
+            AND publisher_tax.parent = 0
+            AND publisher_terms.slug NOT LIKE 'all-%'
+        INNER JOIN {$wpdb->terms} publisher_terms
+            ON publisher_terms.term_id =
+                publisher_tax.term_id
+
+        INNER JOIN {$wpdb->term_relationships} series_rel
+            ON series_rel.object_id = posts.ID
+
+        INNER JOIN {$wpdb->term_taxonomy} series_tax
+            ON series_tax.term_taxonomy_id =
+                series_rel.term_taxonomy_id
+            AND series_tax.taxonomy = 'comic_series'
+
+        INNER JOIN {$wpdb->terms} series_terms
+            ON series_terms.term_id =
+                series_tax.term_id
+
+        LEFT JOIN (
+            SELECT
+                post_id,
+                MAX(
+                    CAST(meta_value AS UNSIGNED)
+                ) AS qty
+            FROM {$wpdb->postmeta}
+            WHERE meta_key = 'qty'
+            GROUP BY post_id
+        ) quantity
+            ON quantity.post_id = posts.ID
+
+        WHERE posts.post_type = 'collection'
+            AND posts.post_status = 'publish'
+            AND posts.post_author = %d
+
+        GROUP BY
+            publisher_terms.term_id,
+            publisher_terms.name,
+            series_terms.term_id,
+            series_terms.name
+
+        ORDER BY
+            publisher_terms.name ASC,
+            series_terms.name ASC",
+        $user_id
+    );
+
+    $rows = $wpdb->get_results(
+        $sql,
+        ARRAY_A
+    ) ?: [];
+
+    $tree = [];
+
+    foreach ($rows as $row) {
+        $publisher_id = (int) $row['publisher_id'];
+
+        if (!isset($tree[$publisher_id])) {
+            $tree[$publisher_id] = [
+                'id'          => $publisher_id,
+                'name'        => (string) $row['publisher_name'],
+                'issue_count' => 0,
+                'copy_count'  => 0,
+                'series'      => [],
+            ];
+        }
+
+        $issue_count = (int) $row['issue_count'];
+        $copy_count = (int) $row['copy_count'];
+
+        $tree[$publisher_id]['series'][] = [
+            'id'          => (int) $row['series_id'],
+            'name'        => (string) $row['series_name'],
+            'issue_count' => $issue_count,
+            'copy_count'  => $copy_count,
+        ];
+
+        $tree[$publisher_id]['issue_count'] +=
+            $issue_count;
+
+        $tree[$publisher_id]['copy_count'] +=
+            $copy_count;
+    }
+
+    return array_values($tree);
+}
+function tcs_inventory_taxonomy_html(
+    array $publishers
+): string {
+    $archive_url = get_post_type_archive_link(
+        'collection'
+    );
+
+    ob_start();
+    ?>
+
+    <section
+        class="tci-series-index"
+        aria-labelledby="tci-series-index-title"
+    >
+        <header>
+            <p class="tci-kicker">YOUR LIBRARY</p>
+            <h2 id="tci-series-index-title">
+                Browse by publisher
+            </h2>
+        </header>
+
+        <?php if (!$publishers) : ?>
+
+            <div class="tci-empty">
+                <h3>No organized series yet</h3>
+                <p>
+                    Add or refresh collection issues to organize
+                    them by publisher and series.
+                </p>
+            </div>
+
+        <?php else : ?>
+
+            <div class="tci-publisher-groups">
+
+                <?php foreach ($publishers as $publisher) : ?>
+
+                    <details class="tci-publisher-group">
+
+                        <summary>
+                            <span class="tci-publisher-name">
+                                <?php echo esc_html(
+                                    $publisher['name']
+                                ); ?>
+                            </span>
+
+                            <span class="tci-count">
+                                <?php
+                                printf(
+                                    esc_html(
+                                        _n(
+                                            '%s issue',
+                                            '%s issues',
+                                            $publisher['issue_count'],
+                                            'comic-book-fetcher'
+                                        )
+                                    ),
+                                    number_format_i18n(
+                                        $publisher['issue_count']
+                                    )
+                                );
+                                ?>
+                            </span>
+                        </summary>
+
+                        <ul class="tci-series-list">
+
+                            <?php
+                            foreach (
+                                $publisher['series']
+                                as $series
+                            ) :
+                                $series_url = add_query_arg(
+                                    [
+                                        'collection_publisher' =>
+                                            $publisher['id'],
+                                        'collection_series' =>
+                                            $series['id'],
+                                        'collection_view' =>
+                                            'shelf',
+                                    ],
+                                    $archive_url
+                                );
+                                ?>
+
+                                <li>
+                                    <a href="<?php
+                                        echo esc_url($series_url);
+                                    ?>">
+                                        <span>
+                                            <?php echo esc_html(
+                                                $series['name']
+                                            ); ?>
+                                        </span>
+
+                                        <span class="tci-count">
+                                            <?php
+                                            printf(
+                                                esc_html(
+                                                    _n(
+                                                        '%s issue',
+                                                        '%s issues',
+                                                        $series[
+                                                            'issue_count'
+                                                        ],
+                                                        'comic-book-fetcher'
+                                                    )
+                                                ),
+                                                number_format_i18n(
+                                                    $series[
+                                                        'issue_count'
+                                                    ]
+                                                )
+                                            );
+                                            ?>
+                                        </span>
+                                    </a>
+                                </li>
+
+                            <?php endforeach; ?>
+
+                        </ul>
+                    </details>
+
+                <?php endforeach; ?>
+
+            </div>
+
+        <?php endif; ?>
+    </section>
+
+    <?php
+    return (string) ob_get_clean();
+}
+
 function tcs_inventory_render_app(): void {
     if (!is_user_logged_in()) {
         echo '<div class="tci-empty"><h1>My collection</h1><p>Sign in to view and manage your comics.</p><a class="tci-button tci-button-primary" href="' . esc_url(wp_login_url(get_post_type_archive_link('collection'))) . '">Sign in</a></div>';
@@ -612,6 +878,14 @@ function tcs_inventory_render_app(): void {
     $overview = tcs_inventory_overview(
         get_current_user_id(),
         $publisher_id
+    );
+
+    $taxonomy_tree = tcs_inventory_taxonomy_tree(
+        get_current_user_id()
+    );
+    
+    $taxonomy_html = tcs_inventory_taxonomy_html(
+        $taxonomy_tree
     );
     include COMICBOOKS_PLUGIN_DIR . 'templates/collection-inventory.php';
 }

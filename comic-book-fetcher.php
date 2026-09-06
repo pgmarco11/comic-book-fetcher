@@ -156,14 +156,15 @@ function comic_book_api_settings_page() {
         'manage_options',
         'comicbooks-settings',
         'render_api_settings_page',
-        'dashicons-book'
+        'dashicons-book',
+        25
     );
     // Publishers submenu
     add_submenu_page(
             'comicbooks-settings',                 // parent slug
             'Publishers',                          // page title
             'Publishers',                          // menu title
-            'manage_options',
+            'manage_categories',
             'edit-tags.php?taxonomy=publisher&post_type=collection'
     );    
     // Genres submenu
@@ -171,10 +172,18 @@ function comic_book_api_settings_page() {
             'comicbooks-settings',
             'Genres',
             'Genres',
-            'manage_options',
+            'manage_categories',
             'edit-tags.php?taxonomy=comic_genre&post_type=collection'
     );
-    
+    // Metron and Comic Vine credentials.
+    add_submenu_page(
+            'comicbooks-settings',
+            'Comic Books API Settings',
+            'API Settings',
+            'manage_options',
+            'comicbooks-settings',
+            'render_api_settings_page'
+    );    
 }
 
 add_action(
