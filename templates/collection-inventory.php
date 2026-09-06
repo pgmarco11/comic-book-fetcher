@@ -211,19 +211,7 @@ $archive_url = get_post_type_archive_link('collection');
                     id="tci-bulk-trash"
                     disabled
                 >
-                    Move to trash
-                </button>
-            </div>
-
-            <div class="tci-undo" id="tci-undo" hidden>
-                <span>Entries moved to trash.</span>
-
-                <button
-                    type="button"
-                    class="tci-text-button"
-                    id="tci-undo-button"
-                >
-                    Undo
+                    Remove from collection
                 </button>
             </div>
 
@@ -332,9 +320,18 @@ $archive_url = get_post_type_archive_link('collection');
                         placeholder="Variant cover, signature, provenance, or a reminder…"></textarea></div>
             </div>
             <p id="tci-editor-error" class="tci-form-error" role="alert"></p>
-            <footer><button type="button" class="tci-text-button tci-danger" id="tci-trash-one">Move to trash</button>
-                <div><button type="button" class="tci-button" data-close>Cancel</button><button type="submit"
-                        class="tci-button tci-button-primary">Save changes</button></div>
+            <footer>
+                <button
+                    type="button"
+                    class="tci-text-button tci-danger"
+                    id="tci-trash-one"
+                >
+                    Remove from collection
+                </button>
+                <div>
+                    <button type="button" class="tci-button" data-close>Cancel</button>
+                    <button type="submit" class="tci-button tci-button-primary">Save changes</button>
+                </div>
             </footer>
         </form>
     </dialog>

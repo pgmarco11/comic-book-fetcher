@@ -18,7 +18,6 @@
     let editorSnapshot = '';
     let writing = false;
     let pendingAction = null;
-    let undoIds = [];
     let searchTimer;
 
     function message(text, error = false) {
@@ -269,58 +268,105 @@
         finally { writing = false; busyForm(editorForm, false); }
     });
     function openAction(operation, ids) {
-        pendingAction = {operation, ids};
-        $('#tci-action-title').textContent = operation === 'trash' ? 'Move to trash?' : 'Set storage location';
-        $('#tci-action-description').textContent = operation === 'trash'
-            ? `Move ${ids.length} ${ids.length === 1 ? 'entry' : 'entries'} and all recorded copies to Trash? You can undo the move.`
-            : `Give ${ids.length} selected ${ids.length === 1 ? 'entry' : 'entries'} the same box or shelf location.`;
-        $('#tci-action-location-wrap').hidden = operation !== 'location';
-        $('#tci-action-location').required = operation === 'location';
+        pendingAction = {
+            operation,
+            ids
+        };
+    
+        $('#tci-action-title').textContent =
+            operation === 'delete'
+                ? 'Remove from collection?'
+                : 'Set storage location';
+    
+        $('#tci-action-description').textContent =
+            operation === 'delete'
+                ? `Permanently remove ${ids.length} ${
+                    ids.length === 1
+                        ? 'entry'
+                        : 'entries'
+                  } and all recorded copies? This cannot be undone.`
+                : `Give ${ids.length} selected ${
+                    ids.length === 1
+                        ? 'entry'
+                        : 'entries'
+                  } the same box or shelf location.`;
+    
+        $('#tci-action-location-wrap').hidden =
+            operation !== 'location';
+    
+        $('#tci-action-location').required =
+            operation === 'location';
+    
         $('#tci-action-location').value = '';
+    
         $('#tci-action-error').textContent = '';
-        $('#tci-action-submit').textContent = operation === 'trash' ? 'Move to trash' : 'Save location';
+    
+        $('#tci-action-submit').textContent =
+            operation === 'delete'
+                ? 'Remove permanently'
+                : 'Save location';
+    
         actionDialog.showModal();
     }
     $('#tci-bulk-location').addEventListener('click', () => openAction('location', [...selected]));
-    $('#tci-bulk-trash').addEventListener('click', () => openAction('trash', [...selected]));
-    $('#tci-trash-one').addEventListener('click', () => openAction('trash', [editingRecord.id]));
-    function offerUndo(ids) {
-        undoIds = ids;
-        $('#tci-undo').hidden = !ids.length;
-        $('#tci-undo span').textContent = `${ids.length} ${ids.length === 1 ? 'entry moved' : 'entries moved'} to trash.`;
-    }
+
+    $('#tci-bulk-trash').addEventListener(
+        'click',
+        () => openAction('delete', [...selected])
+    );
+
+    $('#tci-trash-one').addEventListener(
+        'click',
+        () => openAction(
+            'delete',
+            [editingRecord.id]
+        )
+    );
+
     actionForm.addEventListener('submit', async event => {
         event.preventDefault(); if (writing) return;
         writing = true; busyForm(actionForm, true);
         try {
-            const data = await request('tcs_inventory_bulk', {operation: pendingAction.operation, post_ids: pendingAction.ids, storage_location: $('#tci-action-location').value});
-            if (data.operation === 'trash') offerUndo(data.completed);
-            actionDialog.close(); if (editor.open) editor.close();
-            message(data.operation === 'trash' ? 'Selected entries moved to trash.' : 'Storage location updated.');
+            const data = await request(
+                'tcs_inventory_bulk',
+                {
+                    operation: pendingAction.operation,
+                    post_ids: pendingAction.ids,
+                    storage_location:
+                        $('#tci-action-location').value
+                }
+            );
+            
+            actionDialog.close();
+            
+            if (editor.open) {
+                editor.close();
+            }
+            
+            message(
+                data.operation === 'delete'
+                    ? 'Selected entries removed from your collection.'
+                    : 'Storage location updated.'
+            );
+            
             await refresh(false, false);
         } catch (error) {
-            $('#tci-action-error').textContent = error.message;
-            if (error.operation === 'trash' && error.completed.length) offerUndo(error.completed);
+
+            $('#tci-action-error').textContent =
+            error.message;
+        
             if (error.completed.length) {
-                pendingAction.ids = pendingAction.ids.filter(id => !error.completed.includes(id));
+        
+                pendingAction.ids =
+                    pendingAction.ids.filter(
+                        id =>
+                            !error.completed.includes(id)
+                    );
+        
                 await refresh(false, false);
             }
+            
         } finally { writing = false; busyForm(actionForm, false); }
-    });
-    $('#tci-undo-button').addEventListener('click', async () => {
-        if (writing) return;
-        writing = true; $('#tci-undo-button').disabled = true;
-        try {
-            await request('tcs_inventory_bulk', {operation: 'restore', post_ids: undoIds});
-            offerUndo([]); message('Entries restored to your collection.'); await refresh(false, false);
-        } catch (error) {
-            if (error.operation === 'restore' && error.completed.length) {
-                offerUndo(undoIds.filter(id => !error.completed.includes(id)));
-                await refresh(false, false);
-            }
-            message(error.message, true);
-        }
-        finally { writing = false; $('#tci-undo-button').disabled = false; }
     });
     setView(root.dataset.view);
     updateSelection();

@@ -637,32 +637,199 @@ function handle_add_comic_to_collection() {
     ]);
 }
 
+
+
+/**
+ * Delete collection taxonomy terms that are no longer used.
+ *
+ * Term IDs must be captured before the collection post is deleted,
+ * because deleting the post removes its taxonomy relationships.
+ */
+function tcs_cleanup_orphaned_collection_terms(
+    array $terms_by_taxonomy
+): void {
+
+    foreach ($terms_by_taxonomy as $taxonomy => $term_ids) {
+
+        if (!taxonomy_exists($taxonomy)) {
+            continue;
+        }
+
+        foreach ((array) $term_ids as $term_id) {
+
+            $term_id = absint($term_id);
+
+            if (!$term_id) {
+                continue;
+            }
+
+            /*
+             * Refresh the term after the collection post was deleted.
+             * wp_delete_post() updates taxonomy relationships/counts.
+             */
+            clean_term_cache($term_id, $taxonomy);
+
+            $term = get_term($term_id, $taxonomy);
+
+            if (
+                !$term ||
+                is_wp_error($term)
+            ) {
+                continue;
+            }
+
+            /*
+             * If WordPress still reports usage, keep the term.
+             */
+            if ((int) $term->count > 0) {
+                continue;
+            }
+
+            /*
+             * Extra safety:
+             * term->count for post taxonomies can be influenced by
+             * post status. Confirm there are truly no object
+             * relationships left before deleting the term itself.
+             */
+            $remaining_objects = get_objects_in_term(
+                $term_id,
+                $taxonomy
+            );
+
+            if (
+                is_wp_error($remaining_objects) ||
+                !empty($remaining_objects)
+            ) {
+                continue;
+            }
+
+            $deleted = wp_delete_term(
+                $term_id,
+                $taxonomy
+            );
+
+            if (is_wp_error($deleted)) {
+                error_log(
+                    sprintf(
+                        'TCS taxonomy cleanup failed: %s term %d: %s',
+                        $taxonomy,
+                        $term_id,
+                        $deleted->get_error_message()
+                    )
+                );
+            }
+        }
+    }
+}
+
+
 /**
  * AJAX: Remove Comic
  */
-add_action('wp_ajax_remove_comic_from_collection', function () {
+add_action(
+    'wp_ajax_remove_comic_from_collection',
+    function () {
 
-    check_ajax_referer('comicbooks_fetchers_data', 'security');
+        check_ajax_referer(
+            'comicbooks_fetchers_data',
+            'security'
+        );
 
-    $user_id = get_current_user_id();
-    $post_id = isset($_POST['post_id'])
-    ? absint(wp_unslash($_POST['post_id']))
-    : 0;
+        $user_id = get_current_user_id();
 
-    if (!$post_id) {
-        wp_send_json_error('Invalid post.');
+        if (!$user_id) {
+            wp_send_json_error(
+                'Not logged in.',
+                401
+            );
+        }
+
+        $post_id = isset($_POST['post_id'])
+            ? absint($_POST['post_id'])
+            : 0;
+
+        if (!$post_id) {
+            wp_send_json_error(
+                'Invalid collection entry.',
+                400
+            );
+        }
+
+        $post = get_post($post_id);
+
+        if (
+            !$post ||
+            $post->post_type !== 'collection' ||
+            (int) $post->post_author !== $user_id
+        ) {
+            wp_send_json_error(
+                'Unauthorized.',
+                403
+            );
+        }
+
+        /*
+         * Capture taxonomy term IDs BEFORE deleting the post.
+         *
+         * Once wp_delete_post() runs, these relationships disappear.
+         */
+        $terms_to_check = [];
+
+        foreach (
+            [
+                'publisher',
+                'comic_genre',
+            ] as $taxonomy
+        ) {
+
+            $term_ids = wp_get_object_terms(
+                $post_id,
+                $taxonomy,
+                [
+                    'fields' => 'ids',
+                ]
+            );
+
+            if (is_wp_error($term_ids)) {
+                wp_send_json_error(
+                    'Could not read collection taxonomy data.',
+                    500
+                );
+            }
+
+            $terms_to_check[$taxonomy] = array_map(
+                'absint',
+                $term_ids
+            );
+        }
+
+        /*
+         * Permanently remove the collection post.
+         * WordPress removes its taxonomy relationships and updates counts.
+         */
+        $deleted = wp_delete_post(
+            $post_id,
+            true
+        );
+
+        if (!$deleted) {
+            wp_send_json_error(
+                'Could not remove the comic from your collection.',
+                500
+            );
+        }
+
+        /*
+         * Now that counts have changed, remove publisher/genre terms
+         * that are no longer used by any collection item.
+         */
+        tcs_cleanup_orphaned_collection_terms(
+            $terms_to_check
+        );
+
+        wp_send_json_success();
     }
-
-    $post = get_post($post_id);
-
-    if (!$post || $post->post_author != $user_id) {
-        wp_send_json_error('Unauthorized.');
-    }
-
-    wp_delete_post($post_id, true);
-
-    wp_send_json_success();
-});
+);
 
 /**
  * Restrict admin query to current user's collection

@@ -579,40 +579,274 @@ add_action('wp_ajax_tcs_inventory_save', function () {
     wp_send_json_success(['record' => tcs_inventory_record($id)]);
 });
 
-add_action('wp_ajax_tcs_inventory_bulk', function () {
-    tcs_inventory_authorize();
-    $input = wp_unslash($_POST);
-    $ids = array_values(array_unique(array_filter(array_map('absint', (array) ($input['post_ids'] ?? [])))));
-    $operation = tcs_inventory_text($input['operation'] ?? '');
-    if (!$ids || count($ids) > 24 || !in_array($operation, ['location', 'trash', 'restore'], true)) wp_send_json_error('Select up to 24 entries and a valid action.', 422);
-    // Validate every entry before applying any mutation.
-    foreach ($ids as $id) tcs_inventory_owned_post($id, $operation === 'restore' ? ['trash'] : ['publish']);
-    if ($operation === 'trash' && (!defined('EMPTY_TRASH_DAYS') || !EMPTY_TRASH_DAYS)) wp_send_json_error('Trash is disabled on this site; no entries were removed.', 409);
-    $location = tcs_inventory_text($input['storage_location'] ?? '');
-    if ($operation === 'location' && ($location === '' || strlen($location) > 120)) wp_send_json_error('Enter a storage location of up to 120 characters.', 422);
-    $completed = [];
-    foreach ($ids as $id) {
-        if ($operation === 'location') {
-            update_post_meta($id, 'storage_location', wp_slash($location));
-            $ok = get_post_meta($id, 'storage_location', true) === $location;
-        } elseif ($operation === 'trash') {
-            $ok = wp_trash_post($id);
-        } else {
-            $restore_status = static function ($status, $post_id, $previous) use ($id) {
-                return (int) $post_id === $id ? 'publish' : $status;
-            };
-            add_filter('wp_untrash_post_status', $restore_status, 10, 3);
-            $ok = wp_untrash_post($id);
-            remove_filter('wp_untrash_post_status', $restore_status, 10);
+function tcs_inventory_cleanup_orphaned_terms(
+    array $terms_by_taxonomy
+): void {
+
+    foreach (
+        [
+            'publisher',
+            'comic_genre',
+        ] as $taxonomy
+    ) {
+
+        $term_ids = array_unique(
+            array_filter(
+                array_map(
+                    'absint',
+                    (array) (
+                        $terms_by_taxonomy[$taxonomy]
+                        ?? []
+                    )
+                )
+            )
+        );
+
+        foreach ($term_ids as $term_id) {
+
+            clean_term_cache(
+                $term_id,
+                $taxonomy
+            );
+
+            $term = get_term(
+                $term_id,
+                $taxonomy
+            );
+
+            if (
+                !$term ||
+                is_wp_error($term)
+            ) {
+                continue;
+            }
+
+            /*
+             * If WordPress still has published collection
+             * entries using the term, leave it alone.
+             */
+            if ((int) $term->count > 0) {
+                continue;
+            }
+
+            /*
+             * Extra safety: make sure there are no remaining
+             * object relationships at all.
+             */
+            $object_ids = get_objects_in_term(
+                $term_id,
+                $taxonomy
+            );
+
+            if (
+                is_wp_error($object_ids) ||
+                !empty($object_ids)
+            ) {
+                continue;
+            }
+
+            $deleted = wp_delete_term(
+                $term_id,
+                $taxonomy
+            );
+
+            if (is_wp_error($deleted)) {
+                error_log(
+                    sprintf(
+                        'TCS orphan term cleanup failed: %s #%d - %s',
+                        $taxonomy,
+                        $term_id,
+                        $deleted->get_error_message()
+                    )
+                );
+            }
         }
-        if (!$ok) {
-            wp_send_json_error(['message' => 'The operation stopped before all entries were updated. Refresh to see the result.', 'completed' => $completed, 'operation' => $operation], 500);
-        }
-        clean_post_cache($id);
-        $completed[] = $id;
     }
-    wp_send_json_success(['completed' => $completed, 'operation' => $operation]);
-});
+}
+
+add_action(
+    'wp_ajax_tcs_inventory_bulk',
+    function () {
+
+        tcs_inventory_authorize();
+
+        $input = wp_unslash($_POST);
+
+        $ids = array_values(
+            array_unique(
+                array_filter(
+                    array_map(
+                        'absint',
+                        (array) (
+                            $input['post_ids']
+                            ?? []
+                        )
+                    )
+                )
+            )
+        );
+
+        $operation = tcs_inventory_text(
+            $input['operation'] ?? ''
+        );
+
+        if (
+            !$ids ||
+            count($ids) > 24 ||
+            !in_array(
+                $operation,
+                [
+                    'location',
+                    'delete',
+                ],
+                true
+            )
+        ) {
+            wp_send_json_error(
+                'Select up to 24 entries and a valid action.',
+                422
+            );
+        }
+
+        /*
+         * Everything manipulated by this screen must be
+         * a published collection item owned by the user.
+         */
+        foreach ($ids as $id) {
+            tcs_inventory_owned_post(
+                $id,
+                ['publish']
+            );
+        }
+
+        $location = tcs_inventory_text(
+            $input['storage_location'] ?? ''
+        );
+
+        if (
+            $operation === 'location' &&
+            (
+                $location === '' ||
+                strlen($location) > 120
+            )
+        ) {
+            wp_send_json_error(
+                'Enter a storage location of up to 120 characters.',
+                422
+            );
+        }
+
+        $completed = [];
+
+        foreach ($ids as $id) {
+
+            if ($operation === 'location') {
+
+                update_post_meta(
+                    $id,
+                    'storage_location',
+                    wp_slash($location)
+                );
+
+                $ok =
+                    get_post_meta(
+                        $id,
+                        'storage_location',
+                        true
+                    ) === $location;
+
+                if ($ok) {
+                    clean_post_cache($id);
+                }
+
+            } else {
+
+                /*
+                 * Capture publisher + genres BEFORE permanently
+                 * deleting the collection post.
+                 */
+                $terms_to_check = [
+                    'publisher'   => [],
+                    'comic_genre' => [],
+                ];
+
+                foreach (
+                    array_keys($terms_to_check)
+                    as $taxonomy
+                ) {
+
+                    $term_ids = wp_get_object_terms(
+                        $id,
+                        $taxonomy,
+                        [
+                            'fields' => 'ids',
+                        ]
+                    );
+
+                    if (is_wp_error($term_ids)) {
+                        $ok = false;
+                        break;
+                    }
+
+                    $terms_to_check[$taxonomy] =
+                        array_map(
+                            'absint',
+                            $term_ids
+                        );
+                }
+
+                if (!isset($ok) || $ok !== false) {
+
+                    /*
+                     * true = bypass Trash and permanently delete.
+                     */
+                    $deleted = wp_delete_post(
+                        $id,
+                        true
+                    );
+
+                    $ok = $deleted !== false;
+
+                    if ($ok) {
+
+                        /*
+                         * Post relationships are now gone and
+                         * taxonomy counts have been updated.
+                         */
+                        tcs_inventory_cleanup_orphaned_terms(
+                            $terms_to_check
+                        );
+                    }
+                }
+            }
+
+            if (!$ok) {
+
+                wp_send_json_error(
+                    [
+                        'message' =>
+                            'The operation stopped before all entries were updated. Refresh to see the result.',
+
+                        'completed' => $completed,
+                        'operation' => $operation,
+                    ],
+                    500
+                );
+            }
+
+            $completed[] = $id;
+
+            unset($ok);
+        }
+
+        wp_send_json_success(
+            [
+                'completed' => $completed,
+                'operation' => $operation,
+            ]
+        );
+    }
+);
 
 function tcs_inventory_taxonomy_tree(
     int $user_id
