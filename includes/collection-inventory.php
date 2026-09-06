@@ -227,6 +227,54 @@ function tcs_inventory_series_options(
     );
 }
 
+/**
+ * Return the term IDs that should be used for a selected series.
+ *
+ * Series terms can be imported separately for different publishers. When no
+ * publisher is selected, treat terms with the same name as the same series so
+ * the filter searches the owner's whole collection.
+ */
+function tcs_inventory_matching_series_ids(
+    int $series_term_id,
+    int $publisher_id = 0
+): array {
+    if ($series_term_id < 1) {
+        return [];
+    }
+
+    if ($publisher_id > 0) {
+        return [$series_term_id];
+    }
+
+    $selected_series = get_term(
+        $series_term_id,
+        'comic_series'
+    );
+
+    if (
+        !$selected_series instanceof WP_Term ||
+        is_wp_error($selected_series)
+    ) {
+        return [];
+    }
+
+    $matching_ids = get_terms([
+        'taxonomy'   => 'comic_series',
+        'hide_empty' => false,
+        'fields'     => 'ids',
+        'name'       => $selected_series->name,
+    ]);
+
+    if (is_wp_error($matching_ids) || !$matching_ids) {
+        return [$series_term_id];
+    }
+
+    return array_values(array_unique(array_map(
+        'absint',
+        $matching_ids
+    )));
+}
+
 /** Facets and totals include only the current owner's published collection. */
 function tcs_inventory_overview(
     int $user_id,
@@ -395,10 +443,16 @@ function tcs_inventory_results(array $input): array {
     );
     
     if ($series_term_id) {
+        $matching_series_ids =
+            tcs_inventory_matching_series_ids(
+                $series_term_id,
+                $publisher_id
+            );
+
         $taxonomy_filters[] = [
             'taxonomy'         => 'comic_series',
             'field'            => 'term_id',
-            'terms'            => [$series_term_id],
+            'terms'            => $matching_series_ids ?: [0],
             'include_children' => false,
         ];
     }
@@ -534,8 +588,16 @@ add_action('wp_ajax_tcs_inventory_list', function () {
         $publisher_id
     );
 
+    $series_term_id = absint(
+        tcs_inventory_text(
+            $input['collection_series'] ?? 0
+        )
+    );
+
     $taxonomy_tree = tcs_inventory_taxonomy_tree(
-        $user_id
+        $user_id,
+        $publisher_id,
+        $series_term_id
     );
 
     $taxonomy_html = tcs_inventory_taxonomy_html(
@@ -849,12 +911,13 @@ add_action(
 );
 
 function tcs_inventory_taxonomy_tree(
-    int $user_id
+    int $user_id,
+    int $publisher_id = 0,
+    int $series_term_id = 0
 ): array {
     global $wpdb;
 
-    $sql = $wpdb->prepare(
-        "SELECT
+    $sql = "SELECT
             publisher_terms.term_id AS publisher_id,
             publisher_terms.name AS publisher_name,
             series_terms.term_id AS series_id,
@@ -910,7 +973,39 @@ function tcs_inventory_taxonomy_tree(
         WHERE posts.post_type = 'collection'
             AND posts.post_status = 'publish'
             AND posts.post_author = %d
+    ";
 
+    $parameters = [$user_id];
+
+    if ($publisher_id > 0) {
+        $sql .= ' AND publisher_terms.term_id = %d';
+        $parameters[] = $publisher_id;
+    }
+
+    if ($series_term_id > 0) {
+        $matching_series_ids =
+            tcs_inventory_matching_series_ids(
+                $series_term_id,
+                $publisher_id
+            );
+
+        if (!$matching_series_ids) {
+            return [];
+        }
+
+        $placeholders = implode(
+            ', ',
+            array_fill(0, count($matching_series_ids), '%d')
+        );
+
+        $sql .= " AND series_terms.term_id IN ({$placeholders})";
+        $parameters = array_merge(
+            $parameters,
+            $matching_series_ids
+        );
+    }
+
+    $sql .= "
         GROUP BY
             publisher_terms.term_id,
             publisher_terms.name,
@@ -919,8 +1014,11 @@ function tcs_inventory_taxonomy_tree(
 
         ORDER BY
             publisher_terms.name ASC,
-            series_terms.name ASC",
-        $user_id
+            series_terms.name ASC";
+
+    $sql = $wpdb->prepare(
+        $sql,
+        ...$parameters
     );
 
     $rows = $wpdb->get_results(
@@ -1109,8 +1207,16 @@ function tcs_inventory_render_app(): void {
         $publisher_id
     );
 
+    $series_term_id = absint(
+        tcs_inventory_text(
+            $input['collection_series'] ?? 0
+        )
+    );
+
     $taxonomy_tree = tcs_inventory_taxonomy_tree(
-        get_current_user_id()
+        get_current_user_id(),
+        $publisher_id,
+        $series_term_id
     );
     
     $taxonomy_html = tcs_inventory_taxonomy_html(

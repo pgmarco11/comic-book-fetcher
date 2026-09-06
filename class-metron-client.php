@@ -340,11 +340,25 @@
                  );
             }
  
-            // Wait briefly; return a retryable response if still busy.
-            if (!self::acquire_lock($scope, 1.0)) {
-                 return self::temporary_failure(
-                     'The Metron request queue is busy. Please retry.'
-                 );
+            /*
+            * A Metron request can legitimately hold the shared lock for more
+            * than one second while waiting on the upstream response. Give
+            * foreground catalog requests a fair chance to acquire it, while
+            * reserving enough of this request's budget for the HTTP call and
+            * response handling.
+            */
+            $lock_wait = min(
+                6.0,
+                max(
+                    0.0,
+                    self::remaining_seconds() - self::HTTP_TIMEOUT - 1.0
+                )
+            );
+
+            if (!self::acquire_lock($scope, $lock_wait)) {
+                return self::temporary_failure(
+                    'The Metron request queue is busy. Please retry.'
+                );
             }
  
             $slot_wait = 0.0;
