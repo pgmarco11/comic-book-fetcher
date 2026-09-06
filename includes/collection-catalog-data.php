@@ -155,8 +155,61 @@ function tcs_collection_catalog_data(int $title_id, int $issue_id) {
     if ($creators === '') $creators = tcs_format_creator_credits(is_array($cv['person_credits'] ?? null) ? $cv['person_credits'] : []);
     $characters = tcs_catalog_names($issue['characters'] ?? []);
     if (!$characters) $characters = tcs_catalog_names($cv['character_credits'] ?? []);
-    $genres = tcs_catalog_names($series['genres'] ?? []);
-    $concepts = tcs_catalog_names($cv['concept_credits'] ?? []);
+
+    $genres = tcs_catalog_names(
+        $series['genres'] ?? []
+    );
+    
+    /*
+     * Concepts are a Comic Vine field.
+     *
+     * First prefer concepts attached directly to the issue.
+     */
+    $concepts = tcs_catalog_names(
+        $cv['concept_credits'] ?? []
+    );
+    
+    /*
+     * If the issue has no concepts, try the Comic Vine volume.
+     *
+     * Do this independently of genres because concepts have their
+     * own ACF/meta field and should still be populated even when
+     * Metron already supplied valid genres.
+     */
+    if (
+        empty( $concepts ) &&
+        ! empty( $cv['volume']['id'] )
+    ) {
+        $cv_volume_id = absint(
+            $cv['volume']['id']
+        );
+    
+        if ( $cv_volume_id ) {
+            $concepts = tcs_get_comicvine_volume_concepts(
+                $cv_volume_id
+            );
+        }
+    }
+    
+    /*
+     * Genre fallback.
+     *
+     * Metron genres always win.
+     * Only when Metron has no genres do we use the Comic Vine
+     * concepts as a fallback classification.
+     */
+    if (
+        empty( $genres ) && 
+        ! empty( $cv['volume']['id'] )     
+    ) {
+        $cv_volume_id = absint(
+            $cv['volume']['id']
+        );
+        $genres = tcs_get_comicvine_volume_concepts(
+            $cv_volume_id
+        );
+    }
+
     $image = is_string($issue['image'] ?? null) ? esc_url_raw($issue['image']) : '';
     if ($image === '') $image = tcs_get_cv_image_url($cv);
 

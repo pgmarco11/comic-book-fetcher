@@ -643,10 +643,11 @@ function tcs_inventory_taxonomy_tree(
                 publisher_rel.term_taxonomy_id
             AND publisher_tax.taxonomy = 'publisher'
             AND publisher_tax.parent = 0
-            AND publisher_terms.slug NOT LIKE 'all-%'
+
         INNER JOIN {$wpdb->terms} publisher_terms
             ON publisher_terms.term_id =
                 publisher_tax.term_id
+            AND publisher_terms.slug NOT LIKE 'all-%'
 
         INNER JOIN {$wpdb->term_relationships} series_rel
             ON series_rel.object_id = posts.ID
@@ -741,13 +742,7 @@ function tcs_inventory_taxonomy_html(
         class="tci-series-index"
         aria-labelledby="tci-series-index-title"
     >
-        <header>
-            <p class="tci-kicker">YOUR LIBRARY</p>
-            <h2 id="tci-series-index-title">
-                Browse by publisher
-            </h2>
-        </header>
-
+        <h3 id="tci-series-index-title">Organized by series</h3>
         <?php if (!$publishers) : ?>
 
             <div class="tci-empty">

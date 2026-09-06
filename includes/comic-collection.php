@@ -328,6 +328,87 @@ function tcs_get_comicvine_issue_basic( int $cv_id ): array {
     return $result;
 }
 
+/**
+ * Get Comic Vine concepts for a volume.
+ *
+ * Used only as a fallback when:
+ * 1. Metron has no series genres, and
+ * 2. the Comic Vine issue has no concept_credits.
+ */
+function tcs_get_comicvine_volume_concepts( int $cv_volume_id ): array {
+
+    if ( $cv_volume_id <= 0 ) {
+        return [];
+    }
+
+    $cache_key = "tcs:cv_volume_concepts:v1:{$cv_volume_id}";
+    $cached    = get_transient( $cache_key );
+
+    if ( $cached !== false && is_array( $cached ) ) {
+        return $cached;
+    }
+
+    $cv_key = get_option( 'comic_vine_api_key', '' );
+
+    if ( empty( $cv_key ) ) {
+        return [];
+    }
+
+    $url = add_query_arg(
+        [
+            'api_key'    => $cv_key,
+            'format'     => 'json',
+            'field_list' => 'id,name,concepts',
+        ],
+        "https://comicvine.gamespot.com/api/volume/4050-{$cv_volume_id}/"
+    );
+
+    $response = wp_remote_get(
+        $url,
+        [
+            'timeout' => 30,
+            'headers' => [
+                'User-Agent' =>
+                    'ComicBookFetcher/1.1 (+' . get_site_url() . ')',
+            ],
+        ]
+    );
+
+    if ( is_wp_error( $response ) ) {
+        return [];
+    }
+
+    $body = json_decode(
+        wp_remote_retrieve_body( $response ),
+        true
+    );
+
+    if (
+        ! is_array( $body ) ||
+        ! isset( $body['results'] ) ||
+        ! is_array( $body['results'] )
+    ) {
+        return [];
+    }
+
+    $concepts = tcs_catalog_names(
+        $body['results']['concepts'] ?? []
+    );
+
+    /*
+     * Cache successful results for 30 days.
+     * Cache a confirmed empty result only for one day.
+     */
+    set_transient(
+        $cache_key,
+        $concepts,
+        ! empty( $concepts )
+            ? 30 * DAY_IN_SECONDS
+            : DAY_IN_SECONDS
+    );
+
+    return $concepts;
+}
 
 /**
  * Format creator/person credits into the text string your collection meta expects.

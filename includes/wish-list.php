@@ -132,7 +132,12 @@ function check_wishlist_status_ajax() {
 add_shortcode('user_wishlist', 'mwp_display_user_wishlist');
 function mwp_display_user_wishlist() {
     if (!is_user_logged_in()) {
-        return '<p class="has-white-color">Please log in to view your wishlist.</p>';
+        echo '<p class="has-white-color">Please <a class="text-white" href="' . esc_url(
+            wp_login_url(
+                home_url('/wish-list/')
+            )
+        ) . '">log in</a> to view your wishlist.</p>';
+        return; 
     }
 
     $wishlist = mwp_get_user_wishlist(get_current_user_id());
