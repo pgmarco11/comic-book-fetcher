@@ -1430,54 +1430,121 @@ jQuery(document).ready(function($){
 
     function renderIssuePagination(titleId, page, search, totalIssues) {
         const $wrapper = $('#pagination-wrapper');
-        if (!$wrapper.length) return;  // safety: element must exist in DOM
-
+    
+        if (!$wrapper.length) {
+            return;
+        }
+    
         if (!totalIssues || totalIssues < 1) {
             $wrapper.empty();
             return;
         }
-
-        const perPage    = 10;
-        const totalPages = Math.ceil(totalIssues / perPage);
-        const start      = Math.max(1, page - 2);
-        const end        = Math.min(totalPages, page + 2);
-
-        const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
-
-        // Write directly into #pagination-wrapper — no extra <div class="pagination-wrapper"> wrapper
+    
+        const perPage     = 10;
+        const totalPages  = Math.ceil(totalIssues / perPage);
+        const visiblePages = 5;
+    
+        page = Math.max(1, Math.min(Number(page) || 1, totalPages));
+    
+        /*
+         * Keep five numbered buttons visible whenever possible.
+         *
+         * Page 1: 1 2 3 4 5 Next
+         * Page 5: Previous 3 4 5 6 7 Next
+         * Page 10: Previous 6 7 8 9 10
+         */
+        const start = Math.max(
+            1,
+            Math.min(
+                page - Math.floor(visiblePages / 2),
+                totalPages - visiblePages + 1
+            )
+        );
+    
+        const end = Math.min(
+            totalPages,
+            start + visiblePages - 1
+        );
+    
+        const searchParam = search
+            ? `&search=${encodeURIComponent(search)}`
+            : '';
+    
         let html = `<p>Page ${page} of ${totalPages}</p>`;
-
+    
         if (page > 1) {
-            const prev = page - 1;
-            html += `<a href="?title_id=${titleId}&page=${prev}${searchParam}"
-                        class="page-btn"
-                        data-page="${prev}"
-                        data-title-id="${titleId}"
-                        data-search="${search}">Previous</a>`;
+            const previousPage = page - 1;
+    
+            html += `
+                <a href="?title_id=${titleId}&page=${previousPage}${searchParam}"
+                   class="page-btn"
+                   data-page="${previousPage}"
+                   data-title-id="${titleId}"
+                   data-search="${search}"
+                   aria-label="Go to previous page">
+                    Previous
+                </a>`;
         }
-
-        for (let i = start; i <= end; i++) {
-            const active = i === page ? ' active' : '';
-            const href   = i === page ? '#' : `?title_id=${titleId}&page=${i}${searchParam}`;
-            html += `<a href="${href}"
-                        class="page-btn${active}"
-                        data-page="${i}"
-                        data-title-id="${titleId}"
-                        data-search="${search}">${i}</a>`;
+    
+        for (let pageNumber = start; pageNumber <= end; pageNumber++) {
+            const isActive = pageNumber === page;
+            const activeClass = isActive ? ' active' : '';
+            const href = isActive
+                ? '#'
+                : `?title_id=${titleId}&page=${pageNumber}${searchParam}`;
+    
+            html += `
+                <a href="${href}"
+                   class="page-btn${activeClass}"
+                   data-page="${pageNumber}"
+                   data-title-id="${titleId}"
+                   data-search="${search}"
+                   ${isActive ? 'aria-current="page"' : ''}
+                   aria-label="Go to page ${pageNumber}">
+                    ${pageNumber}
+                </a>`;
         }
-
-        // Next = end + 1, not page + 1 — mirrors the PHP fix
-        if (end < totalPages) {
-            const next = end + 1;
-            html += `<a href="?title_id=${titleId}&page=${next}${searchParam}"
-                        class="page-btn"
-                        data-page="${next}"
-                        data-title-id="${titleId}"
-                        data-search="${search}">Next</a>`;
+    
+        /*
+         * Next must always mean the immediately following page.
+         */
+        if (page < totalPages) {
+            const nextPage = page + 1;
+    
+            html += `
+                <a href="?title_id=${titleId}&page=${nextPage}${searchParam}"
+                   class="page-btn"
+                   data-page="${nextPage}"
+                   data-title-id="${titleId}"
+                   data-search="${search}"
+                   aria-label="Go to next page">
+                    Next
+                </a>`;
         }
-
+    
+        if (totalPages > 1) {
+            html += `
+                <form class="issue-page-jump"
+                      data-title-id="${titleId}"
+                      data-total-pages="${totalPages}">
+                    <label for="issue-page-jump-input">Go to page</label>
+    
+                    <input type="number"
+                           id="issue-page-jump-input"
+                           class="issue-page-jump__input"
+                           min="1"
+                           max="${totalPages}"
+                           inputmode="numeric"
+                           required
+                           aria-label="Page number">
+    
+                    <button type="submit" class="issue-page-jump__button">
+                        Go
+                    </button>
+                </form>`;
+        }
+    
         $wrapper.html(html);
-        updateIssuesUrl(titleId, page, search);
     }
 
     function fetchIssues(titleId = null, page = null, search = '', retries = 3) {
@@ -1852,6 +1919,47 @@ jQuery(document).ready(function($){
         $('html, body').animate({
             scrollTop: $('#book-container').offset().top
         }, 100);
+    });
+
+    // ===================================================================
+    // EVENT: Go To Issue Page
+    // ===================================================================
+
+    $(document).on('submit', '.issue-page-jump', function (event) {
+        event.preventDefault();
+
+        const $form       = $(this);
+        const input       = $form.find('.issue-page-jump__input').get(0);
+        const requestedPage = Number.parseInt(input.value, 10);
+        const totalPages  = Number($form.data('total-pages'));
+        const titleId     = Number($form.data('title-id'));
+
+        if (
+            !Number.isInteger(requestedPage) ||
+            requestedPage < 1 ||
+            requestedPage > totalPages
+        ) {
+            input.setCustomValidity(
+                `Enter a page number between 1 and ${totalPages}.`
+            );
+            input.reportValidity();
+            return;
+        }
+
+        input.setCustomValidity('');
+
+        const search = $('#issue-search').val() || currentSearch || '';
+
+        updateIssuesUrl(titleId, requestedPage, search);
+        fetchIssues(titleId, requestedPage, search);
+
+        $('html, body').animate({
+            scrollTop: $('#issues-list').offset().top
+        }, 100);
+    });
+
+    $(document).on('input', '.issue-page-jump__input', function () {
+        this.setCustomValidity('');
     });
     
     $(document).on('click', '.publisher-item a, .comic-title a', function(e) {

@@ -238,6 +238,91 @@
     border-bottom: 1px solid var(--wp--preset--color--royal-blue);
 }
 
+#pagination-wrapper {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding: 0.25rem 0 0.5rem;
+}
+
+/* Override the existing full-width paragraph rule */
+#pagination-wrapper > p {
+  flex: 0 0 auto;
+  width: auto;
+  margin: 0 0.5rem 0 0;
+  white-space: nowrap;
+}
+
+#pagination-wrapper .page-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.issue-page-jump {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.4rem;
+  width: auto;
+  margin: 0 0 0 0.5rem;
+  white-space: nowrap;
+}
+
+.issue-page-jump label {
+  margin: 0;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.issue-page-jump__input {
+  width: 65px;
+  min-height: 42px;
+  padding: 0.5rem;
+  border: 1px solid var(--wp--preset--color--deep-red);
+  border-radius: 8px;
+  font: inherit;
+  text-align: center;
+}
+
+.issue-page-jump__input:focus-visible {
+  outline: 3px solid rgba(179, 0, 0, 0.25);
+  outline-offset: 2px;
+}
+
+.issue-page-jump__button {
+  flex: 0 0 auto;
+  min-height: 42px;
+  cursor: pointer;
+}
+
+@media (max-width: 700px) {
+  #pagination-wrapper {
+      justify-content: flex-start;
+  }
+
+  #pagination-wrapper .page-btn,
+  #pagination-wrapper button {
+      padding: 6px 10px;
+  }
+
+  .issue-page-jump {
+      margin-left: 0.25rem;
+  }
+
+  .issue-page-jump__input {
+      width: 58px;
+      min-height: 38px;
+      padding: 6px;
+  }
+
+  .issue-page-jump__button {
+      min-height: 38px;
+  }
+}
+
 /* search */
 .search-wrapper {
   margin-bottom: 1rem;

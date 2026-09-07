@@ -323,6 +323,27 @@
         )
     );
 
+    function rememberCollectionUrl() {
+        sessionStorage.setItem(
+            'collectiblespot_last_collection_url',
+            window.location.href
+        );
+    }
+    
+    rememberCollectionUrl();
+    
+    window.addEventListener('popstate', rememberCollectionUrl);
+    
+    document.addEventListener('click', function (event) {
+        const issueLink = event.target.closest(
+            'a[href*="/comic-catalog/issue/"], a[href*="issue_id="]'
+        );
+    
+        if (issueLink) {
+            rememberCollectionUrl();
+        }
+    });
+
     actionForm.addEventListener('submit', async event => {
         event.preventDefault(); if (writing) return;
         writing = true; busyForm(actionForm, true);

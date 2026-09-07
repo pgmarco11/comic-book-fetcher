@@ -1,11 +1,13 @@
 /* Scoped to the collection archive; no build step or changes to other pages. */
-.tci {
+:root {
     --ink: #102c43;
     --blue: #005cba;
     --paper: #fffaf0;
     --gold: #ffbf32;
     --muted: #4b6071;
     --line: #d8dce0;
+}
+.tci {
     font: 16px/1.5 Lato, system-ui, sans-serif;
     color: var(--ink);
     padding: 0 0 52px;

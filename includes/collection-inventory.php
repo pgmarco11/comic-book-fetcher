@@ -70,15 +70,103 @@ function tcs_inventory_text($value): string {
     return is_scalar($value) ? sanitize_text_field((string) $value) : '';
 }
 
+/**
+ * Load collection-management assets on:
+ *
+ * 1. The collection archive.
+ * 2. The public issue-details page.
+ */
 function tcs_inventory_asset_setup(): void {
-    if (!is_post_type_archive('collection')) return;
-    wp_enqueue_style('tcs-inventory', COMICBOOKS_PLUGIN_URL . 'css/collection-inventory.css', [], filemtime(COMICBOOKS_PLUGIN_DIR . 'css/collection-inventory.css'));
-    wp_enqueue_script('tcs-inventory', COMICBOOKS_PLUGIN_URL . 'js/collection-inventory.js', [], filemtime(COMICBOOKS_PLUGIN_DIR . 'js/collection-inventory.js'), true);
-    wp_localize_script('tcs-inventory', 'tcsInventory', [
-        'ajaxUrl' => admin_url('admin-ajax.php'),
-        'nonce' => wp_create_nonce('tcs_inventory'),
-    ]);
+    $is_collection_archive =
+        is_post_type_archive('collection');
+
+    $is_issue_details =
+        is_page('issue');
+
+    if (
+        !$is_collection_archive &&
+        !$is_issue_details
+    ) {
+        return;
+    }
+
+    /*
+     * The full collection dashboard assets.
+     */
+    if ($is_collection_archive) {
+        wp_enqueue_style(
+            'tcs-inventory',
+            COMICBOOKS_PLUGIN_URL .
+                'css/collection-inventory.css',
+            [],
+            filemtime(
+                COMICBOOKS_PLUGIN_DIR .
+                'css/collection-inventory.css'
+            )
+        );
+
+        wp_enqueue_script(
+            'tcs-inventory',
+            COMICBOOKS_PLUGIN_URL .
+                'js/collection-inventory.js',
+            [],
+            filemtime(
+                COMICBOOKS_PLUGIN_DIR .
+                'js/collection-inventory.js'
+            ),
+            true
+        );
+    }
+
+    /*
+     * The editor embedded in the issue-details page.
+     */
+    if ($is_issue_details) {
+
+        wp_enqueue_style(
+            'tcs-issue-collection',
+            COMICBOOKS_PLUGIN_URL .
+                'css/issue-collection.css',
+            ['comicbook-style'],
+            filemtime(
+                COMICBOOKS_PLUGIN_DIR .
+                'css/issue-collection.css'
+            )
+        );
+
+        wp_enqueue_script(
+            'tcs-issue-collection',
+            COMICBOOKS_PLUGIN_URL .
+                'js/issue-collection.js',
+            [],
+            filemtime(
+                COMICBOOKS_PLUGIN_DIR .
+                'js/issue-collection.js'
+            ),
+            true
+        );
+    }
+
+    /*
+     * Both screens use the same secure inventory endpoints.
+     */
+    wp_localize_script(
+        $is_collection_archive
+            ? 'tcs-inventory'
+            : 'tcs-issue-collection',
+        'tcsInventory',
+        [
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce'   => wp_create_nonce('tcs_inventory'),
+        ]
+    );
 }
+
+add_action(
+    'wp_enqueue_scripts',
+    'tcs_inventory_asset_setup',
+    30
+);
 add_action('wp_enqueue_scripts', 'tcs_inventory_asset_setup', 30);
 
 function tcs_inventory_record(int $id): array {
@@ -148,9 +236,22 @@ function tcs_inventory_record(int $id): array {
         $record['qty'], $record['condition'], $record['price'],
         $record['notes'], $record['storage_location'],
     ]));
-    $record['catalog_url'] = $record['issue_id'] && $record['series_id']
-        ? add_query_arg(['issue_id' => $record['issue_id'], 'title_id' => $record['series_id']], home_url('/comic-catalog/issue/'))
-        : get_permalink($id);
+    
+    /*
+    * Collection links open the canonical issue page with the
+    * My Collection tab selected.
+    */
+    $record['catalog_url'] =
+        $record['issue_id'] && $record['series_id']
+            ? add_query_arg(
+                [
+                    'issue_id' => $record['issue_id'],
+                    'title_id' => $record['series_id'],
+                    'view'     => 'collection',
+                ],
+                home_url('/comic-catalog/issue/')
+            )
+            : get_permalink($id);
     return $record;
 }
 
