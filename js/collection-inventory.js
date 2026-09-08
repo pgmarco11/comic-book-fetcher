@@ -36,7 +36,7 @@
         });
         body.set('action', action);
         body.set('nonce', tcsInventory.nonce);
-        const response = await fetch(tcsInventory.ajaxUrl, {method: 'POST', credentials: 'same-origin', body, signal});
+        const response = await fetch(tcsInventory.ajaxUrl, { method: 'POST', credentials: 'same-origin', body, signal });
         let payload;
         try { payload = await response.json(); } catch (_) { throw new Error('The server could not complete this request. Refresh and try again.'); }
         if (!response.ok || !payload.success) {
@@ -57,25 +57,25 @@
     }
     function setView(view) {
         const allowedViews = [
-            'shelf',
             'inventory',
+            'shelf',
             'series'
         ];
-    
+
         const selectedView = allowedViews.includes(view)
             ? view
-            : 'shelf';
-    
+            : 'inventory';
+
         const isSeriesView =
             selectedView === 'series';
-    
+
         root.dataset.view = selectedView;
         filters.elements.collection_view.value =
             selectedView;
-    
+
         issueView.hidden = isSeriesView;
         seriesView.hidden = !isSeriesView;
-    
+
         root.querySelectorAll(
             '.tci-view-switch button'
         ).forEach(button => {
@@ -87,13 +87,13 @@
                 )
             );
         });
-    
+
         const title = {
             shelf: 'Your comic shelf',
             inventory: 'Your inventory',
             series: 'Browse by publisher'
         };
-    
+
         $('#tci-view-title').textContent =
             title[selectedView];
     }
@@ -167,7 +167,7 @@
                     'aria-busy',
                     'false'
                 );
-            
+
                 seriesView.setAttribute(
                     'aria-busy',
                     'false'
@@ -191,7 +191,7 @@
              */
             filters.elements.collection_series.value = '';
         }
-    
+
         if (
             event.target.matches(
                 'select,input[type=checkbox]'
@@ -208,6 +208,45 @@
         filterChanged();
     });
     $('.tci-view-switch').addEventListener('click', event => { const button = event.target.closest('button[data-view]'); if (button) { setView(button.dataset.view); setUrl(); } });
+    seriesView.addEventListener('click', event => {
+        const link = event.target.closest('a');
+    
+        if (
+            !link ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.shiftKey ||
+            event.altKey
+        ) {
+            return;
+        }
+    
+        const url = new URL(link.href, window.location.href);
+        const publisherId = url.searchParams.get(
+            'collection_publisher'
+        );
+        const seriesId = url.searchParams.get(
+            'collection_series'
+        );
+    
+        if (!publisherId || !seriesId) {
+            return;
+        }
+    
+        event.preventDefault();
+    
+        filters.elements.collection_publisher.value =
+            publisherId;
+    
+        filters.elements.collection_series.value =
+            seriesId;
+    
+        filters.elements.collection_page.value = '1';
+        filters.elements.collection_view.value = 'inventory';
+    
+        setView('inventory');
+        refresh(true);
+    });
     $('#tci-pagination').addEventListener('click', event => {
         const link = event.target.closest('a[data-page]');
         if (!link || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -220,7 +259,11 @@
         [...filters.elements].forEach(el => {
             if (!el.name) return;
             if (el.type === 'checkbox') el.checked = query.get(el.name) === el.value;
-            else el.value = query.get(el.name) || ({collection_page: '1', collection_view: 'shelf', collection_sort: 'recent'}[el.name] || '');
+            else el.value = query.get(el.name) || ({
+                collection_page: '1',
+                collection_view: 'inventory',
+                collection_sort: 'recent'
+            }[el.name] || '');
         });
         setView(filters.elements.collection_view.value);
         refresh();
@@ -272,40 +315,38 @@
             operation,
             ids
         };
-    
+
         $('#tci-action-title').textContent =
             operation === 'delete'
                 ? 'Remove from collection?'
                 : 'Set storage location';
-    
+
         $('#tci-action-description').textContent =
             operation === 'delete'
-                ? `Permanently remove ${ids.length} ${
-                    ids.length === 1
-                        ? 'entry'
-                        : 'entries'
-                  } and all recorded copies? This cannot be undone.`
-                : `Give ${ids.length} selected ${
-                    ids.length === 1
-                        ? 'entry'
-                        : 'entries'
-                  } the same box or shelf location.`;
-    
+                ? `Permanently remove ${ids.length} ${ids.length === 1
+                    ? 'entry'
+                    : 'entries'
+                } and all recorded copies? This cannot be undone.`
+                : `Give ${ids.length} selected ${ids.length === 1
+                    ? 'entry'
+                    : 'entries'
+                } the same box or shelf location.`;
+
         $('#tci-action-location-wrap').hidden =
             operation !== 'location';
-    
+
         $('#tci-action-location').required =
             operation === 'location';
-    
+
         $('#tci-action-location').value = '';
-    
+
         $('#tci-action-error').textContent = '';
-    
+
         $('#tci-action-submit').textContent =
             operation === 'delete'
                 ? 'Remove permanently'
                 : 'Save location';
-    
+
         actionDialog.showModal();
     }
     $('#tci-bulk-location').addEventListener('click', () => openAction('location', [...selected]));
@@ -329,16 +370,16 @@
             window.location.href
         );
     }
-    
+
     rememberCollectionUrl();
-    
+
     window.addEventListener('popstate', rememberCollectionUrl);
-    
+
     document.addEventListener('click', function (event) {
         const issueLink = event.target.closest(
             'a[href*="/comic-catalog/issue/"], a[href*="issue_id="]'
         );
-    
+
         if (issueLink) {
             rememberCollectionUrl();
         }
@@ -357,36 +398,36 @@
                         $('#tci-action-location').value
                 }
             );
-            
+
             actionDialog.close();
-            
+
             if (editor.open) {
                 editor.close();
             }
-            
+
             message(
                 data.operation === 'delete'
                     ? 'Selected entries removed from your collection.'
                     : 'Storage location updated.'
             );
-            
+
             await refresh(false, false);
         } catch (error) {
 
             $('#tci-action-error').textContent =
-            error.message;
-        
+                error.message;
+
             if (error.completed.length) {
-        
+
                 pendingAction.ids =
                     pendingAction.ids.filter(
                         id =>
                             !error.completed.includes(id)
                     );
-        
+
                 await refresh(false, false);
             }
-            
+
         } finally { writing = false; busyForm(actionForm, false); }
     });
     setView(root.dataset.view);

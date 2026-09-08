@@ -77,95 +77,74 @@ function tcs_inventory_text($value): string {
  * 1. The collection archive.
  * 2. The public issue-details page.
  */
-function tcs_inventory_asset_setup(): void {
-
+function tcs_inventory_asset_setup(): void
+{
     $is_collection_page =
-        is_page( 'my-collection' ) ||
-        is_page_template(
-            'templates/page-my-collection.php'
-        );
+        is_page('my-collection') ||
+        is_page_template('templates/page-my-collection.php');
 
-    $is_issue_details =
-        is_page( 'issue' );
+    $is_issue_details = is_page('issue');
 
-    if (
-        ! $is_collection_page &&
-        ! $is_issue_details
-    ) {
+    if (!$is_collection_page && !$is_issue_details) {
         return;
     }
 
+    $script_handle = '';
+
     /*
-     * The full collection dashboard assets.
+     * Full collection dashboard.
      */
-    /*
-     * Load the full dashboard assets only on My Collection.
-     */
-    if ( $is_collection_page ) {
+    if ($is_collection_page) {
+        $script_handle = 'tcs-inventory';
+
         wp_enqueue_style(
             'tcs-inventory',
-            COMICBOOKS_PLUGIN_URL .
-                'css/collection-inventory.css',
+            COMICBOOKS_PLUGIN_URL . 'css/collection-inventory.css',
             [],
             filemtime(
-                COMICBOOKS_PLUGIN_DIR .
-                    'css/collection-inventory.css'
+                COMICBOOKS_PLUGIN_DIR . 'css/collection-inventory.css'
             )
         );
 
-        /*
-         * Keep your existing tcs-inventory script enqueue
-         * and localized data here.
-         */
         wp_enqueue_script(
-            'tcs-issue-collection',
-            COMICBOOKS_PLUGIN_URL .
-                'js/collection-inventory.js',
+            $script_handle,
+            COMICBOOKS_PLUGIN_URL . 'js/collection-inventory.js',
             [],
             filemtime(
-                COMICBOOKS_PLUGIN_DIR .
-                'js/collection-inventory.js'
+                COMICBOOKS_PLUGIN_DIR . 'js/collection-inventory.js'
             ),
             true
         );
     }
 
     /*
-     * The editor embedded in the issue-details page.
+     * Collection editor on the issue-details page.
      */
     if ($is_issue_details) {
+        $script_handle = 'tcs-issue-collection';
 
         wp_enqueue_style(
             'tcs-issue-collection',
-            COMICBOOKS_PLUGIN_URL .
-                'css/issue-collection.css',
+            COMICBOOKS_PLUGIN_URL . 'css/issue-collection.css',
             ['comicbook-style'],
             filemtime(
-                COMICBOOKS_PLUGIN_DIR .
-                'css/issue-collection.css'
+                COMICBOOKS_PLUGIN_DIR . 'css/issue-collection.css'
             )
         );
 
         wp_enqueue_script(
-            'tcs-issue-collection',
-            COMICBOOKS_PLUGIN_URL .
-                'js/issue-collection.js',
+            $script_handle,
+            COMICBOOKS_PLUGIN_URL . 'js/issue-collection.js',
             [],
             filemtime(
-                COMICBOOKS_PLUGIN_DIR .
-                'js/issue-collection.js'
+                COMICBOOKS_PLUGIN_DIR . 'js/issue-collection.js'
             ),
             true
         );
     }
 
-    /*
-     * Both screens use the same secure inventory endpoints.
-     */
     wp_localize_script(
-        $is_collection_page
-            ? 'tcs-inventory'
-            : 'tcs-issue-collection',
+        $script_handle,
         'tcsInventory',
         [
             'ajaxUrl' => admin_url('admin-ajax.php'),
@@ -173,13 +152,12 @@ function tcs_inventory_asset_setup(): void {
         ]
     );
 }
-
 add_action(
     'wp_enqueue_scripts',
     'tcs_inventory_asset_setup',
     30
 );
-add_action('wp_enqueue_scripts', 'tcs_inventory_asset_setup', 30);
+
 
 function tcs_inventory_record(int $id): array {
     $meta = get_post_meta($id);
@@ -1176,9 +1154,7 @@ function tcs_inventory_taxonomy_tree(
 function tcs_inventory_taxonomy_html(
     array $publishers
 ): string {
-    $archive_url = get_post_type_archive_link(
-        'collection'
-    );
+    $inventory_url = tcs_inventory_url();
 
     ob_start();
     ?>
@@ -1246,9 +1222,9 @@ function tcs_inventory_taxonomy_html(
                                         'collection_series' =>
                                             $series['id'],
                                         'collection_view' =>
-                                            'shelf',
+                                            'inventory',
                                     ],
-                                    $archive_url
+                                    $inventory_url
                                 );
                                 ?>
 

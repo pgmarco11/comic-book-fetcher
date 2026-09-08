@@ -4,18 +4,19 @@ $summary = $overview['summary'];
 $value = static function ($key, $fallback = '') use ($input) { return tcs_inventory_text($input[$key] ?? $fallback); };
 $requested_view = $value(
     'collection_view',
-    'shelf'
+    'inventory'
 );
 
 $view = in_array(
-                $requested_view,
-                ['shelf', 'inventory', 'series'],
-                true
-            )
-                ? $requested_view
-                : 'shelf';
+    $requested_view,
+    ['inventory', 'shelf', 'series'],
+    true
+)
+    ? $requested_view
+    : 'inventory';
 
 $inventory_url = tcs_inventory_url();
+
 ?>
 <div class="tci-shell" data-view="<?php echo esc_attr($view); ?>">
     <header class="tci-heading">
@@ -130,18 +131,6 @@ $inventory_url = tcs_inventory_url();
                 role="group"
                 aria-label="Collection view"
             >
-                <button
-                    type="button"
-                    data-view="shelf"
-                    aria-pressed="<?php
-                        echo $view === 'shelf'
-                            ? 'true'
-                            : 'false';
-                    ?>"
-                >
-                    <span aria-hidden="true">▦</span>
-                    Cover shelf
-                </button>
 
                 <button
                     type="button"
@@ -155,7 +144,6 @@ $inventory_url = tcs_inventory_url();
                     <span aria-hidden="true">☷</span>
                     Inventory
                 </button>
-
                 <button
                     type="button"
                     data-view="series"
@@ -167,6 +155,19 @@ $inventory_url = tcs_inventory_url();
                 >
                     <span aria-hidden="true">▤</span>
                     Series index
+                </button>
+
+                <button
+                    type="button"
+                    data-view="shelf"
+                    aria-pressed="<?php
+                        echo $view === 'shelf'
+                            ? 'true'
+                            : 'false';
+                    ?>"
+                >
+                    <span aria-hidden="true">▦</span>
+                    Cover shelf
                 </button>
         </div>
     </header>
