@@ -930,7 +930,14 @@ class ComicDataService {
         $cv_ids        = [];
 
         /*
-        * First pass: resolve every Metron issue ID to a Comic Vine issue ID.
+        * Limit individual Metron issue-detail fallback requests
+        * to three during this page request.
+        */
+        $fallback_calls     = 0;
+        $max_fallback_calls = 3;
+
+        /*
+        * First pass: resolve Metron issue IDs to Comic Vine issue IDs.
         */
         foreach ($issues as $issue) {
             $metron_id = (int) ($issue['id'] ?? 0);
@@ -944,12 +951,18 @@ class ComicDataService {
             $cached    = get_transient($cache_key);
 
             if ($cached !== false) {
+                /*
+                * Cached mappings do not count toward the
+                * three-call fallback limit.
+                */
                 $cv_id = is_array($cached)
                     ? (int) ($cached['cv_id'] ?? 0)
                     : (int) $cached;
+
             } elseif (!empty($issue['cv_id'])) {
                 /*
-                * Best path: issue_list already supplied the mapping.
+                * The issue list already supplied the Comic Vine ID.
+                * This does not require another Metron request.
                 */
                 $cv_id = (int) $issue['cv_id'];
 
@@ -958,12 +971,18 @@ class ComicDataService {
                     ['cv_id' => $cv_id],
                     30 * DAY_IN_SECONDS
                 );
-            } else {
+
+            } elseif ($fallback_calls < $max_fallback_calls) {
                 /*
-                * Cold-cache fallback. This may require one Metron issue-detail
-                * request, but the resulting mapping is cached for 30 days.
+                * No cached mapping and no cv_id in the issue list.
+                * Make an individual Metron issue-detail request,
+                * up to three times during this page request.
                 */
-                $cv_id = (int) $this->get_metron_cv_id($metron_id);
+                $fallback_calls++;
+
+                $cv_id = (int) $this->get_metron_cv_id(
+                    $metron_id
+                );
 
                 if ($cv_id) {
                     set_transient(
@@ -973,8 +992,7 @@ class ComicDataService {
                     );
                 } else {
                     /*
-                    * Cache a confirmed missing mapping briefly so repeated page
-                    * loads don't immediately request it again.
+                    * Cache a completed lookup with no mapping briefly.
                     */
                     set_transient(
                         $cache_key,
@@ -982,6 +1000,16 @@ class ComicDataService {
                         6 * HOUR_IN_SECONDS
                     );
                 }
+
+            } else {
+                /*
+                * The three-call limit has been reached.
+                *
+                * Do not cache this as a missing mapping because
+                * no lookup was attempted. It can be tried during
+                * a later page request.
+                */
+                $cv_id = null;
             }
 
             $metron_to_cv[$metron_id] = $cv_id ?: null;
@@ -992,12 +1020,25 @@ class ComicDataService {
         }
 
         /*
-        * One Comic Vine request for all uncached issue covers.
+        * Remove duplicate IDs before requesting Comic Vine images.
         */
-        $cv_images = $this->get_comicvine_issue_images_batch($cv_ids);
+        $cv_ids = array_values(
+            array_unique(
+                array_filter(
+                    array_map('absint', $cv_ids)
+                )
+            )
+        );
 
         /*
-        * Second pass: build the structure expected by the issue template.
+        * Fetch all resolved Comic Vine images in a batch.
+        */
+        $cv_images = $this->get_comicvine_issue_images_batch(
+            $cv_ids
+        );
+
+        /*
+        * Build the structure expected by the issue template.
         */
         foreach ($issues as $issue) {
             $metron_id = (int) ($issue['id'] ?? 0);

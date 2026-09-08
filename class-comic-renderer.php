@@ -223,40 +223,4 @@ class ComicRenderer {
         return $status;
     }
 
-    /**
-    * Render issue details using ACF fields.
-    *
-    * Displays structured collection meta for the current post.
-    */
-    public function render_issue_details_from_acf(): void
-    {
-        $fields = [
-            'issue_number'   => 'Issue #',
-            'condition'      => 'Condition',
-            'date_published' => 'Published',
-            'volume'         => 'Volume',
-            'qty'            => 'Quantity',
-            'price'          => 'Price',
-            'creators'       => 'Creators',
-            'genres'         => 'Genres',
-            'concepts'       => 'Concepts',
-            'characters'     => 'Key Characters',
-            'notes'          => 'Notes',
-        ];
-    
-        echo '<div class="collection-details">';
-    
-        foreach ($fields as $key => $label) {
-            $value = get_post_meta(get_the_ID(), $key, true);
-    
-            if ($value !== '' && is_scalar($value)) {
-                echo '<div class="collection-field">';
-                echo '<strong>' . esc_html($label) . ':</strong> ';
-                echo esc_html($value);
-                echo '</div>';
-            }
-        }
-    
-        echo '</div>';
-    }
 }

@@ -8,14 +8,14 @@ $requested_view = $value(
 );
 
 $view = in_array(
-    $requested_view,
-    ['shelf', 'inventory', 'series'],
-    true
-)
-    ? $requested_view
-    : 'shelf';
+                $requested_view,
+                ['shelf', 'inventory', 'series'],
+                true
+            )
+                ? $requested_view
+                : 'shelf';
 
-$archive_url = get_post_type_archive_link('collection');
+$inventory_url = tcs_inventory_url();
 ?>
 <div class="tci-shell" data-view="<?php echo esc_attr($view); ?>">
     <header class="tci-heading">
@@ -50,7 +50,7 @@ $archive_url = get_post_type_archive_link('collection');
         </div>
     </dl>
 
-    <form id="tci-filters" class="tci-filters" method="get" action="<?php echo esc_url($archive_url); ?>" role="search"
+    <form id="tci-filters" class="tci-filters" method="get" action="<?php echo esc_url($inventory_url); ?>" role="search"
         aria-label="Search and filter your collection">
         <div class="tci-search"><label for="tci-search">Search series</label><input id="tci-search" type="search"
                 name="collection_search" placeholder="Find a title in your collection…"
@@ -86,7 +86,7 @@ $archive_url = get_post_type_archive_link('collection');
         <button class="tci-button tci-filter-submit" type="submit">Apply filters</button>
         <div class="tci-filter-extras"><label class="tci-check"><input type="checkbox" name="collection_duplicates"
                     value="1" <?php checked($value('collection_duplicates'), '1' ); ?>> Multiple copies only</label><a
-                href="<?php echo esc_url($archive_url); ?>" id="tci-reset">Clear filters</a></div>
+                href="<?php echo esc_url($inventory_url); ?>" id="tci-reset">Clear filters</a></div>
     </form>
 
     <noscript>
@@ -252,7 +252,7 @@ $archive_url = get_post_type_archive_link('collection');
                                     $page_no,
                             ]
                         ),
-                        $archive_url
+                        $inventory_url
                     );
                     ?>
 

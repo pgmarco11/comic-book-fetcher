@@ -14,6 +14,7 @@ add_filter('wp_sitemaps_post_types', function ($types) {
     unset($types['collection']);
     return $types;
 });
+
 add_filter('wp_sitemaps_taxonomies', function ($taxonomies) {
     unset(
         $taxonomies['publisher'],
@@ -77,15 +78,19 @@ function tcs_inventory_text($value): string {
  * 2. The public issue-details page.
  */
 function tcs_inventory_asset_setup(): void {
-    $is_collection_archive =
-        is_post_type_archive('collection');
+
+    $is_collection_page =
+        is_page( 'my-collection' ) ||
+        is_page_template(
+            'templates/page-my-collection.php'
+        );
 
     $is_issue_details =
-        is_page('issue');
+        is_page( 'issue' );
 
     if (
-        !$is_collection_archive &&
-        !$is_issue_details
+        ! $is_collection_page &&
+        ! $is_issue_details
     ) {
         return;
     }
@@ -93,7 +98,10 @@ function tcs_inventory_asset_setup(): void {
     /*
      * The full collection dashboard assets.
      */
-    if ($is_collection_archive) {
+    /*
+     * Load the full dashboard assets only on My Collection.
+     */
+    if ( $is_collection_page ) {
         wp_enqueue_style(
             'tcs-inventory',
             COMICBOOKS_PLUGIN_URL .
@@ -101,12 +109,16 @@ function tcs_inventory_asset_setup(): void {
             [],
             filemtime(
                 COMICBOOKS_PLUGIN_DIR .
-                'css/collection-inventory.css'
+                    'css/collection-inventory.css'
             )
         );
 
+        /*
+         * Keep your existing tcs-inventory script enqueue
+         * and localized data here.
+         */
         wp_enqueue_script(
-            'tcs-inventory',
+            'tcs-issue-collection',
             COMICBOOKS_PLUGIN_URL .
                 'js/collection-inventory.js',
             [],
@@ -151,7 +163,7 @@ function tcs_inventory_asset_setup(): void {
      * Both screens use the same secure inventory endpoints.
      */
     wp_localize_script(
-        $is_collection_archive
+        $is_collection_page
             ? 'tcs-inventory'
             : 'tcs-issue-collection',
         'tcsInventory',
@@ -1291,8 +1303,10 @@ function tcs_inventory_taxonomy_html(
 }
 
 function tcs_inventory_render_app(): void {
+    $inventory_url = tcs_inventory_url();
+
     if (!is_user_logged_in()) {
-        echo '<div class="tci-empty"><h1>My collection</h1><p>Sign in to view and manage your comics.</p><a class="tci-button tci-button-primary" href="' . esc_url(wp_login_url(get_post_type_archive_link('collection'))) . '">Sign in</a></div>';
+        echo '<div class="tci-empty"><h1>My collection</h1><p>Sign in to view and manage your comics.</p><a class="tci-button tci-button-primary" href="' . esc_url(wp_login_url($inventory_url)) . '">Sign in</a></div>';
         return;
     }
     $input = wp_unslash($_GET);

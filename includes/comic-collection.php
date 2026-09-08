@@ -14,10 +14,10 @@ function get_comic_era(int $year): string {
 }
 
 /**
- * =============================================
- * REGISTER CUSTOM POST TYPE: COLLECTION
- * URL: /my-collection/
- * =============================================
+ * Register the collection data post type.
+ *
+ * Collection posts are managed in wp-admin but use the existing
+ * comic issue page for frontend viewing.
  */
 function register_collection_post_type() {
 
@@ -28,35 +28,36 @@ function register_collection_post_type() {
         'name_admin_bar'        => 'Collection',
         'add_new'               => 'Add New Comic',
         'add_new_item'          => 'Add New Comic to Collection',
-        'new_item'              => 'New Comic',
-        'edit_item'             => 'Edit Comic',
-        'view_item'             => 'View Comic',
         'all_items'             => 'My Collection',
         'search_items'          => 'Search My Collection',
         'not_found'             => 'No comics found in your collection.',
-        'not_found_in_trash'    => 'No comics found in Trash.',
-        'featured_image'        => 'Cover Image',
-        'set_featured_image'    => 'Set cover image',
-        'remove_featured_image' => 'Remove cover image',
+        'not_found_in_trash'    => 'No comics found in Trash.'
     ];
 
     $args = [
-        'labels'             => $labels,
-        'public'             => true,
-        'publicly_queryable' => true,
-        'show_ui'            => true,
-        'show_in_menu'       => 'comicbooks-settings',
-        'show_in_admin_bar'  => true,
-        'query_var'          => true,
-        'rewrite'            => ['slug' => 'my-collection'],
-        'capability_type'    => 'post',
-        'has_archive'        => true,
-        'hierarchical'       => false,
-        'supports'           => ['title', 'editor', 'thumbnail', 'author', 'custom-fields'],
-        'show_in_rest'       => true,
-        'map_meta_cap'       => true,
-        'menu_position'      => 25,
-        'menu_icon'          => 'dashicons-book-alt',
+        'labels'              => $labels,
+        
+        'public'              => false,
+        'publicly_queryable'  => false,
+        'exclude_from_search' => true,
+        'has_archive'         => false,
+        'rewrite'             => false,
+        'query_var'           => false,
+    
+        'show_ui'           => true,
+        'show_in_menu'      => 'comicbooks-settings',
+        'show_in_admin_bar' => true,
+        'show_in_rest'      => false,
+    
+        'capability_type' => 'post',
+        'map_meta_cap'    => true,
+        'hierarchical'    => false,
+    
+        'supports' => [
+            'title',
+            'author',
+            'custom-fields',
+        ],
     ];
 
     register_post_type('collection', $args);
@@ -92,12 +93,12 @@ function register_comic_taxonomies() {
             register_taxonomy('publisher', 'collection', [
                 'labels'            => $publisher_labels,
                 'hierarchical'      => false,
-                'public'            => true,
+                'public'            => false,
                 'show_ui'           => true,
                 'show_admin_column' => true,
                 'show_in_nav_menus' => false,
                 'show_tagcloud'     => false,
-                'show_in_rest'      => true,
+                'show_in_rest'      => false,
                 'query_var'         => true,
                 'rewrite'           => ['slug' => 'publisher'],
             ]);            
@@ -129,12 +130,12 @@ function register_comic_taxonomies() {
             register_taxonomy('comic_genre', 'collection', [
                 'labels'            => $genre_labels,
                 'hierarchical'      => true,
-                'public'            => true,
+                'public'            => false,
                 'show_ui'           => true,
                 'show_admin_column' => true,
                 'show_in_nav_menus' => false,
                 'show_tagcloud'     => false,
-                'show_in_rest'      => true,
+                'show_in_rest'      => false,
                 'query_var'         => true,
                 'rewrite'           => ['slug' => 'genre'],
             ]);
@@ -164,12 +165,12 @@ function register_comic_taxonomies() {
             register_taxonomy('comic_series', ['collection'], [
                 'labels'            => $series_labels,
                 'hierarchical'      => false,
-                'public'            => true,
+                'public'            => false,
                 'show_ui'           => true,
                 'show_admin_column' => true,
                 'show_in_nav_menus' => false,
                 'show_tagcloud'     => false,
-                'show_in_rest'      => true,
+                'show_in_rest'      => false,
                 'query_var'         => true,
                 'rewrite'           => [
                     'slug'       => 'comic-series',
@@ -184,6 +185,125 @@ function register_comic_taxonomies() {
 }
 add_action('init', 'register_comic_taxonomies');
 
+/**
+ * Return the issue-details URL for a collection post.
+ */
+function collectiblespot_get_collection_item_url( $post_id ) {
+    $post_id = absint( $post_id );
+
+    if ( ! $post_id || get_post_type( $post_id ) !== 'collection' ) {
+        return '';
+    }
+
+    $issue_id = absint(
+        get_post_meta( $post_id, 'issue_id', true )
+    );
+
+    $title_id = absint(
+        get_post_meta( $post_id, 'title_id', true )
+    );
+
+    if ( ! $issue_id || ! $title_id ) {
+        return '';
+    }
+
+    return add_query_arg(
+        [
+            'issue_id' => $issue_id,
+            'title_id' => $title_id,
+            'view'     => 'collection',
+        ],
+        home_url( '/comic-catalog/issue/' )
+    );
+}
+
+/**
+ * Return the My Collection dashboard URL.
+ */
+function tcs_inventory_url(): string {
+    $page = get_page_by_path(
+        'my-collection',
+        OBJECT,
+        'page'
+    );
+
+    if (
+        $page instanceof WP_Post &&
+        $page->post_status === 'publish'
+    ) {
+        return get_permalink( $page );
+    }
+
+    return home_url( '/my-collection/' );
+}
+
+/**
+ * Replace the collection post's generated permalink.
+ *
+ * This does not redirect anything. It causes WordPress to generate
+ * the comic issue URL as the collection item's View link.
+ */
+function collectiblespot_collection_post_link(
+    $permalink,
+    $post,
+    $leavename,
+    $sample
+) {
+    if (
+        ! $post instanceof WP_Post ||
+        $post->post_type !== 'collection'
+    ) {
+        return $permalink;
+    }
+
+    $collection_url = collectiblespot_get_collection_item_url(
+        $post->ID
+    );
+
+    return $collection_url ?: $permalink;
+}
+add_filter(
+    'post_type_link',
+    'collectiblespot_collection_post_link',
+    10,
+    4
+);
+
+/**
+ * Add a View action to collection items in wp-admin.
+ */
+function collectiblespot_collection_row_actions(
+    $actions,
+    $post
+) {
+    if (
+        ! $post instanceof WP_Post ||
+        $post->post_type !== 'collection'
+    ) {
+        return $actions;
+    }
+
+    unset( $actions['view'] );
+
+    $collection_url =
+        collectiblespot_get_collection_item_url( $post->ID );
+
+    if ( $collection_url ) {
+        $actions['view'] = sprintf(
+            '<a href="%1$s" target="_blank" rel="noopener noreferrer">%2$s</a>',
+            esc_url( $collection_url ),
+            esc_html__( 'View', 'collectiblespot' )
+        );
+    }
+
+    return $actions;
+}
+add_filter(
+    'post_row_actions',
+    'collectiblespot_collection_row_actions',
+    10,
+    2
+);
 
 function normalize_comic_title(string $title): string {
 
@@ -832,20 +952,62 @@ add_action(
 );
 
 /**
+ * Prevent caching and indexing of the private collection dashboard.
+ */
+function tcs_inventory_protect_collection_page(): void {
+    $is_collection_page =
+        is_page( 'my-collection' ) ||
+        is_page_template(
+            'templates/page-my-collection.php'
+        );
+
+    if ( ! $is_collection_page ) {
+        return;
+    }
+
+    if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+        define( 'DONOTCACHEPAGE', true );
+    }
+
+    nocache_headers();
+
+    header(
+        'X-Robots-Tag: noindex, nofollow, noarchive',
+        true
+    );
+}
+add_action(
+    'template_redirect',
+    'tcs_inventory_protect_collection_page',
+    0
+);
+
+/**
  * Restrict admin query to current user's collection
  */
 add_action('pre_get_posts', 'restrict_collections_to_owner');
 
-function restrict_collections_to_owner($query) {
-
-    if (!is_admin() || !$query->is_main_query()) {
+/**
+ * Restrict the collection admin list to the current user.
+ */
+function restrict_collections_to_owner( $query ): void {
+    if (
+        ! is_admin() ||
+        ! $query->is_main_query() ||
+        $query->get( 'post_type' ) !== 'collection'
+    ) {
         return;
     }
 
-    if ($query->get('post_type') === 'collection') {
-        $query->set('author', get_current_user_id());
-    }
+    $query->set(
+        'author',
+        get_current_user_id()
+    );
 }
+add_action(
+    'pre_get_posts',
+    'restrict_collections_to_owner'
+);
 
 add_action('wp_ajax_check_collection_status_batch', function () {
     check_ajax_referer('comicbooks_fetchers_data', 'security');
