@@ -1024,17 +1024,28 @@ img.lazy-placeholder,
     font-family: Bangers, cursive;
     font-weight: 500;
     letter-spacing: .05rem;
-    margin: 0 .75rem 0 0;
+    text-align: center;
+    margin: 0 .75rem .75rem 0.75rem;
     outline: 1px solid #000;
     padding: .5rem 1rem;
     text-transform: uppercase;
     font-size: 1.25rem;
     line-height: 1.5rem;
+    min-height: 64px;
+    min-width: 156px;
+    max-width: 156px;
 }
 .add-to-collection {
     background-color: #007bff;
     color: #fff;
 }  
+@media (max-width: 768px) {
+  .add-to-wishlist,
+  .add-to-collection {
+      min-height: 64px;
+      min-width: 0;
+  }
+}
 .add-to-collection:hover {
     background-color: #0056b3;
 }
