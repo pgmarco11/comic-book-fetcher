@@ -208,7 +208,7 @@
         filterChanged();
     });
     $('.tci-view-switch').addEventListener('click', event => { const button = event.target.closest('button[data-view]'); if (button) { setView(button.dataset.view); setUrl(); } });
-    seriesView.addEventListener('click', event => {
+    seriesView.addEventListener('click', async event => {
         const link = event.target.closest('a');
     
         if (
@@ -221,10 +221,15 @@
             return;
         }
     
-        const url = new URL(link.href, window.location.href);
+        const url = new URL(
+            link.href,
+            window.location.href
+        );
+    
         const publisherId = url.searchParams.get(
             'collection_publisher'
         );
+    
         const seriesId = url.searchParams.get(
             'collection_series'
         );
@@ -242,10 +247,25 @@
             seriesId;
     
         filters.elements.collection_page.value = '1';
-        filters.elements.collection_view.value = 'inventory';
     
+        /*
+         * Include the Inventory view in the AJAX request and
+         * resulting URL, but do not reveal the old inventory yet.
+         */
+        filters.elements.collection_view.value =
+            'inventory';
+    
+        /*
+         * Keep the Series Index visible while the filtered
+         * inventory is loading.
+         */
+        await refresh(true);
+    
+        /*
+         * The new results are now in the DOM, so the view can
+         * switch without displaying stale inventory first.
+         */
         setView('inventory');
-        refresh(true);
     });
     $('#tci-pagination').addEventListener('click', event => {
         const link = event.target.closest('a[data-page]');
