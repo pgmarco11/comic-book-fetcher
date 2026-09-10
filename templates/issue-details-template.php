@@ -223,15 +223,21 @@
                                 <span class="category">
                                     <a href="<?php echo esc_url(home_url('/comic-catalog/issues/?title_id=' . $title_id)); ?>">
                                     <?php echo esc_html($series['name'] ?? 'Comic Series'); ?></a>
-                                </span>
-                                <span class="current-category">
-                                    <?php
-                                    echo '&nbsp; # ' .
-                                        esc_html(
+                                    </span>
+                                    <span
+                                        class="separator"
+                                        aria-hidden="true"
+                                    >➤</span>
+                                    <span
+                                        class="current-category"
+                                        aria-current="page"
+                                    >
+                                        <?php
+                                        echo '# ' . esc_html(
                                             $issue['number'] ?? 'N/A'
                                         );
-                                    ?>
-                                </span>
+                                        ?>
+                                    </span>
                             </nav>
                             <h1 class="page-title">
                                 <?php
