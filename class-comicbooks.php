@@ -82,8 +82,6 @@ class Comicbooks {
             );
         }
 
-        add_action( 'template_redirect', [ $this, 'check_collection_redirect' ] );
-
     }
 
     
@@ -468,40 +466,7 @@ class Comicbooks {
         wp_send_json_success([
             'publishers' => $publishers,
         ]);
-    }
+    }  
 
-   
 
-    /* -----------------------------------------------------------------
-     *  Redirect logged-in users to their collection post if it exists
-     * ----------------------------------------------------------------- */
-    public function check_collection_redirect() {
-        if ( ! is_page( 'comic-catalog/issue' ) ) {
-            return;
-        }
-
-        $issue_id = isset( $_GET['issue_id'] ) ? intval( $_GET['issue_id'] ) : 0;
-        $title_id = isset( $_GET['title_id'] ) ? intval( $_GET['title_id'] ) : 0;
-
-        if ( $issue_id && $title_id && is_user_logged_in() ) {
-            $posts = get_posts( [
-                'post_type'      => 'post',
-                'author'         => get_current_user_id(),
-                'posts_per_page' => 1,
-                'meta_query'     => [
-                    [
-                        'key'     => 'issue_id',
-                        'value'   => $issue_id,
-                        'compare' => '=',
-                    ],
-                ],
-                'fields' => 'ids',
-            ] );
-
-            if ( ! empty( $posts ) ) {
-                wp_redirect( get_permalink( $posts[0] ) );
-                exit;
-            }
-        }
-    }
 }

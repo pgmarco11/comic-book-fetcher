@@ -1004,10 +1004,6 @@ function restrict_collections_to_owner( $query ): void {
         get_current_user_id()
     );
 }
-add_action(
-    'pre_get_posts',
-    'restrict_collections_to_owner'
-);
 
 add_action('wp_ajax_check_collection_status_batch', function () {
     check_ajax_referer('comicbooks_fetchers_data', 'security');

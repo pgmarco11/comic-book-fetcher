@@ -827,10 +827,6 @@ class ComicDataService {
         $images    = [];
         $uncached  = [];
 
-        /*
-        * First use individual image transients populated by either this
-        * method or get_comicvine_issue_image().
-        */
         foreach ($cv_ids as $cv_id) {
             $cache_key = "cv_issue_image_{$cv_id}";
             $cached    = get_transient($cache_key);
@@ -2485,50 +2481,7 @@ class ComicDataService {
         return $description !== ''
             ? $description
             : $fallback;
-    }
-    
-    /* -----------------------------------------------------------------
-    *  COMIC VINE issue image only
-    * ----------------------------------------------------------------- */
-    public function get_comicvine_issue_image($cv_id)
-    {
-        $cv_id = absint($cv_id);
-    
-        if (!$cv_id) {
-            return '';
-        }
-    
-        $cache_key = "cv_issue_image_{$cv_id}";
-        $cached    = get_transient($cache_key);
-    
-        if ($cached !== false) {
-            return is_string($cached) ? $cached : '';
-        }
-    
-        $body = $this->cv_api_get(
-            "https://comicvine.gamespot.com/api/issue/4000-{$cv_id}/",
-            [
-                'field_list' => 'image',
-            ]
-        );
-    
-        $image = $body['results']['image'] ?? [];
-    
-        $image_url =
-            $image['small_url']
-            ?? $image['medium_url']
-            ?? $image['original_url']
-            ?? '';
-    
-        set_transient(
-            $cache_key,
-            $image_url,
-            $image_url ? 30 * DAY_IN_SECONDS : 6 * HOUR_IN_SECONDS
-        );
-    
-        return $image_url;
-    }
- 
+    }   
 
     /* -----------------------------------------------------------------
      *  COMIC VINE + METRON merged issue data
