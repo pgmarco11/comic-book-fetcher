@@ -2309,43 +2309,76 @@ class ComicDataService {
      * @param int $issue_id  Issue ID
      * @return array|null    Issue data array or null on failure
      */
-    public function get_single_issue( $title_id, $issue_id ) {
-        $cache_key = "metron:issue:{$title_id}_{$issue_id}"; 
-
-        $cached = get_transient( $cache_key );
-        if ( false !== $cached ) {          
-            if ( ($cached['series']['id'] ?? 0) !== $title_id ) {
-                return null;
+    public function get_single_issue($title_id, $issue_id) {
+        $title_id = absint($title_id);
+        $issue_id = absint($issue_id);
+    
+        if (!$title_id || !$issue_id) {
+            return null;
+        }
+    
+        $cache_key = "metron:issue:{$title_id}_{$issue_id}";
+        $cached    = get_transient($cache_key);
+    
+        if (
+            is_array($cached) &&
+            empty($cached['error']) &&
+            (int) ($cached['id'] ?? 0) === $issue_id &&
+            (int) ($cached['series']['id'] ?? 0) === $title_id
+        ) {
+            /*
+             * Only accept a complete detail response. Older cached list
+             * records might not contain cv_id.
+             */
+            if (array_key_exists('cv_id', $cached)) {
+                return $cached;
             }
-            return $cached;
         }
-
-        $url_issue = $this->client->api_base . "issue/{$issue_id}/";
-        $issue_data = $this->client->api_get( $url_issue );
-
-        if ( isset( $issue_data['error'] ) || ! is_array( $issue_data ) ) {       
+    
+        $url = $this->client->api_base . "issue/{$issue_id}/";
+        $issue_data = $this->client->api_get($url);
+    
+        if (
+            !is_array($issue_data) ||
+            isset($issue_data['error']) ||
+            (int) ($issue_data['id'] ?? 0) !== $issue_id ||
+            (int) ($issue_data['series']['id'] ?? 0) !== $title_id
+        ) {
+            /*
+             * Do not overwrite a previously valid cached record with
+             * an error or incomplete API response.
+             */
             return null;
         }
-
-        // Verify it actually belongs to this series
-        if ( ( $issue_data['series']['id'] ?? 0 ) !== (int) $title_id ) {      
-            return null;
-        }
-        
-        // Optional: small cleanup/normalization (add defaults, fix types, etc.)
-        $issue_data = wp_parse_args( $issue_data, [
-            'number'      => '',
-            'name'        => '',
-            'cover_date'  => '',
-            'image'       => '',
-            'description' => '',
-            'credits'     => [],
-            'characters'  => [],
-            'reprints'    => [],
-        ] );
-
-        set_transient( $cache_key, $issue_data, 2 * WEEK_IN_SECONDS );
-
+    
+        /*
+         * wp_parse_args adds defaults without removing any API fields.
+         * This preserves all issue details returned by Metron.
+         */
+        $issue_data = wp_parse_args(
+            $issue_data,
+            [
+                'cv_id'       => null,
+                'number'      => '',
+                'name'        => '',
+                'cover_date'  => '',
+                'image'       => '',
+                'description' => '',
+                'desc'        => '',
+                'credits'     => [],
+                'characters'  => [],
+                'reprints'    => [],
+                'publisher'   => [],
+                'series'      => [],
+            ]
+        );
+    
+        set_transient(
+            $cache_key,
+            $issue_data,
+            2 * WEEK_IN_SECONDS
+        );
+    
         return $issue_data;
     }
 
@@ -2490,155 +2523,226 @@ class ComicDataService {
         $cv_id,
         array $metron_issue = []
     ) {
-        if ( ! $cv_id ) {
+        $cv_id = absint($cv_id);
+    
+        if (!$cv_id) {
             return null;
         }
-
-        $cv_key = get_option( 'comic_vine_api_key', '' );
-        if ( ! $cv_key ) {         
-            return null;
-        }
-
-        $cache_key = "cv_issue_full_$cv_id";
-        $cached    = get_transient( $cache_key );
-        if ( $cached !== false ) {
-            return $cached;
-        }
-
-        $url = add_query_arg(
-            [
-                'api_key' => $cv_key,
-                'format'  => 'json',
-            ],
-            "https://comicvine.gamespot.com/api/issue/4000-{$cv_id}/"
-        );
-        
-        $res = $this->client->http_get(
-            $url,
-            [
-                'timeout' => 30,
-                'headers' => [
-                    'User-Agent' => 'CollectibleSpotBot/1.1 (+' . get_site_url() . ')',
+    
+        /*
+         * Versioned raw-response cache.
+         *
+         * Only the raw Comic Vine response is cached here. The result
+         * merged with Metron is constructed below for the current issue.
+         */
+        $cache_key = "tcs:cv_issue_raw:v3:{$cv_id}";
+        $cv_issue  = get_transient($cache_key);
+    
+        if (
+            !is_array($cv_issue) ||
+            (int) ($cv_issue['id'] ?? 0) !== $cv_id
+        ) {
+            $cv_key = get_option('comic_vine_api_key', '');
+    
+            if (!$cv_key) {
+                return null;
+            }
+    
+            $url = add_query_arg(
+                [
+                    'api_key' => $cv_key,
+                    'format'  => 'json',
                 ],
-            ]
-        );
-
-        if ( is_wp_error( $res ) ) {
-            return null;
+                "https://comicvine.gamespot.com/api/issue/4000-{$cv_id}/"
+            );
+    
+            $response = $this->client->http_get(
+                $url,
+                [
+                    'timeout' => 30,
+                    'headers' => [
+                        'User-Agent' =>
+                            'CollectibleSpotBot/1.1 (+' .
+                            get_site_url() .
+                            ')',
+                    ],
+                ]
+            );
+    
+            if (is_wp_error($response)) {
+                return null;
+            }
+    
+            $status = (int) wp_remote_retrieve_response_code($response);
+            $body   = json_decode(
+                wp_remote_retrieve_body($response),
+                true
+            );
+    
+            if (
+                $status !== 200 ||
+                !is_array($body) ||
+                !is_array($body['results'] ?? null) ||
+                (int) ($body['results']['id'] ?? 0) !== $cv_id
+            ) {
+                return null;
+            }
+    
+            /*
+             * Preserve the complete Comic Vine results array. Do not
+             * select only individual fields.
+             */
+            $cv_issue = $body['results'];
+    
+            set_transient(
+                $cache_key,
+                $cv_issue,
+                $this->get_dataset_ttl()
+            );
         }
-
-        $body = json_decode( wp_remote_retrieve_body( $res ), true );
-        if ( empty( $body['results'] ) ) {
-            return null;
-        }
-
-        $merged = $body['results'];
-        $merged['cv_id'] = (int) $cv_id;
-
+    
         /*
-        * Reuse the Metron issue supplied by the caller.
-        */
-        $met = $metron_issue;
-
+         * Begin with every Comic Vine field.
+         */
+        $merged = $cv_issue;
+        $merged['cv_id'] = $cv_id;
+    
         /*
-        * Callers that only have a Comic Vine ID can still resolve
-        * the corresponding Metron record.
-        */
-        if (empty($met)) {
-            $met_url = $this->client->api_base . 'issue/?cv_id=' . $cv_id;
-            $met_res = $this->client->api_get($met_url);
-
-            $met = (
-                is_array($met_res) &&
-                empty($met_res['error']) &&
-                !empty($met_res['results'][0]) &&
-                is_array($met_res['results'][0])
-            )
-                ? $met_res['results'][0]
-                : [];
+         * If no Metron record was supplied, attempt to locate it.
+         * Do not cache this merged result under the Comic Vine ID.
+         */
+        $metron = $metron_issue;
+    
+        if (empty($metron)) {
+            $metron_response = $this->client->api_get(
+                $this->client->api_base .
+                'issue/?cv_id=' .
+                $cv_id
+            );
+    
+            if (
+                is_array($metron_response) &&
+                empty($metron_response['error']) &&
+                is_array($metron_response['results'][0] ?? null)
+            ) {
+                $metron = $metron_response['results'][0];
+            }
         }
-
-        if (!empty($met)) {
-            $merged['metron'] = $met;
-
+    
+        if (!empty($metron)) {
+            /*
+             * Retain the complete corresponding Metron record.
+             */
+            $merged['metron'] = $metron;
+    
             if (
                 empty($merged['cover_date']) &&
-                !empty($met['cover_date'])
+                !empty($metron['cover_date'])
             ) {
-                $merged['cover_date'] = $met['cover_date'];
+                $merged['cover_date'] = $metron['cover_date'];
             }
-
+    
             if (empty($merged['description'])) {
-                $met_description = ($met['description'] ?? '')
-                    ?: ($met['desc'] ?? '');
-
-                if ($met_description !== '') {
-                    $merged['description'] = $met_description;
+                $metron_description =
+                    ($metron['description'] ?? '')
+                    ?: ($metron['desc'] ?? '');
+    
+                if ($metron_description !== '') {
+                    $merged['description'] = $metron_description;
                 }
             }
-
+    
             if (
-                !empty($met['reprints']) &&
-                is_array($met['reprints'])
+                !empty($metron['reprints']) &&
+                is_array($metron['reprints'])
             ) {
-                $merged['reprint_info'] = array_column(
-                    $met['reprints'],
-                    'issue'
+                $merged['reprint_info'] = array_values(
+                    array_filter(
+                        array_column(
+                            $metron['reprints'],
+                            'issue'
+                        )
+                    )
                 );
             }
         }
-
+    
+        /*
+         * Calculate derived highlights after merging so they always
+         * correspond to the current Metron issue.
+         */
         $highlights = [];
-        $fields = [
-            'first_appearance_characters' => 'First Appearance of Characters',
-            'characters_died_in'          => 'Character Deaths',
-            'first_appearance_locations'  => 'New Locations Introduced',
-            'first_appearance_objects'    => 'First Appearance of Objects',
-            'first_appearance_concepts'   => 'First Appearance of Concepts',
+    
+        $highlight_fields = [
+            'first_appearance_characters' =>
+                'First Appearance of Characters',
+            'characters_died_in' =>
+                'Character Deaths',
+            'first_appearance_locations' =>
+                'New Locations Introduced',
+            'first_appearance_objects' =>
+                'First Appearance of Objects',
+            'first_appearance_concepts' =>
+                'First Appearance of Concepts',
         ];
-        foreach ( $fields as $key => $txt ) {
-            if ( ! empty( $merged[ $key ] ) ) {
-                $highlights[] = $txt;
+    
+        foreach ($highlight_fields as $field => $label) {
+            if (!empty($merged[$field])) {
+                $highlights[] = $label;
             }
         }
-
-        if ( ! empty( $merged['concept_credits'] ) ) {
-            foreach ( $merged['concept_credits'] as $c ) {
-                $n = strtolower( $c['name'] );
-                if ( strpos( $n, 'homage' ) !== false ) {
-                    $highlights[] = 'Homage Cover';
-                }
-                if ( strpos( $n, 'reprint' ) !== false ) {
-                    $highlights[] = 'Reprint Issue';
-                }
+    
+        foreach (
+            is_array($merged['concept_credits'] ?? null)
+                ? $merged['concept_credits']
+                : []
+            as $concept
+        ) {
+            $name = strtolower(
+                (string) ($concept['name'] ?? '')
+            );
+    
+            if (strpos($name, 'homage') !== false) {
+                $highlights[] = 'Homage Cover';
+            }
+    
+            if (strpos($name, 'reprint') !== false) {
+                $highlights[] = 'Reprint Issue';
             }
         }
-
-        if ( ! empty( $merged['reprint_info'] ) ) {
+    
+        if (!empty($merged['reprint_info'])) {
             $highlights[] = 'Contains Reprinted Material';
         }
-
-        if ( ! empty( $merged['description'] ) ) {
-            $d = strtolower( $merged['description'] );
-            if ( strpos( $d, 'first appearance' ) !== false ) {
-                $highlights[] = 'First Appearance Mentioned';
-            }
-            if ( strpos( $d, 'death of' ) !== false ) {
-                $highlights[] = 'Mentions a Death';
-            }
-            if ( strpos( $d, 'second appearance' ) !== false ) {
-                $highlights[] = 'Second Appearance';
-            }
+    
+        $plain_description = strtolower(
+            wp_strip_all_tags(
+                (string) ($merged['description'] ?? '')
+            )
+        );
+    
+        if (
+            strpos($plain_description, 'first appearance') !== false
+        ) {
+            $highlights[] = 'First Appearance Mentioned';
         }
-
-        $merged['_highlights'] = array_unique( $highlights );
-
-        // Use safe TTL
-        set_transient( $cache_key, $merged, $this->get_dataset_ttl() );
-
+    
+        if (strpos($plain_description, 'death of') !== false) {
+            $highlights[] = 'Mentions a Death';
+        }
+    
+        if (
+            strpos($plain_description, 'second appearance') !== false
+        ) {
+            $highlights[] = 'Second Appearance';
+        }
+    
+        $merged['_highlights'] = array_values(
+            array_unique($highlights)
+        );
+    
         return $merged;
     }
-
     
 
     /* -----------------------------------------------------------------
@@ -2791,32 +2895,61 @@ class ComicDataService {
     /* -----------------------------------------------------------------
      *  METRON to COMIC VINE ID lookup
      * ----------------------------------------------------------------- */
-    public function get_metron_cv_id( $metron_id ) {
-        if ( empty( $metron_id ) || $metron_id <= 0 ) {
+    public function get_metron_cv_id($metron_id) {
+        $metron_id = absint($metron_id);
+    
+        if (!$metron_id) {
             return null;
         }
     
-        $cache_key = 'metron:issue_vine:' . md5( (string) $metron_id );
+        $cache_key = "metron:issue_vine:v2:{$metron_id}";
+        $cached    = get_transient($cache_key);
     
-        $cached = get_transient( $cache_key );
-        if ( $cached !== false ) {
-            return $cached;
+        if (is_array($cached)) {
+            return !empty($cached['found'])
+                ? absint($cached['cv_id'] ?? 0)
+                : null;
         }
     
-        // Only hit API if not cached
-        $url = $this->client->api_base . "issue/{$metron_id}/";
-        $data = $this->client->api_get( $url );
+        $url  = $this->client->api_base . "issue/{$metron_id}/";
+        $data = $this->client->api_get($url);
     
-        $cv_id = $data['cv_id'] ?? null;
-    
-        if ( $cv_id ) {
-            set_transient( $cache_key, $cv_id, 30 * DAY_IN_SECONDS );   // long cache
-        } else {
-            // Cache negative result for a shorter time to avoid hammering
-            set_transient( $cache_key, null, 6 * HOUR_IN_SECONDS );
+        if (
+            !is_array($data) ||
+            isset($data['error']) ||
+            (int) ($data['id'] ?? 0) !== $metron_id
+        ) {
+            /*
+             * Do not cache connection or API errors as missing mappings.
+             */
+            return null;
         }
     
-        return $cv_id;
+        $cv_id = absint($data['cv_id'] ?? 0);
+    
+        if ($cv_id) {
+            set_transient(
+                $cache_key,
+                [
+                    'found' => true,
+                    'cv_id' => $cv_id,
+                ],
+                30 * DAY_IN_SECONDS
+            );
+    
+            return $cv_id;
+        }
+    
+        set_transient(
+            $cache_key,
+            [
+                'found' => false,
+                'cv_id' => 0,
+            ],
+            6 * HOUR_IN_SECONDS
+        );
+    
+        return null;
     }
 
     

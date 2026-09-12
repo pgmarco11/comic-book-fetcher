@@ -4,26 +4,24 @@
  * 
  */
 
-    $cache_key = "metron:issue:{$title_id}_{$issue_id}";
-    $issue = get_transient($cache_key);
-    
-    if ($issue === false) {
-
-        if (!$comic_renderer) {
-            echo '<p>Error: Comic renderer is not initialized.</p>';
-            return;
-        }
-
-        $issue = $comic_renderer->get_single_issue($title_id, $issue_id); 
-    
-        if (!$issue) {
-            echo '<p>Issue not found or does not belong to this series.</p>';
-            return;
-        }
-    
-        set_transient($cache_key, $issue, DAY_IN_SECONDS);
+    if (!$comic_renderer) {
+        echo '<p>Error: Comic renderer is not initialized.</p>';
+        return;
     }
 
+    /*
+    * Caching is handled by ComicDataService.
+    * The template should only request the complete issue record.
+    */
+    $issue = $comic_renderer->get_single_issue(
+        (int) $title_id,
+        (int) $issue_id
+    );
+
+    if (!is_array($issue)) {
+        echo '<p>Issue information is temporarily unavailable. Please try again.</p>';
+        return;
+    }
     
     // Normalize structure
     $series    = $issue['series'] ?? [];
@@ -65,9 +63,11 @@
     $cv_issue_number     = $cv_issue['issue_number'] ?? null;
     
     $cv_data_is_valid = (
-        !empty($cv_issue) &&
+        is_array($cv_issue) &&
+        (int) ($cv_issue['id'] ?? 0) === $cv_issue_id &&
         $metron_issue_number !== null &&
-        (string) $cv_issue_number === (string) $metron_issue_number
+        trim((string) $cv_issue_number) ===
+            trim((string) $metron_issue_number)
     );
     
     if ( ! $cv_data_is_valid ) {
@@ -76,12 +76,16 @@
     
     // Description: CV (only if valid match) → Metron → fallback
     $raw_description =
-        ( $cv_data_is_valid ? ( $cv_issue['description'] ?? '' ) : '' )
-        ?: ( $issue['description'] ?? '' )
-        ?: ( $issue['desc']        ?? '' )
+        ($cv_data_is_valid
+            ? ($cv_issue['description'] ?? '')
+            : '')
+        ?: ($issue['description'] ?? '')
+        ?: ($issue['desc'] ?? '')
         ?: 'No description available.';
-    
-    $description = $comic_renderer->clean_cv_description( $raw_description );
+
+    $description = $comic_renderer->clean_cv_description(
+        $raw_description
+    );
 
     $metron_cv_id = $cv_data_is_valid ? ( $cv_issue['id'] ?? '' ) : '';
 

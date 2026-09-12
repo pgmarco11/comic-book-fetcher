@@ -77,10 +77,14 @@ if ($metron_cv_id > 0) {
     }
 }
 
-$raw_description = tcs_catalog_description($item_issue);
+/*
+ * Use the same priority as the issue-details page so the collection
+ * button does not contain a different description.
+ */
+$raw_description = tcs_catalog_description($cv_details);
 
 if ($raw_description === '') {
-    $raw_description = tcs_catalog_description($cv_details);
+    $raw_description = tcs_catalog_description($item_issue);
 }
 
 $description = $raw_description !== ''
