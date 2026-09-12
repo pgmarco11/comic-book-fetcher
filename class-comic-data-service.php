@@ -976,26 +976,40 @@ class ComicDataService {
                 */
                 $fallback_calls++;
 
+                $lookup_status = 'error';
+                
                 $cv_id = (int) $this->get_metron_cv_id(
-                    $metron_id
+                    $metron_id,
+                    $lookup_status
                 );
-
-                if ($cv_id) {
+                
+                if ($cv_id && $lookup_status === 'found') {
+                    /*
+                     * Cache a confirmed Comic Vine mapping.
+                     */
                     set_transient(
                         $cache_key,
                         ['cv_id' => $cv_id],
                         30 * DAY_IN_SECONDS
                     );
-                } else {
+                } elseif ($lookup_status === 'missing') {
                     /*
-                    * Cache a completed lookup with no mapping briefly.
-                    */
+                     * Cache only a confirmed successful lookup that had no
+                     * Comic Vine mapping.
+                     *
+                     * API and connection errors must not create this transient.
+                     */
                     set_transient(
                         $cache_key,
                         ['cv_id' => null],
                         6 * HOUR_IN_SECONDS
                     );
                 }
+                
+                /*
+                 * When $lookup_status is "error", leave the mapping uncached
+                 * so another request can retry it.
+                 */
 
             } else {
                 /*
@@ -2895,10 +2909,20 @@ class ComicDataService {
     /* -----------------------------------------------------------------
      *  METRON to COMIC VINE ID lookup
      * ----------------------------------------------------------------- */
-    public function get_metron_cv_id($metron_id) {
+    public function get_metron_cv_id(
+        $metron_id,
+        &$status = null
+    ) {
+        /*
+         * Default to error so unexpected exit paths never become
+         * confirmed negative cache entries.
+         */
+        $status    = 'error';
         $metron_id = absint($metron_id);
     
         if (!$metron_id) {
+            $status = 'invalid';
+    
             return null;
         }
     
@@ -2906,12 +2930,33 @@ class ComicDataService {
         $cached    = get_transient($cache_key);
     
         if (is_array($cached)) {
-            return !empty($cached['found'])
-                ? absint($cached['cv_id'] ?? 0)
-                : null;
+            if (!empty($cached['found'])) {
+                $cv_id = absint($cached['cv_id'] ?? 0);
+    
+                if ($cv_id) {
+                    $status = 'found';
+    
+                    return $cv_id;
+                }
+            }
+    
+            /*
+             * A valid cached record with found=false represents
+             * a previously confirmed missing mapping.
+             */
+            if (
+                array_key_exists('found', $cached) &&
+                $cached['found'] === false
+            ) {
+                $status = 'missing';
+            }
+    
+            return null;
         }
     
-        $url  = $this->client->api_base . "issue/{$metron_id}/";
+        $url = $this->client->api_base .
+            "issue/{$metron_id}/";
+    
         $data = $this->client->api_get($url);
     
         if (
@@ -2920,14 +2965,19 @@ class ComicDataService {
             (int) ($data['id'] ?? 0) !== $metron_id
         ) {
             /*
-             * Do not cache connection or API errors as missing mappings.
+             * Do not cache connection errors, API errors, malformed
+             * responses or mismatched issue records.
              */
+            $status = 'error';
+    
             return null;
         }
     
         $cv_id = absint($data['cv_id'] ?? 0);
     
         if ($cv_id) {
+            $status = 'found';
+    
             set_transient(
                 $cache_key,
                 [
@@ -2939,6 +2989,12 @@ class ComicDataService {
     
             return $cv_id;
         }
+    
+        /*
+         * Metron returned the requested issue successfully but
+         * confirmed that it has no Comic Vine ID.
+         */
+        $status = 'missing';
     
         set_transient(
             $cache_key,
