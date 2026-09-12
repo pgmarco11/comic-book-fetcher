@@ -262,6 +262,7 @@ class Comicbooks {
         }
     
         $comic_renderer = new ComicRenderer();
+        
         $data = $comic_renderer->get_series_issues(
             $title_id,
             $page,

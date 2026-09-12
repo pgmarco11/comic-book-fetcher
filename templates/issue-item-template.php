@@ -129,7 +129,9 @@ $series_name = esc_html($raw_series_name);
 $issue_number = esc_html($raw_number);
 $issue_title = "#{$raw_number} — {$raw_series_name}";
 $volume = $item_series['volume'] ?? '';
+/*
 $highlights = $cv_details['_highlights'] ?? [];
+*/
 
 $collection_status = $collection_status ?? [];
 
@@ -168,13 +170,16 @@ $collection_post_id = $in_collection
             <h3>#<?php echo $issue_number; ?> — <?php echo $series_name; ?></h3>
             <h4><?php echo esc_html($formatted_date); ?></h4>
 
-            <?php if (!empty($highlights)): ?>
-                <div class="cv-highlights">
-                    <?php foreach ($highlights as $highlight): ?>
-                        <p class="cv-note"><?php echo esc_html($highlight); ?></p>
-                    <?php endforeach; ?>
-                </div>
-            <?php endif; ?>
+            
+            <?php /*
+                if (!empty($highlights)): ?>
+                    <div class="cv-highlights">
+                        <?php foreach ($highlights as $highlight): ?>
+                            <p class="cv-note"><?php echo esc_html($highlight); ?></p>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; 
+            */ ?>
         </div>
 
         </a>
