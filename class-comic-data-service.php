@@ -1376,7 +1376,8 @@ class ComicDataService {
             : max( $api_total, count( $filtered ) );
 
         /*
-        * Slice within the current 5-page API block.
+        * 
+        * Slice within the current API page.
         */
         if ( ! $is_filtered ) {
             $block_absolute_start = ( $block_start - 1 ) * $api_page_size;

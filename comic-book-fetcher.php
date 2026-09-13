@@ -302,7 +302,10 @@ function comicbooks_refresh_issue_page_cache(
         return;
     }
 
-    $service = new Comic_Data_Service();
+    $service = new ComicDataService(
+        new MetronClient()
+    );
+
     $result  = $service->refresh_issue_api_page(
         $title_id,
         $api_page
@@ -310,7 +313,7 @@ function comicbooks_refresh_issue_page_cache(
 
     if (
         !is_array($result) ||
-        empty($result['temporary_error'])
+        empty($result['temporary'])
     ) {
         return;
     }
@@ -388,7 +391,10 @@ function comicbooks_refresh_series_page_cache(
         return;
     }
 
-    $service = new Comic_Data_Service();
+    $service = new ComicDataService(
+        new MetronClient()
+    );
+
     $result  = $service->refresh_series_api_page(
         $publisher_id,
         $api_page,
@@ -397,7 +403,7 @@ function comicbooks_refresh_series_page_cache(
 
     if (
         !is_array($result) ||
-        empty($result['temporary_error'])
+        empty($result['temporary'])
     ) {
         return;
     }
