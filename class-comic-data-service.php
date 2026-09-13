@@ -1279,14 +1279,8 @@ class ComicDataService {
     }
 
     /** -----------------------------------------------------------------
-     * SERIES LIST for a publisher — fixed 5-page block mode.
+     * SERIES LIST for a publisher — fixed the current API page
      *
-     * Normal behavior with your current setup:
-     * - Catalog page 1–50 uses Metron API pages 1–5.
-     * - Catalog page 51–100 uses Metron API pages 6–10.
-     *
-     * Why? Your catalog shows 10 items per page, while Metron API returns
-     * 100 items per page.
      * ----------------------------------------------------------------- */
     public function get_series(
         $publisher_id, $page = 1, $per_page = 10,
@@ -1565,25 +1559,26 @@ class ComicDataService {
         int $publisher_id,
         int $api_page,
         int $api_page_size,
-        int $delay = 5
+        int $delay = 5,
+        int $attempt = 0
     ): void {
         $publisher_id = absint($publisher_id);
-        $api_page = max(1, absint($api_page));
-        $api_page_size = max(
-            1,
-            absint($api_page_size)
-        );
-
+        $api_page      = max(1, absint($api_page));
+        $api_page_size = max(1, absint($api_page_size));
+        $delay         = max(1, absint($delay));
+        $attempt       = max(0, min(5, absint($attempt)));
+    
         if (!$publisher_id) {
             return;
         }
-
+    
         $args = [
             $publisher_id,
             $api_page,
             $api_page_size,
+            $attempt,
         ];
-
+    
         if (
             !wp_next_scheduled(
                 'comicbooks_refresh_series_page_cache',
@@ -1591,7 +1586,7 @@ class ComicDataService {
             )
         ) {
             wp_schedule_single_event(
-                time() + max(5, $delay),
+                time() + $delay,
                 'comicbooks_refresh_series_page_cache',
                 $args
             );
@@ -2019,20 +2014,24 @@ class ComicDataService {
     private function schedule_issue_page_refresh(
         int $title_id,
         int $api_page,
-        int $delay = 5
+        int $delay = 5,
+        int $attempt = 0
     ): void {
         $title_id = absint($title_id);
         $api_page = max(1, absint($api_page));
-
+        $delay    = max(1, absint($delay));
+        $attempt  = max(0, min(5, absint($attempt)));
+    
         if (!$title_id) {
             return;
         }
-
+    
         $args = [
             $title_id,
             $api_page,
+            $attempt,
         ];
-
+    
         if (
             !wp_next_scheduled(
                 'comicbooks_refresh_issue_page_cache',
@@ -2040,7 +2039,7 @@ class ComicDataService {
             )
         ) {
             wp_schedule_single_event(
-                time() + max(5, $delay),
+                time() + $delay,
                 'comicbooks_refresh_issue_page_cache',
                 $args
             );
@@ -2127,20 +2126,9 @@ class ComicDataService {
     }
 
     /**
-     * Get issues for a series — incremental-page edition.
-     *
-     * Instead of looping through up to 10 API pages on every cold load,
-     * we fetch only the three Metron API pages that surround the requested
-     * display page: prev (if any), current, next.
-     *
-     * Cache structure
-     * ──────────────
-     *  metron:issue_page:{id}:{n}   – results[] for Metron API page n   (30 d)
-     *  metron:issue_total:{id}      – total issue count from the API     (30 d)
-     *  metron:series:{id}           – series metadata                    (14 d)
-     *
-     * Backward compat: if the old v5 full-list transient still exists it
-     * is used as-is and expires naturally after 30 days.
+     * Fetch the Metron API page containing the requested display page.
+     * Cached stale data may be returned while the API page is refreshed
+     * in the background.
      */
     public function get_series_issues( $title_id, $current_page = 1, $search = '' ) {
         $title_id     = (int) $title_id;

@@ -256,57 +256,110 @@ function comicbooks_process_publisher_warm_queue()
 add_action('admin_menu', 'comic_book_api_settings_page');
 
 /**
+ * Calculate the delay before retrying a failed background request.
+ *
+ * Attempts:
+ * 0 -> 15 seconds
+ * 1 -> 30 seconds
+ * 2 -> 60 seconds
+ * 3 -> 120 seconds
+ */
+function comicbooks_background_retry_delay(
+    int $attempt,
+    int $retry_after = 0
+): int {
+    $attempt = max(0, $attempt);
+
+    $backoff = min(
+        120,
+        15 * (2 ** $attempt)
+    );
+
+    /*
+     * Never retry sooner than the API's Retry-After value.
+     * The extra two seconds provides a small safety buffer.
+     */
+    $api_delay = $retry_after > 0
+        ? $retry_after + 2
+        : 0;
+
+    return max($backoff, $api_delay);
+}
+
+/**
  * Refresh one stale issue-list API page.
  */
 function comicbooks_refresh_issue_page_cache(
     $title_id,
-    $api_page
+    $api_page,
+    $attempt = 0
 ) {
     $title_id = absint($title_id);
     $api_page = max(1, absint($api_page));
+    $attempt  = max(0, absint($attempt));
 
     if (!$title_id) {
         return;
     }
 
-    $service = new ComicDataService(
-        new MetronClient()
-    );
-
-    $result = $service->refresh_issue_api_page(
+    $service = new Comic_Data_Service();
+    $result  = $service->refresh_issue_api_page(
         $title_id,
         $api_page
     );
 
     if (
-        empty($result['success']) &&
-        !empty($result['temporary'])
+        !is_array($result) ||
+        empty($result['temporary_error'])
     ) {
-        /*
-         * Respect the Metron retry time and add a small buffer.
-         */
-        $retry_after = max(
-            10,
-            (int) ($result['retry_after'] ?? 10)
-        ) + 2;
+        return;
+    }
 
-        $args = [
-            $title_id,
-            $api_page,
-        ];
+    /*
+     * Attempt values 0 through 4 allow five total executions.
+     * Stop after the fifth temporary failure.
+     */
+    $next_attempt = $attempt + 1;
 
-        if (
-            !wp_next_scheduled(
-                'comicbooks_refresh_issue_page_cache',
-                $args
-            )
-        ) {
-            wp_schedule_single_event(
-                time() + $retry_after,
-                'comicbooks_refresh_issue_page_cache',
-                $args
+    if ($next_attempt >= 5) {
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log(
+                sprintf(
+                    'Comic Books: issue-page refresh stopped after %d attempts. Title %d, API page %d.',
+                    $next_attempt,
+                    $title_id,
+                    $api_page
+                )
             );
         }
+
+        return;
+    }
+
+    $delay = comicbooks_background_retry_delay(
+        $attempt,
+        isset($result['retry_after'])
+            ? absint($result['retry_after'])
+            : 0
+    );
+
+    $args = [
+        $title_id,
+        $api_page,
+        $next_attempt,
+    ];
+
+    if (
+        !wp_next_scheduled(
+            'comicbooks_refresh_issue_page_cache',
+            $args
+        )
+    ) {
+        wp_schedule_single_event(
+            time() + $delay,
+            'comicbooks_refresh_issue_page_cache',
+            $args
+        );
     }
 }
 
@@ -314,7 +367,7 @@ add_action(
     'comicbooks_refresh_issue_page_cache',
     'comicbooks_refresh_issue_page_cache',
     10,
-    2
+    3
 );
 
 /**
@@ -323,57 +376,74 @@ add_action(
 function comicbooks_refresh_series_page_cache(
     $publisher_id,
     $api_page,
-    $api_page_size
+    $api_page_size,
+    $attempt = 0
 ) {
     $publisher_id = absint($publisher_id);
-    $api_page = max(1, absint($api_page));
-    $api_page_size = max(
-        1,
-        absint($api_page_size)
-    );
+    $api_page      = max(1, absint($api_page));
+    $api_page_size = max(1, absint($api_page_size));
+    $attempt       = max(0, absint($attempt));
 
     if (!$publisher_id) {
         return;
     }
 
-    $service = new ComicDataService(
-        new MetronClient()
+    $service = new Comic_Data_Service();
+    $result  = $service->refresh_series_api_page(
+        $publisher_id,
+        $api_page,
+        $api_page_size
     );
 
-    $result =
-        $service->refresh_series_api_page(
-            $publisher_id,
-            $api_page,
-            $api_page_size
-        );
-
     if (
-        empty($result['success']) &&
-        !empty($result['temporary'])
+        !is_array($result) ||
+        empty($result['temporary_error'])
     ) {
-        $retry_after = max(
-            10,
-            (int) ($result['retry_after'] ?? 10)
-        ) + 2;
+        return;
+    }
 
-        $args = [
-            $publisher_id,
-            $api_page,
-            $api_page_size,
-        ];
+    $next_attempt = $attempt + 1;
 
-        if (
-            !wp_next_scheduled(
-                'comicbooks_refresh_series_page_cache',
-                $args
-            )
-        ) {
-            wp_schedule_single_event(
-                time() + $retry_after,
-                'comicbooks_refresh_series_page_cache',
-                $args
+    if ($next_attempt >= 5) {
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log(
+                sprintf(
+                    'Comic Books: series-page refresh stopped after %d attempts. Publisher %d, API page %d.',
+                    $next_attempt,
+                    $publisher_id,
+                    $api_page
+                )
             );
         }
+
+        return;
+    }
+
+    $delay = comicbooks_background_retry_delay(
+        $attempt,
+        isset($result['retry_after'])
+            ? absint($result['retry_after'])
+            : 0
+    );
+
+    $args = [
+        $publisher_id,
+        $api_page,
+        $api_page_size,
+        $next_attempt,
+    ];
+
+    if (
+        !wp_next_scheduled(
+            'comicbooks_refresh_series_page_cache',
+            $args
+        )
+    ) {
+        wp_schedule_single_event(
+            time() + $delay,
+            'comicbooks_refresh_series_page_cache',
+            $args
+        );
     }
 }
 
@@ -381,7 +451,7 @@ add_action(
     'comicbooks_refresh_series_page_cache',
     'comicbooks_refresh_series_page_cache',
     10,
-    3
+    4
 );
 
 function render_api_settings_page() {
