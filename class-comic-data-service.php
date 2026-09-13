@@ -1376,7 +1376,7 @@ class ComicDataService {
             : max( $api_total, count( $filtered ) );
 
         /*
-        * 
+        *
         * Slice within the current API page.
         */
         if ( ! $is_filtered ) {
