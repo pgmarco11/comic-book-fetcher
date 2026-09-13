@@ -255,6 +255,135 @@ function comicbooks_process_publisher_warm_queue()
 
 add_action('admin_menu', 'comic_book_api_settings_page');
 
+/**
+ * Refresh one stale issue-list API page.
+ */
+function comicbooks_refresh_issue_page_cache(
+    $title_id,
+    $api_page
+) {
+    $title_id = absint($title_id);
+    $api_page = max(1, absint($api_page));
+
+    if (!$title_id) {
+        return;
+    }
+
+    $service = new ComicDataService(
+        new MetronClient()
+    );
+
+    $result = $service->refresh_issue_api_page(
+        $title_id,
+        $api_page
+    );
+
+    if (
+        empty($result['success']) &&
+        !empty($result['temporary'])
+    ) {
+        /*
+         * Respect the Metron retry time and add a small buffer.
+         */
+        $retry_after = max(
+            10,
+            (int) ($result['retry_after'] ?? 10)
+        ) + 2;
+
+        $args = [
+            $title_id,
+            $api_page,
+        ];
+
+        if (
+            !wp_next_scheduled(
+                'comicbooks_refresh_issue_page_cache',
+                $args
+            )
+        ) {
+            wp_schedule_single_event(
+                time() + $retry_after,
+                'comicbooks_refresh_issue_page_cache',
+                $args
+            );
+        }
+    }
+}
+
+add_action(
+    'comicbooks_refresh_issue_page_cache',
+    'comicbooks_refresh_issue_page_cache',
+    10,
+    2
+);
+
+/**
+ * Refresh one stale publisher series-list API page.
+ */
+function comicbooks_refresh_series_page_cache(
+    $publisher_id,
+    $api_page,
+    $api_page_size
+) {
+    $publisher_id = absint($publisher_id);
+    $api_page = max(1, absint($api_page));
+    $api_page_size = max(
+        1,
+        absint($api_page_size)
+    );
+
+    if (!$publisher_id) {
+        return;
+    }
+
+    $service = new ComicDataService(
+        new MetronClient()
+    );
+
+    $result =
+        $service->refresh_series_api_page(
+            $publisher_id,
+            $api_page,
+            $api_page_size
+        );
+
+    if (
+        empty($result['success']) &&
+        !empty($result['temporary'])
+    ) {
+        $retry_after = max(
+            10,
+            (int) ($result['retry_after'] ?? 10)
+        ) + 2;
+
+        $args = [
+            $publisher_id,
+            $api_page,
+            $api_page_size,
+        ];
+
+        if (
+            !wp_next_scheduled(
+                'comicbooks_refresh_series_page_cache',
+                $args
+            )
+        ) {
+            wp_schedule_single_event(
+                time() + $retry_after,
+                'comicbooks_refresh_series_page_cache',
+                $args
+            );
+        }
+    }
+}
+
+add_action(
+    'comicbooks_refresh_series_page_cache',
+    'comicbooks_refresh_series_page_cache',
+    10,
+    3
+);
+
 function render_api_settings_page() {
     // Save API credentials
     if (isset($_POST['submit']) && check_admin_referer('save_api_settings')) {

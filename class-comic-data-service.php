@@ -926,11 +926,16 @@ class ComicDataService {
         $cv_ids        = [];
 
         /*
-        * Limit individual Metron issue-detail fallback requests
-        * to three during this page request.
+        * Permit no more than one individual Metron issue-detail
+        * fallback during an issue-list request.
+        *
+        * The primary issue list is more important than secondary
+        * Comic Vine cover enrichment. Limiting this to one prevents
+        * one browser request from consuming several consecutive
+        * Metron API slots.
         */
         $fallback_calls     = 0;
-        $max_fallback_calls = 3;
+        $max_fallback_calls = 1;
 
         /*
         * First pass: resolve Metron issue IDs to Comic Vine issue IDs.
@@ -1388,6 +1393,69 @@ class ComicDataService {
 
         $paged_items = array_slice( $filtered, $offset_in_block, $per_page );
 
+        /*
+        * Prewarm the next Metron series API page when the user
+        * approaches the end of the current 100-record block.
+        *
+        * Visible pages 8-10 prewarm API page 2.
+        * Visible pages 18-20 prewarm API page 3, and so on.
+        */
+        $display_pages_per_api_page = max(
+            1,
+            (int) floor(
+                $api_page_size / $per_page
+            )
+        );
+
+        $position_in_api_page = (
+            ($page - 1) %
+            $display_pages_per_api_page
+        ) + 1;
+
+        $should_prewarm_next =
+            !$is_filtered &&
+            $api_has_next &&
+            $position_in_api_page >=
+                ($display_pages_per_api_page - 2);
+
+        if ($should_prewarm_next) {
+            $next_api_page = $needed_api_page + 1;
+
+            $next_fresh_key =
+                $this->series_page_cache_key(
+                    $publisher_id,
+                    $next_api_page,
+                    $api_page_size
+                );
+
+            $next_fresh = get_transient(
+                $next_fresh_key
+            );
+
+            $next_stale =
+                $this->get_stale_series_page(
+                    $publisher_id,
+                    $next_api_page,
+                    $api_page_size
+                );
+
+            /*
+            * Schedule only when the next API page is completely cold.
+            * A stale snapshot is already sufficient for immediate loading.
+            */
+            if (
+                $next_fresh === false &&
+                $next_stale === null
+            ) {
+                $this->schedule_series_page_refresh(
+                    $publisher_id,
+                    $next_api_page,
+                    $api_page_size,
+                    wp_rand(8, 15)
+                );
+            }
+        }
+
         return [
             'items'    => $paged_items,
             'total'    => $total,
@@ -1395,6 +1463,141 @@ class ComicDataService {
             'per_page' => $per_page,
         ];
     }
+
+    /**
+     * Return the normal series API-page cache key.
+     */
+    private function series_page_cache_key(
+        int $publisher_id,
+        int $api_page,
+        int $api_page_size
+    ): string {
+        return sprintf(
+            'metron:series_api_page:v4:%d:%d:%d',
+            absint($publisher_id),
+            max(1, absint($api_page)),
+            max(1, absint($api_page_size))
+        );
+    }
+
+    /**
+     * Return the longer-lived stale series-page key.
+     */
+    private function series_page_stale_key(
+        int $publisher_id,
+        int $api_page,
+        int $api_page_size
+    ): string {
+        return sprintf(
+            'metron:series_api_page_stale:v1:%d:%d:%d',
+            absint($publisher_id),
+            max(1, absint($api_page)),
+            max(1, absint($api_page_size))
+        );
+    }
+
+    /**
+     * Save the fresh series page and its stale fallback.
+     */
+    private function save_series_page_cache(
+        int $publisher_id,
+        int $api_page,
+        int $api_page_size,
+        array $result
+    ): void {
+        set_transient(
+            $this->series_page_cache_key(
+                $publisher_id,
+                $api_page,
+                $api_page_size
+            ),
+            $result,
+            30 * DAY_IN_SECONDS
+        );
+
+        set_transient(
+            $this->series_page_stale_key(
+                $publisher_id,
+                $api_page,
+                $api_page_size
+            ),
+            [
+                'result'     => $result,
+                'updated_at' => time(),
+            ],
+            180 * DAY_IN_SECONDS
+        );
+    }
+
+    /**
+     * Read a stale series-page snapshot without making an API request.
+     */
+    private function get_stale_series_page(
+        int $publisher_id,
+        int $api_page,
+        int $api_page_size
+    ): ?array {
+        $snapshot = get_transient(
+            $this->series_page_stale_key(
+                $publisher_id,
+                $api_page,
+                $api_page_size
+            )
+        );
+
+        if (
+            !is_array($snapshot) ||
+            !isset($snapshot['result']) ||
+            !is_array($snapshot['result']) ||
+            !isset($snapshot['result']['items']) ||
+            !is_array($snapshot['result']['items'])
+        ) {
+            return null;
+        }
+
+        return $snapshot['result'];
+    }
+
+    /**
+     * Schedule one series API-page refresh.
+     */
+    private function schedule_series_page_refresh(
+        int $publisher_id,
+        int $api_page,
+        int $api_page_size,
+        int $delay = 5
+    ): void {
+        $publisher_id = absint($publisher_id);
+        $api_page = max(1, absint($api_page));
+        $api_page_size = max(
+            1,
+            absint($api_page_size)
+        );
+
+        if (!$publisher_id) {
+            return;
+        }
+
+        $args = [
+            $publisher_id,
+            $api_page,
+            $api_page_size,
+        ];
+
+        if (
+            !wp_next_scheduled(
+                'comicbooks_refresh_series_page_cache',
+                $args
+            )
+        ) {
+            wp_schedule_single_event(
+                time() + max(5, $delay),
+                'comicbooks_refresh_series_page_cache',
+                $args
+            );
+        }
+    }
+
 
 
     /**
@@ -1409,19 +1612,54 @@ class ComicDataService {
         bool $cache_only = false,
         int $retries = 3
     ): array {
-        $cache_key = "metron:series_api_page:v4:{$publisher_id}:{$api_page}:{$api_page_size}";
 
-        /*
-        * Return a cached API page immediately.
-        *
-        * Mapping transients are populated only when a fresh, successful
-        * Metron response is processed below.
-        */
+        $cache_key = $this->series_page_cache_key(
+            $publisher_id,
+            $api_page,
+            $api_page_size
+        );
+
         if (!$force_api) {
-            $cached = get_transient($cache_key);
-
-            if ($cached !== false && is_array($cached)) {
+            $cached = get_transient(
+                $cache_key
+            );
+            
+            if (
+                $cached !== false &&
+                is_array($cached)
+            ) {
                 return $cached;
+            }
+
+            $stale = $this->get_stale_series_page(
+                $publisher_id,
+                $api_page,
+                $api_page_size
+            );
+
+            if ($stale !== null) {
+                /*
+                * Briefly restore the normal transient so simultaneous
+                * visitors all receive the stale snapshot immediately.
+                */
+                set_transient(
+                    $cache_key,
+                    $stale,
+                    10 * MINUTE_IN_SECONDS
+                );
+
+                /*
+                * The stale data is usable, but refresh it behind the
+                * current browser request.
+                */
+                $this->schedule_series_page_refresh(
+                    $publisher_id,
+                    $api_page,
+                    $api_page_size,
+                    5
+                );
+
+                return $stale;
             }
         }
 
@@ -1445,12 +1683,23 @@ class ComicDataService {
             isset($response['error'])
         ) {
             return [
-                'items'           => [],
-                'total'           => 0,
-                'has_next'        => false,
+                'items'    => [],
+                'total'    => 0,
+                'has_next' => false,
+            
                 'temporary_error' => is_array($response)
-                    ? (string) ($response['error'] ?? 'Temporary Metron error')
+                    ? (string) (
+                        $response['error']
+                        ?? 'Temporary Metron error'
+                    )
                     : 'Invalid Metron response',
+            
+                'retry_after' => is_array($response)
+                    ? max(
+                        5,
+                        (int) ($response['retry_after'] ?? 10)
+                    )
+                    : 10,
             ];
         }
 
@@ -1474,8 +1723,13 @@ class ComicDataService {
                     'has_next' => false,
             ];
 
-            set_transient( $cache_key, $empty, 30 * DAY_IN_SECONDS );
-
+            $this->save_series_page_cache(
+                $publisher_id,
+                $api_page,
+                $api_page_size,
+                $empty
+            );
+            
             return $empty;
         }
 
@@ -1530,9 +1784,93 @@ class ComicDataService {
             'has_next' => ! empty( $response['next'] ),
         ];
 
-        set_transient( $cache_key, $result, 30 * DAY_IN_SECONDS );
-
+        $this->save_series_page_cache(
+            $publisher_id,
+            $api_page,
+            $api_page_size,
+            $result
+        );
+        
         return $result;
+    }
+
+    /**
+     * Refresh one cached Metron series-list API page.
+     *
+     * Called by WP-Cron. The stale snapshot remains untouched
+     * when Metron returns a temporary error.
+     */
+    public function refresh_series_api_page(
+        int $publisher_id,
+        int $api_page,
+        int $api_page_size = 100
+    ): array {
+        $publisher_id = absint($publisher_id);
+        $api_page = max(1, absint($api_page));
+        $api_page_size = max(
+            1,
+            absint($api_page_size)
+        );
+
+        if (!$publisher_id) {
+            return [
+                'success'   => false,
+                'temporary' => false,
+                'message'   => 'Invalid publisher ID.',
+            ];
+        }
+
+        /*
+        * force_api=true prevents the fresh/stale series-page
+        * caches from short-circuiting this refresh.
+        *
+        * cache_only=false permits the external request.
+        * retries=1 leaves retry scheduling to WP-Cron.
+        */
+        $result = $this->get_series_api_page(
+            $publisher_id,
+            $api_page,
+            $api_page_size,
+            true,
+            false,
+            1
+        );
+
+        if (!empty($result['temporary_error'])) {
+            return [
+                'success'     => false,
+                'temporary'   => true,
+                'retry_after' => max(
+                    5,
+                    (int) ($result['retry_after'] ?? 10)
+                ),
+                'message' => (string) (
+                    $result['temporary_error']
+                    ?? 'Temporary Metron error'
+                ),
+            ];
+        }
+
+        if (
+            !isset($result['items']) ||
+            !is_array($result['items'])
+        ) {
+            return [
+                'success'   => false,
+                'temporary' => false,
+                'message'   => 'Invalid series-page result.',
+            ];
+        }
+
+        return [
+            'success'   => true,
+            'temporary' => false,
+            'count'     => count($result['items']),
+            'total'     => max(
+                0,
+                (int) ($result['total'] ?? 0)
+            ),
+        ];
     }
 
     /**
@@ -1557,6 +1895,237 @@ class ComicDataService {
         return array_values( $data );
     }
 
+
+
+    /**
+     * Return the normal issue-page transient key.
+     */
+    private function issue_page_cache_key(
+        int $title_id,
+        int $api_page
+    ): string {
+        return sprintf(
+            'metron:issue_page:%d:%d',
+            absint($title_id),
+            max(1, absint($api_page))
+        );
+    }
+
+    /**
+     * Return the longer-lived stale snapshot key.
+     */
+    private function issue_page_stale_key(
+        int $title_id,
+        int $api_page
+    ): string {
+        return sprintf(
+            'metron:issue_page_stale:v1:%d:%d',
+            absint($title_id),
+            max(1, absint($api_page))
+        );
+    }
+
+    /**
+     * Save both the normal cache and its stale fallback.
+     */
+    private function save_issue_page_cache(
+        int $title_id,
+        int $api_page,
+        array $results,
+        int $total
+    ): void {
+        $cache_key = $this->issue_page_cache_key(
+            $title_id,
+            $api_page
+        );
+
+        $stale_key = $this->issue_page_stale_key(
+            $title_id,
+            $api_page
+        );
+
+        /*
+        * Normal fresh cache.
+        */
+        set_transient(
+            $cache_key,
+            $results,
+            30 * DAY_IN_SECONDS
+        );
+
+        /*
+        * Longer-lived fallback cache.
+        *
+        * This is not returned as permanently fresh. It is served
+        * immediately only while a background refresh is scheduled.
+        */
+        set_transient(
+            $stale_key,
+            [
+                'results'    => $results,
+                'total'      => max(0, $total),
+                'updated_at' => time(),
+            ],
+            180 * DAY_IN_SECONDS
+        );
+
+        if ($total > 0) {
+            set_transient(
+                "metron:issue_total:{$title_id}",
+                $total,
+                30 * DAY_IN_SECONDS
+            );
+        }
+    }
+
+    /**
+     * Read the stale issue-page fallback.
+     */
+    private function get_stale_issue_page(
+        int $title_id,
+        int $api_page
+    ): ?array {
+        $snapshot = get_transient(
+            $this->issue_page_stale_key(
+                $title_id,
+                $api_page
+            )
+        );
+
+        if (
+            !is_array($snapshot) ||
+            !isset($snapshot['results']) ||
+            !is_array($snapshot['results'])
+        ) {
+            return null;
+        }
+
+        return [
+            'results' => $snapshot['results'],
+            'total' => max(
+                0,
+                (int) ($snapshot['total'] ?? 0)
+            ),
+            'updated_at' => max(
+                0,
+                (int) ($snapshot['updated_at'] ?? 0)
+            ),
+        ];
+    }
+
+    /**
+     * Schedule an issue-page refresh without creating duplicate events.
+     */
+    private function schedule_issue_page_refresh(
+        int $title_id,
+        int $api_page,
+        int $delay = 5
+    ): void {
+        $title_id = absint($title_id);
+        $api_page = max(1, absint($api_page));
+
+        if (!$title_id) {
+            return;
+        }
+
+        $args = [
+            $title_id,
+            $api_page,
+        ];
+
+        if (
+            !wp_next_scheduled(
+                'comicbooks_refresh_issue_page_cache',
+                $args
+            )
+        ) {
+            wp_schedule_single_event(
+                time() + max(5, $delay),
+                'comicbooks_refresh_issue_page_cache',
+                $args
+            );
+        }
+    }
+
+    /**
+     * Refresh one Metron issue-list API page.
+     *
+     * Called by WP-Cron. Existing stale data is preserved when
+     * Metron returns a temporary error.
+     */
+    public function refresh_issue_api_page(
+        int $title_id,
+        int $api_page
+    ): array {
+        $title_id = absint($title_id);
+        $api_page = max(1, absint($api_page));
+        $api_size = 100;
+
+        if (!$title_id) {
+            return [
+                'success' => false,
+                'temporary' => false,
+                'message' => 'Invalid series ID.',
+            ];
+        }
+
+        $url = $this->client->api_base .
+            "series/{$title_id}/issue_list/" .
+            "?page={$api_page}&page_size={$api_size}";
+
+        $response = $this->client->api_get(
+            $url
+        );
+
+        if (
+            !is_array($response) ||
+            isset($response['error'])
+        ) {
+            return [
+                'success' => false,
+                'temporary' => true,
+                'retry_after' => max(
+                    5,
+                    (int) (
+                        is_array($response)
+                            ? ($response['retry_after'] ?? 10)
+                            : 10
+                    )
+                ),
+                'message' => is_array($response)
+                    ? (string) (
+                        $response['error']
+                        ?? 'Temporary Metron error'
+                    )
+                    : 'Invalid Metron response',
+            ];
+        }
+
+        $results = isset($response['results']) &&
+            is_array($response['results'])
+                ? $response['results']
+                : [];
+
+        $total = max(
+            0,
+            (int) ($response['count'] ?? 0)
+        );
+
+        $this->save_issue_page_cache(
+            $title_id,
+            $api_page,
+            $results,
+            $total
+        );
+
+        return [
+            'success' => true,
+            'temporary' => false,
+            'count' => count($results),
+            'total' => $total,
+        ];
+    }
+
     /**
      * Get issues for a series — incremental-page edition.
      *
@@ -1579,7 +2148,7 @@ class ComicDataService {
         $per_page     = 10;
         $api_size     = 100; // Metron page_size
     
-        // ── Series metadata ───────────────────────────────────────────────
+        /* ── Series metadata ─────────────────────────────────────────────── */
         $series_key = "metron:series:{$title_id}";
 
         $series     = get_transient( $series_key );
@@ -1623,16 +2192,16 @@ class ComicDataService {
 
         }
     
-        // ── Backward compat: legacy v5 full-list cache ────────────────────
+        /* ── Backward compat: legacy v5 full-list cache ──────────────────── */
         $full_key  = "metron:issue_list_full:{$title_id}:v5";
         $full_data = get_transient( $full_key );
         $use_new   = ( $full_data === false || ! isset( $full_data['results'] ) || ! is_array( $full_data['results'] ) );
     
-        $combined = [];  // api_page => results[]  (new mode only)
+        $combined = [];  /* api_page => results[]  (new mode only) */
         $total    = 0;
     
         if ( $use_new ) {
-            // display pages 1-10 → api page 1, 11-20 → 2, etc.
+            /* display pages 1-10 → api page 1, 11-20 → 2, etc.*/
             $api_pg_needed = max( 1, (int) ceil( $current_page * $per_page / $api_size ) );
     
             $total_key = "metron:issue_total:{$title_id}";
@@ -1649,66 +2218,196 @@ class ComicDataService {
              */
             $current_ap = $api_pg_needed;
     
-            $current_key  = "metron:issue_page:{$title_id}:{$current_ap}";
-            $current_data = get_transient( $current_key );
-    
-            if ( $current_data === false ) {
-                $url = $this->client->api_base . "series/{$title_id}/issue_list/?page={$current_ap}&page_size={$api_size}";
-                $current_resp = $this->client->api_get( $url );
+            $current_key = $this->issue_page_cache_key(
+                $title_id,
+                $current_ap
+            );
+            
+            $current_data = get_transient(
+                $current_key
+            );
+            
+            if ($current_data === false) {
 
-                if (
-                    !is_array($current_resp) ||
-                    isset($current_resp['error'])
-                ) {
-                    return [
-                        'error' => is_array($current_resp)
-                            ? ($current_resp['error'] ?? 'Temporary Metron error')
-                            : 'Invalid Metron response',
-                
-                        'temporary_error' => !is_array($current_resp) ||
-                            !empty($current_resp['temporary_error']),
-                
-                        'retry_after' => is_array($current_resp)
-                            ? max(1, (int) ($current_resp['retry_after'] ?? 2))
-                            : 2,
-                    ];
-                }
-    
-                if ( ! empty( $current_resp['results'] ) && is_array( $current_resp['results'] ) ) {
-                    $current_data = $current_resp['results'];
-    
-                    set_transient( $current_key, $current_data, 30 * DAY_IN_SECONDS );
-    
-                    if ( ! empty( $current_resp['count'] ) ) {
-                        $total = (int) $current_resp['count'];
-                        set_transient( $total_key, $total, 30 * DAY_IN_SECONDS );
-                    }
+                $stale_page = $this->get_stale_issue_page(
+                    $title_id,
+                    $current_ap
+                );
+            
+                if ($stale_page !== null) {
+                    /*
+                     * Return the stale snapshot immediately instead of
+                     * making the visitor wait for Metron.
+                     */
+                    $current_data = $stale_page['results'];
+            
+                    $total = max(
+                        0,
+                        (int) $stale_page['total']
+                    );
+            
+                    /*
+                     * Give the stale result a short fresh-cache lifetime so
+                     * simultaneous visitors do not all schedule refreshes.
+                     */
+                    set_transient(
+                        $current_key,
+                        $current_data,
+                        10 * MINUTE_IN_SECONDS
+                    );
+            
+                    $this->schedule_issue_page_refresh(
+                        $title_id,
+                        $current_ap,
+                        5
+                    );
                 } else {
-                    $current_data = [];
-                    set_transient( $current_key, [], 30 * DAY_IN_SECONDS );
+
+                    $url = $this->client->api_base .
+                    "series/{$title_id}/issue_list/" .
+                    "?page={$current_ap}" .
+                    "&page_size={$api_size}";
+            
+                    $current_resp =
+                        $this->client->api_get($url);
+            
+                    if (
+                        !is_array($current_resp) ||
+                        isset($current_resp['error'])
+                    ) {
+                        return [
+                            'error' => is_array($current_resp)
+                                ? (
+                                    $current_resp['error']
+                                    ?? 'Temporary Metron error'
+                                )
+                                : 'Invalid Metron response',
+            
+                            'temporary_error' =>
+                                !is_array($current_resp) ||
+                                !empty(
+                                    $current_resp['temporary_error']
+                                ),
+            
+                            'retry_after' => is_array($current_resp)
+                                ? max(
+                                    1,
+                                    (int) (
+                                        $current_resp['retry_after']
+                                        ?? 2
+                                    )
+                                )
+                                : 2,
+                        ];
+                    }
+            
+                    $current_data =
+                        isset($current_resp['results']) &&
+                        is_array($current_resp['results'])
+                            ? $current_resp['results']
+                            : [];
+            
+                    $response_total = max(
+                        0,
+                        (int) ($current_resp['count'] ?? 0)
+                    );
+            
+                    $total = $response_total;
+            
+                    /*
+                    * Save successful responses, including a confirmed empty
+                    * result. Temporary errors were returned above and therefore
+                    * never replace the stale snapshot.
+                    */
+                    $this->save_issue_page_cache(
+                        $title_id,
+                        $current_ap,
+                        $current_data,
+                        $response_total
+                    );
                 }
             }
     
             if ( ! empty( $current_data ) ) {
-                $combined[ $current_ap ] = $current_data;
+                    $combined[ $current_ap ] = $current_data;
             }
     
             $all = $combined ? array_merge( ...array_values( $combined ) ) : [];
+
+            /*
+            * Prewarm the next Metron issue API page when the user
+            * approaches the end of the current 100-issue block.
+            */
+            $display_pages_per_api_page = max(
+                1,
+                (int) floor(
+                    $api_size / $per_page
+                )
+            );
+
+            $position_in_api_page = (
+                ($current_page - 1) %
+                $display_pages_per_api_page
+            ) + 1;
+
+            $next_api_page_exists =
+                $total >
+                ($current_ap * $api_size);
+
+            $should_prewarm_next =
+                trim((string) $search) === '' &&
+                $next_api_page_exists &&
+                $position_in_api_page >=
+                    ($display_pages_per_api_page - 2);
+
+            if ($should_prewarm_next) {
+                $next_api_page = $current_ap + 1;
+
+                $next_fresh_key =
+                    $this->issue_page_cache_key(
+                        $title_id,
+                        $next_api_page
+                    );
+
+                $next_fresh = get_transient(
+                    $next_fresh_key
+                );
+
+                $next_stale =
+                    $this->get_stale_issue_page(
+                        $title_id,
+                        $next_api_page
+                    );
+
+                /*
+                * Only prewarm a completely cold page. If a stale
+                * snapshot exists, it can already be shown immediately.
+                */
+                if (
+                    $next_fresh === false &&
+                    $next_stale === null
+                ) {
+                    $this->schedule_issue_page_refresh(
+                        $title_id,
+                        $next_api_page,
+                        wp_rand(8, 15)
+                    );
+                }
+            }
     
         } else {
-            // Legacy complete cache
-            $all   = $full_data['results'];
-            $total = count( $all );
-        }
-    
-        // ── Sort by issue number ──────────────────────────────────────────
+                /* Legacy complete cache */
+                $all   = $full_data['results'];
+                $total = count( $all );
+        }    
+ 
         usort( $all, function( $a, $b ) {
             $nA = is_numeric( trim( (string)( $a['number'] ?? '' ) ) ) ? (float) $a['number'] : INF;
             $nB = is_numeric( trim( (string)( $b['number'] ?? '' ) ) ) ? (float) $b['number'] : INF;
             return $nA !== $nB ? ( $nA <=> $nB ) : ( (int)( $a['id'] ?? 0 ) ) <=> ( (int)( $b['id'] ?? 0 ) );
         } );
     
-        // ── Search filter ─────────────────────────────────────────────────
+
         if ( $search ) {
             $s   = strtolower( trim( $search ) );
             $all = array_values( array_filter( $all, fn( $i ) =>
@@ -1717,9 +2416,8 @@ class ComicDataService {
                 stripos( $i['cover_date'] ?? '', $s ) !== false
             ) );
             $total = count( $all );
-        }
-    
-        // ── Slice for the requested display page ──────────────────────────
+        }    
+
         if ( $use_new && ! $search ) {
             $min_api_page    = $combined ? min( array_keys( $combined ) ) : $api_pg_needed;
             $assembled_start = ( $min_api_page - 1 ) * $api_size;
