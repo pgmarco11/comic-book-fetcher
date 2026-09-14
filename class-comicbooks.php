@@ -313,11 +313,27 @@ class Comicbooks {
             )
         );
     
+        /*
+        * Render already-cached Comic Vine covers immediately.
+        *
+        * Do not make Metron or Comic Vine requests while the browser waits
+        * for the issue list.
+        */
         $cv_info_batch = !empty($issues_needing_cv)
-            ? $this->data_service->get_cv_info_batch(
+            ? $this->data_service->get_cached_cv_info_batch(
                 $issues_needing_cv
             )
             : [];
+
+        /*
+        * Queue every uncached issue in one operation rather than calling
+        * the queue separately for every issue card.
+        */
+        if (!empty($issues_needing_cv)) {
+            comicbooks_queue_cv_issue_enrichment(
+                $issues_needing_cv
+            );
+        }
     
         if (is_user_logged_in()) {
             $collection_status =

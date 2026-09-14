@@ -1063,6 +1063,67 @@ class ComicDataService {
     }
 
     /**
+     * Return only already-cached Comic Vine information.
+     *
+     * This method never calls Metron or Comic Vine, so it is safe to use
+     * during the browser's issue-list request.
+     */
+    public function get_cached_cv_info_batch(array $issues): array
+    {
+        $cv_info_batch = [];
+
+        foreach ($issues as $issue) {
+            $metron_id = absint($issue['id'] ?? 0);
+
+            if (!$metron_id) {
+                continue;
+            }
+
+            $cv_id = absint($issue['cv_id'] ?? 0);
+
+            /*
+            * If the issue-list response does not contain a Comic Vine ID,
+            * check the previously resolved mapping.
+            */
+            if (!$cv_id) {
+                $mapping = get_transient(
+                    "metron:issue_cv_id:{$metron_id}"
+                );
+
+                if ($mapping !== false) {
+                    $cv_id = is_array($mapping)
+                        ? absint($mapping['cv_id'] ?? 0)
+                        : absint($mapping);
+                }
+            }
+
+            $comic_vine_image = '';
+
+            /*
+            * Read only the existing image cache. Do not contact Comic Vine
+            * during the AJAX request.
+            */
+            if ($cv_id) {
+                $cached_image = get_transient(
+                    "cv_issue_image_{$cv_id}"
+                );
+
+                if (is_string($cached_image)) {
+                    $comic_vine_image = $cached_image;
+                }
+            }
+
+            $cv_info_batch[$metron_id] = [
+                'cv_id'            => $cv_id ?: null,
+                'comic_vine_image' => $comic_vine_image,
+                'metron_image'     => $issue['image'] ?? '',
+            ];
+        }
+
+        return $cv_info_batch;
+    }
+
+    /**
      * Build Comic Vine information for a page of Metron issues.
      *
      * Comic Vine images are retrieved in one batch after resolving all
