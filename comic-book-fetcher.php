@@ -460,6 +460,73 @@ add_action(
     4
 );
 
+function comicbooks_continue_series_scan(
+    $publisher_id,
+    $attempt = 0
+) {
+    $publisher_id = absint($publisher_id);
+    $attempt      = max(0, absint($attempt));
+
+    if (!$publisher_id) {
+        return;
+    }
+
+    $service = new ComicDataService(
+        new MetronClient()
+    );
+
+    $result = $service->continue_series_scan(
+        $publisher_id
+    );
+
+    if (!empty($result['complete'])) {
+        return;
+    }
+
+    if (
+        !empty($result['temporary']) &&
+        $attempt >= 4
+    ) {
+        return;
+    }
+
+    $next_attempt = !empty($result['temporary'])
+        ? $attempt + 1
+        : 0;
+
+    $delay = !empty($result['temporary'])
+        ? comicbooks_background_retry_delay(
+            $attempt,
+            absint($result['retry_after'] ?? 5)
+        )
+        : 5;
+
+        $args = [
+            $publisher_id,
+            $next_attempt,
+        ];
+        
+        if (
+            !wp_next_scheduled(
+                'comicbooks_continue_series_scan',
+                $args
+            )
+        ) {
+            wp_schedule_single_event(
+                time() + $delay,
+                'comicbooks_continue_series_scan',
+                $args
+            );
+        }
+}
+
+add_action(
+    'comicbooks_continue_series_scan',
+    'comicbooks_continue_series_scan',
+    10,
+    2
+);
+
 function render_api_settings_page() {
     // Save API credentials
     if (isset($_POST['submit']) && check_admin_referer('save_api_settings')) {

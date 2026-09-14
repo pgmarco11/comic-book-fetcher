@@ -1300,7 +1300,7 @@ jQuery(document).ready(function($){
                                     letter,
                                     retries
                                 );
-                            }, 250);
+                            }, 1000);
                         
                             return;
                         }
