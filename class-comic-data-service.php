@@ -124,23 +124,29 @@ class ComicDataService {
             return;
         }
     
-        $args = [
-            $publisher_id,
-            0,
-        ];
-    
-        if (
-            !wp_next_scheduled(
-                'comicbooks_continue_series_scan',
-                $args
-            )
-        ) {
-            wp_schedule_single_event(
-                time() + $delay,
-                'comicbooks_continue_series_scan',
-                $args
-            );
+        /*
+         * Do not schedule another worker when any retry attempt
+         * already exists for this publisher.
+         */
+        for ($attempt = 0; $attempt <= 4; $attempt++) {
+            if (
+                wp_next_scheduled(
+                    'comicbooks_continue_series_scan',
+                    [$publisher_id, $attempt]
+                )
+            ) {
+                return;
+            }
         }
+    
+        wp_schedule_single_event(
+            time() + $delay,
+            'comicbooks_continue_series_scan',
+            [
+                $publisher_id,
+                0,
+            ]
+        );
     }
     
     private static function schedule_publisher_refresh($delay = 5): void {

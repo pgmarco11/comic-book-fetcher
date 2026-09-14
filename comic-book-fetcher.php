@@ -494,12 +494,12 @@ function comicbooks_continue_series_scan(
         ? $attempt + 1
         : 0;
 
-    $delay = !empty($result['temporary'])
+        $delay = !empty($result['temporary'])
         ? comicbooks_background_retry_delay(
             $attempt,
             absint($result['retry_after'] ?? 5)
         )
-        : 5;
+        : 4;
 
         $args = [
             $publisher_id,
