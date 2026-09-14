@@ -302,6 +302,58 @@ add_action(
 );
 
 /**
+ * Determine whether background enrichment produced a confirmed result.
+ *
+ * A confirmed result is either:
+ * - Metron confirmed that no Comic Vine mapping exists, or
+ * - A Comic Vine ID and its image result are cached.
+ *
+ * Temporary API failures leave one of these caches missing.
+ */
+function comicbooks_issue_cv_enrichment_complete(
+    array $issue
+): bool {
+    $metron_id = absint($issue['id'] ?? 0);
+
+    if (!$metron_id) {
+        return true;
+    }
+
+    $mapping = get_transient(
+        "metron:issue_cv_id:{$metron_id}"
+    );
+
+    /*
+     * No mapping cache means the Metron lookup failed temporarily
+     * or was never completed.
+     */
+    if ($mapping === false) {
+        return false;
+    }
+
+    $cv_id = is_array($mapping)
+        ? absint($mapping['cv_id'] ?? 0)
+        : absint($mapping);
+
+    /*
+     * A cached null mapping is a confirmed "no Comic Vine ID"
+     * result and therefore counts as complete.
+     */
+    if (!$cv_id) {
+        return true;
+    }
+
+    /*
+     * An empty-string transient is a confirmed missing image.
+     * A false result means Comic Vine failed temporarily or has
+     * not been contacted successfully.
+     */
+    return get_transient(
+        "cv_issue_image_{$cv_id}"
+    ) !== false;
+}
+
+/**
  * Process one queued issue per WP-Cron request.
  */
 function comicbooks_process_cv_issue_enrichment_queue(): void
@@ -364,27 +416,59 @@ function comicbooks_process_cv_issue_enrichment_queue(): void
         return;
     }
 
+    $enrichment_complete = false;
+
     try {
         $service = new ComicDataService(
             new MetronClient()
         );
-
-        /*
-         * The existing method resolves the Metron-to-Comic-Vine
-         * mapping and populates the Comic Vine image transient.
-         */
+    
         $service->get_cv_info_batch([$issue]);
+    
+        /*
+         * get_cv_info_batch() may return normally after a temporary
+         * upstream failure, so verify the resulting caches.
+         */
+        $enrichment_complete =
+            comicbooks_issue_cv_enrichment_complete($issue);
+    
     } catch (Throwable $error) {
         error_log(
             'Comic Vine issue enrichment: ' .
             $error->getMessage()
         );
-
-        /*
-         * Put the claimed issue back into the queue on failure.
-         */
-        comicbooks_queue_cv_issue_enrichment(
-            [$issue]
+    }
+    
+    /*
+     * Requeue temporary failures after a delay.
+     *
+     * Do not immediately call the queue function because that would
+     * schedule another worker within approximately two seconds and
+     * could repeatedly hit an unavailable API.
+     */
+    if (!$enrichment_complete) {
+        $retry_args = [
+            [$issue],
+            1,
+        ];
+    
+        if (
+            !wp_next_scheduled(
+                'comicbooks_retry_cv_issue_enrichment_queue',
+                $retry_args
+            )
+        ) {
+            wp_schedule_single_event(
+                time() + 30,
+                'comicbooks_retry_cv_issue_enrichment_queue',
+                $retry_args
+            );
+        }
+    
+        error_log(
+            'Comic Vine issue enrichment incomplete; ' .
+            'scheduled retry for Metron issue ' .
+            absint($issue['id'] ?? 0)
         );
     }
 
