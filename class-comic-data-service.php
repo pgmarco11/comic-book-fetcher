@@ -1,0 +1,3856 @@
+<?php
+/**
+ * ComicDataService – central data layer for Metron & Comic Vine.
+ *
+ * All public methods are cache-aware, rate-limit safe and return
+ * consistent arrays.  Use via ComicRenderer (or any other class).
+ *
+ * @package ComicBooksFetcher
+ * @since   1.0.0
+ */
+class ComicDataService {
+
+    /** @var MetronClient */
+    protected $client;
+
+    /** Default TTL for cached API responses (2 weeks) */
+    const DEFAULT_DATASET_TTL = 1209600; // 14 days in seconds
+
+    public function __construct( MetronClient $client ) {
+        $this->client = $client;
+    }
+
+    public function get_client() {
+        return $this->client;
+    }
+    
+    /**-----------------------------------------------------------------
+     *  SAFE TTL GETTER (fixes undefined property)
+     * ----------------------------------------------------------------- */
+    private function get_dataset_ttl() {
+        return isset( $this->client->dataset_ttl )
+            ? (int) $this->client->dataset_ttl
+            : self::DEFAULT_DATASET_TTL;
+    }   
+
+    
+    
+    public function with_cached_catalog_details(array $items, string $type): array
+        {
+            foreach ($items as &$item) {
+                if ($type === 'publishers') {
+                    $item['publisher_loaded'] = false;
+
+                    $id = absint($item['id'] ?? 0);
+                    $info = $id
+                        ? get_transient("metron_publisher_{$id}")
+                        : false;
+
+                    if (is_array($info) && !empty($info['name'])) {
+                        $item['image'] = esc_url_raw(
+                            (string) ($info['image'] ?? '')
+                        );
+                        $item['founded'] = (string) ($info['founded'] ?? '');
+                        $item['desc'] = $this->normalize_publisher_description(
+                            $info['desc'] ?? ''
+                        );
+                        $item['publisher_loaded'] = true;
+                    }
+                } elseif ($type === 'books') {
+                    $item['image'] = esc_url_raw(
+                        (string) ($item['image'] ?? '')
+                    );
+                    $item['image_resolved'] = $item['image'] !== '';
+
+                    // Prefer the image already supplied by Metron.
+                    if ($item['image_resolved']) {
+                        continue;
+                    }
+
+                    $id = absint($item['series_id'] ?? 0);
+                    $result = $id
+                    ? $this->get_cached_series_cover_result($id)
+                    : null;
+                
+                    if (($result['status'] ?? '') === 'found') {
+                        $item['image'] = $result['url'];
+                        $item['image_resolved'] = true;
+                    } elseif (($result['status'] ?? '') === 'missing') {
+                        $item['image_resolved'] = true;
+                    }
+                }
+            }
+            unset($item);
+
+        return $items;
+    }
+
+    private const PUBLISHER_SNAPSHOT = 'comicbooks_publishers_snapshot_v1';
+    private const PUBLISHER_JOB = 'comicbooks_publishers_job_v1';
+    private const PUBLISHER_HOOK = 'comicbooks_refresh_publisher_list';
+    private const PUBLISHER_LOCK = 'publisher-list-refresh';
+    private const PUBLISHER_FRESH_SECONDS = 14 * DAY_IN_SECONDS;
+    
+    private static function publisher_option($key) {
+        // Re-read these non-autoloaded options after acquiring the lock.
+        wp_cache_delete($key, 'options');
+        wp_cache_delete('notoptions', 'options');
+    
+        return get_option($key, false);
+    }
+    
+    private static function save_publisher_option(
+        $key,
+        array $value
+    ): void {
+        if (
+            !update_option($key, $value, false) &&
+            self::publisher_option($key) !== $value
+        ) {
+            throw new RuntimeException(
+                'Could not save publisher refresh progress.'
+            );
+        }
+    }
+
+    private function schedule_series_scan(
+        int $publisher_id,
+        int $delay = 1
+    ): void {
+        $publisher_id = absint($publisher_id);
+        $delay        = max(1, absint($delay));
+    
+        if (!$publisher_id) {
+            return;
+        }
+    
+        $args = [
+            $publisher_id,
+            0,
+        ];
+    
+        if (
+            !wp_next_scheduled(
+                'comicbooks_continue_series_scan',
+                $args
+            )
+        ) {
+            wp_schedule_single_event(
+                time() + $delay,
+                'comicbooks_continue_series_scan',
+                $args
+            );
+        }
+    }
+    
+    private static function schedule_publisher_refresh($delay = 5): void {
+        $when = time() + max(1, (int) $delay);
+        $existing = wp_next_scheduled(self::PUBLISHER_HOOK);
+    
+        if ($existing && $existing <= $when) {
+            return;
+        }
+    
+        if ($existing) {
+            wp_unschedule_event(
+                $existing,
+                self::PUBLISHER_HOOK
+            );
+        }
+    
+        wp_schedule_single_event(
+            $when,
+            self::PUBLISHER_HOOK
+        );
+    }
+
+    public function continue_series_scan(
+        int $publisher_id
+    ): array {
+        $publisher_id = absint($publisher_id);
+    
+        if (!$publisher_id) {
+            return [
+                'complete'  => true,
+                'temporary' => false,
+            ];
+        }
+    
+        $progress_key =
+            "metron:series_scan_progress:v1:{$publisher_id}";
+    
+        $progress = get_transient($progress_key);
+    
+        if (!is_array($progress)) {
+            $progress = [
+                'next_api_page' => 1,
+                'exhausted'     => false,
+                'raw_items'     => [],
+            ];
+        }
+    
+        if (!empty($progress['exhausted'])) {
+            return [
+                'complete'  => true,
+                'temporary' => false,
+            ];
+        }
+    
+        if (!$this->acquire_scan_lock($publisher_id)) {
+            return [
+                'complete'    => false,
+                'temporary'   => true,
+                'retry_after' => 3,
+            ];
+        }
+    
+        try {
+            $page_data = $this->get_series_api_page(
+                $publisher_id,
+                max(1, absint($progress['next_api_page'])),
+                100,
+                false,
+                false,
+                1
+            );
+    
+            if (!empty($page_data['temporary_error'])) {
+                return [
+                    'complete'    => false,
+                    'temporary'   => true,
+                    'retry_after' => max(
+                        5,
+                        absint($page_data['retry_after'] ?? 10)
+                    ),
+                ];
+            }
+    
+            $new_items = isset($page_data['items'])
+                && is_array($page_data['items'])
+                    ? $page_data['items']
+                    : [];
+    
+            if (!$new_items) {
+                $progress['exhausted'] = true;
+            } else {
+                $existing_ids = [];
+    
+                foreach ($progress['raw_items'] as $item) {
+                    $item_id = absint($item['series_id'] ?? 0);
+    
+                    if ($item_id) {
+                        $existing_ids[$item_id] = true;
+                    }
+                }
+    
+                foreach ($new_items as $item) {
+                    $item_id = absint($item['series_id'] ?? 0);
+    
+                    if (
+                        $item_id &&
+                        empty($existing_ids[$item_id])
+                    ) {
+                        $progress['raw_items'][] = $item;
+                        $existing_ids[$item_id] = true;
+                    }
+                }
+    
+                $progress['next_api_page']++;
+    
+                if (empty($page_data['has_next'])) {
+                    $progress['exhausted'] = true;
+                }
+            }
+    
+            set_transient(
+                $progress_key,
+                $progress,
+                30 * DAY_IN_SECONDS
+            );
+    
+            return [
+                'complete'  => !empty($progress['exhausted']),
+                'temporary' => false,
+            ];
+        } finally {
+            $this->release_scan_lock($publisher_id);
+        }
+    }
+    
+    private static function empty_publisher_job(): array {
+        return [
+            'started_at' => time(),
+            'page' => 1,
+            'items' => [],
+            'failures' => 0,
+            'retry_at' => 0,
+        ];
+    }
+    
+    private static function queue_publisher_refresh($force = false): void {
+        if (!MetronClient::acquire_lock(self::PUBLISHER_LOCK)) {
+            return;
+        }
+    
+        try {
+            $snapshot = self::publisher_option(
+                self::PUBLISHER_SNAPSHOT
+            );
+    
+            $job = self::publisher_option(
+                self::PUBLISHER_JOB
+            );
+    
+            if (!is_array($job)) {
+                if (
+                    !$force &&
+                    is_array($snapshot) &&
+                    is_array($snapshot['items'] ?? null) &&
+                    (int) ($snapshot['updated_at'] ?? 0) +
+                        self::PUBLISHER_FRESH_SECONDS > time()
+                ) {
+                    return;
+                }
+    
+                $job = self::empty_publisher_job();
+    
+                self::save_publisher_option(
+                    self::PUBLISHER_JOB,
+                    $job
+                );
+            }
+    
+            self::schedule_publisher_refresh(
+                max(
+                    5,
+                    (int) ($job['retry_at'] ?? 0) - time()
+                )
+            );
+        } catch (RuntimeException $error) {
+            error_log(
+                'Publisher refresh: ' . $error->getMessage()
+            );
+        } finally {
+            MetronClient::release_lock(self::PUBLISHER_LOCK);
+        }
+    }
+    
+    public function get_publishers(
+        $name = '',
+        $page = 1,
+        $per_page = 50,
+        $letter = 'all',
+        $bypass_cache = false
+    ) {
+        $page = max(1, (int) $page);
+        $per_page = max(1, (int) $per_page);
+    
+        $snapshot = get_option(
+            self::PUBLISHER_SNAPSHOT,
+            false
+        );
+    
+        // Preserve an existing usable cache when installing this change.
+        if (
+            !is_array($snapshot) ||
+            !is_array($snapshot['items'] ?? null)
+        ) {
+            $legacy = get_transient(
+                'metron:publishers:full:v2'
+            );
+    
+            if (is_array($legacy)) {
+                $snapshot = [
+                    'items' => $legacy,
+                    'updated_at' => 0,
+                ];
+    
+                // Cannot overwrite another worker's completed snapshot.
+                add_option(
+                    self::PUBLISHER_SNAPSHOT,
+                    $snapshot,
+                    '',
+                    false
+                );
+            }
+        }
+    
+        $ready = is_array($snapshot) &&
+            is_array($snapshot['items'] ?? null);
+    
+        $stale = !$ready ||
+            (int) ($snapshot['updated_at'] ?? 0) +
+                self::PUBLISHER_FRESH_SECONDS <= time();
+    
+        if ($bypass_cache || $stale) {
+            // Scheduling only: this method makes no external HTTP calls.
+            self::queue_publisher_refresh(
+                (bool) $bypass_cache
+            );
+        }
+    
+        $full = $ready ? $snapshot['items'] : [];
+    
+        if ($letter !== 'all') {
+            $full = array_filter(
+                $full,
+                static function ($publisher) use ($letter) {
+                    $first = strtoupper(
+                        substr($publisher['name'], 0, 1)
+                    );
+    
+                    return $letter === '#'
+                        ? !ctype_alpha($first)
+                        : $first === strtoupper($letter);
+                }
+            );
+        }
+    
+        if ($name !== '') {
+            $full = array_filter(
+                $full,
+                static function ($publisher) use ($name) {
+                    return stripos(
+                        $publisher['name'],
+                        $name
+                    ) !== false;
+                }
+            );
+        }
+    
+        $full = array_values($full);
+    
+        return [
+            'items' => array_slice(
+                $full,
+                ($page - 1) * $per_page,
+                $per_page
+            ),
+            'total' => count($full),
+            'has_next' => $page * $per_page < count($full),
+            'page' => $page,
+            'per_page' => $per_page,
+            'ready' => $ready,
+            'stale' => $ready && $stale,
+            'retry_after' => 5,
+        ];
+    }
+    
+    public function refresh_publishers_batch(): void {
+        if (!MetronClient::acquire_lock(self::PUBLISHER_LOCK)) {
+            return;
+        }
+    
+        $job = null;
+    
+        try {
+            $job = self::publisher_option(
+                self::PUBLISHER_JOB
+            );
+    
+            if (!is_array($job)) {
+                return;
+            }
+    
+            if ((int) ($job['retry_at'] ?? 0) > time()) {
+                self::schedule_publisher_refresh(
+                    $job['retry_at'] - time()
+                );
+                return;
+            }
+    
+            // Restart very old unfinished builds while retaining the
+            // last successfully published snapshot.
+            if (
+                (int) ($job['started_at'] ?? 0) <
+                time() - DAY_IN_SECONDS
+            ) {
+                $job = self::empty_publisher_job();
+    
+                self::save_publisher_option(
+                    self::PUBLISHER_JOB,
+                    $job
+                );
+            }
+    
+            // Recovery event if this PHP process exits unexpectedly.
+            self::schedule_publisher_refresh(60);
+    
+            if (MetronClient::remaining_seconds() < 2.0) {
+                self::schedule_publisher_refresh(10);
+                return;
+            }
+    
+            $api_page = max(1, (int) $job['page']);
+    
+            // One page, at most one HTTP attempt per worker invocation.
+            // Existing Metron response caches remain usable.
+            $response = $this->client->api_get(
+                $this->client->api_base .
+                    "publisher/?page={$api_page}&page_size=100",
+                1
+            );
+    
+            if (
+                !is_array($response) ||
+                isset($response['error']) ||
+                !is_array($response['results'] ?? null) ||
+                !array_key_exists('next', $response)
+            ) {
+                throw new ComicApiTemporaryException(
+                    'Publisher page could not be loaded.',
+                    is_array($response)
+                        ? ($response['retry_after'] ?? 30)
+                        : 30
+                );
+            }
+    
+            if (
+                !empty($response['next']) &&
+                !$response['results']
+            ) {
+                throw new ComicApiTemporaryException(
+                    'Publisher pagination returned an incomplete page.',
+                    60
+                );
+            }
+    
+            $items = $job['items'];
+    
+            foreach ($response['results'] as $publisher) {
+                if (
+                    !is_array($publisher) ||
+                    empty($publisher['id']) ||
+                    empty($publisher['name'])
+                ) {
+                    throw new ComicApiTemporaryException(
+                        'Publisher page contained an invalid entry.',
+                        60
+                    );
+                }
+    
+                $id = (int) $publisher['id'];
+    
+                // Index by ID to avoid duplicates across API pages.
+                $items[$id] = [
+                    'id' => $id,
+                    'name' => (string) $publisher['name'],
+                ];
+            }
+    
+            if (!empty($response['next'])) {
+                $job['items'] = $items;
+                $job['page'] = $api_page + 1;
+                $job['failures'] = 0;
+                $job['retry_at'] = 0;
+    
+                self::save_publisher_option(
+                    self::PUBLISHER_JOB,
+                    $job
+                );
+    
+                self::schedule_publisher_refresh(5);
+                return;
+            }
+    
+            // Replace the public snapshot only after every page succeeds.
+            $snapshot = [
+                'items' => array_values($items),
+                'updated_at' => time(),
+            ];
+    
+            self::save_publisher_option(
+                self::PUBLISHER_SNAPSHOT,
+                $snapshot
+            );
+    
+            // Maintain the existing transient for compatibility.
+            set_transient(
+                'metron:publishers:full:v2',
+                $snapshot['items'],
+                self::PUBLISHER_FRESH_SECONDS
+            );
+    
+            delete_option(self::PUBLISHER_JOB);
+        } catch (RuntimeException $error) {
+            if (is_array($job)) {
+                $failures = min(
+                    7,
+                    (int) ($job['failures'] ?? 0) + 1
+                );
+    
+                $delay = min(
+                    3600,
+                    30 * (2 ** ($failures - 1))
+                );
+    
+                if ($error instanceof ComicApiTemporaryException) {
+                    $delay = max(
+                        $delay,
+                        $error->retry_after
+                    );
+                }
+    
+                $job['failures'] = $failures;
+                $job['retry_at'] = time() + $delay;
+    
+                // A failed save leaves the previous checkpoint intact.
+                update_option(
+                    self::PUBLISHER_JOB,
+                    $job,
+                    false
+                );
+    
+                self::schedule_publisher_refresh($delay);
+            }
+    
+            error_log(
+                'Publisher refresh: ' . $error->getMessage()
+            );
+        } finally {
+            MetronClient::release_lock(self::PUBLISHER_LOCK);
+        }
+    }
+
+    /* -----------------------------------------------------------------
+    *  PUBLISHER INFO (single record)
+    * ----------------------------------------------------------------- */
+    public function get_publisher_info( $publisher_id ) {
+
+        $key    = "metron_publisher_$publisher_id";
+        $cached = get_transient( $key );
+
+        if ( $cached !== false ) {
+            return $cached;
+        }
+
+        // -----------------------------
+        // METRON PRIMARY SOURCE
+        // -----------------------------
+        $url  = $this->client->api_base . "publisher/$publisher_id/";
+        $data = $this->client->api_get( $url ); 
+
+        if ( ! is_array( $data ) || empty( $data['name'] ) ) {
+            return [];
+        }
+
+        $info = [
+            'id'      => $data['id'] ?? $publisher_id,
+            'name'    => $data['name'] ?? '',
+            'image'   => $data['image'] ?? '',
+            'desc'    => $data['desc'] ?? '',
+            'founded' => $data['founded'] ?? '',
+            'cv_id'   => $data['cv_id'] ?? '',
+        ];
+
+        // -----------------------------
+        // COMIC VINE FALLBACK
+        // Only if important fields missing
+        // -----------------------------
+        $needs_fallback =
+            empty( $info['image'] ) ||
+            empty( $info['desc'] ) ||
+            empty( $info['founded'] );
+
+            if ( $needs_fallback && ! empty( $info['cv_id'] ) ) {
+
+                $cv_data = $this->get_comicvine_publisher_info( $info['cv_id'] );
+            
+                if ( ! empty( $cv_data ) ) {
+                    if ( empty( $info['image'] ) && ! empty( $cv_data['image'] ) ) {
+                        $info['image'] = $cv_data['image'];
+                    }
+            
+                    if ( empty( $info['desc'] ) && ! empty( $cv_data['desc'] ) ) {
+                        $info['desc'] = $cv_data['desc'];
+                    }
+            
+                    if ( empty( $info['founded'] ) && ! empty( $cv_data['founded'] ) ) {
+                        $info['founded'] = $cv_data['founded'];
+                    }
+                }
+            }
+
+        // Final image fallback
+        $info['image'] = ! empty( $info['image'] )
+            ? $info['image']
+            : PUBLISHER_PLACEHOLDER_IMAGE_URL;
+
+        if ( empty( $info['founded'] ) ) {
+            $info['founded'] = 'Unknown';
+        }
+            
+        if ( empty( $info['desc'] ) ) {
+            $info['desc'] = 'No description available.';
+        }
+
+        set_transient( $key, $info, WEEK_IN_SECONDS );
+
+        return $info;
+    }
+
+    /**
+     * Shared Comic Vine GET request — handles key retrieval, headers,
+     * and JSON decoding once instead of in every CV method.
+     */
+    private function cv_api_get( string $endpoint, array $query_args = [] ): ?array {
+        $cv_key = get_option( 'comic_vine_api_key', '' );
+
+        if ( empty( $cv_key ) ) {       
+            return null;
+        }
+
+        $url = add_query_arg(
+            array_merge( [ 'api_key' => $cv_key, 'format' => 'json' ], $query_args ),
+            $endpoint
+        );
+
+        $res = $this->client->http_get(
+            $url,
+            [
+                'timeout' => 30,
+                'headers' => [
+                    'User-Agent' => 'ComicBookFetcher/1.1 (+' . get_site_url() . ')',
+                ],
+            ]
+        );
+
+        if ( is_wp_error( $res ) ) {
+            error_log( 'Comic Vine request failed (' . $endpoint . '): ' . $res->get_error_message() );
+            return null;
+        }
+
+        $body = json_decode( wp_remote_retrieve_body( $res ), true );
+
+        if ( json_last_error() !== JSON_ERROR_NONE ) {
+            error_log( 'Comic Vine JSON decode failed (' . $endpoint . '): ' . json_last_error_msg() );
+            return null;
+        }
+
+        return $body;
+    }
+
+        /**
+     * Given [series_id => cv_volume_id], return [series_id => image_url]
+     * in a single ComicVine request.
+     */
+    public function get_comicvine_first_issues_batch( array $series_to_cv_id ) {
+    
+        $volume_ids = array_filter( array_values( $series_to_cv_id ) );
+        if ( empty( $volume_ids ) ) {
+            return [];
+        }      
+    
+        $cv_key = get_option( 'comic_vine_api_key', '' );
+        if ( empty( $cv_key ) ) {   
+            return [];
+        }
+    
+        $filter = 'volume:' . implode( '|', array_map( 'absint', $volume_ids ) ) . ',issue_number:1';
+        $url    = add_query_arg(
+            [
+                'api_key'    => $cv_key,
+                'format'     => 'json',
+                'field_list' => 'id,volume,image,issue_number',
+                'filter'     => $filter,
+                'limit'      => 100,
+            ],
+            'https://comicvine.gamespot.com/api/issues/'        );
+    
+    
+        $res = $this->client->http_get(
+            $url,
+            [
+                'timeout' => 30,
+                'headers' => [
+                    'User-Agent' => 'ComicBookFetcher/1.1 (+' . get_site_url() . ')',
+                ],
+            ]
+        );
+    
+        if ( is_wp_error( $res ) ) {
+            error_log( 'CV BATCH: wp_remote_get failed: ' . $res->get_error_message() );
+            return [];
+        }
+    
+        $status = wp_remote_retrieve_response_code( $res );
+        $raw    = wp_remote_retrieve_body( $res );    
+        $body = json_decode( $raw, true );
+    
+        if ( json_last_error() !== JSON_ERROR_NONE ) {
+            error_log('CV BATCH: JSON decode failed: ' . json_last_error_msg());
+            return [];
+        }
+    
+        if ( empty( $body['results'] ) ) {   
+            return [];
+        }
+    
+        $by_volume = [];
+        foreach ( $body['results'] as $issue ) {
+            $vol_id = $issue['volume']['id'] ?? null;
+            $issue_id = (int) ($issue['id'] ?? 0);
+            $img_check = $issue['image'] ?? null;    
+    
+            if ( $vol_id ) {
+                $by_volume[ $vol_id ] = $issue['image']['small_url']
+                    ?? $issue['image']['medium_url']
+                    ?? $issue['image']['original_url']
+                    ?? '';
+            }
+        }  
+
+    
+        $images = [];
+        foreach ( $series_to_cv_id as $sid => $cv_id ) {
+            $images[ $sid ] = $by_volume[ $cv_id ] ?? '';
+            if (empty($images[$sid])) {
+                error_log("CV BATCH: series $sid (cv_id=$cv_id) got NO image from by_volume map");
+            }
+        }
+    
+        return $images;
+    }
+
+    /**
+     * Get Comic Vine volume IDs for Metron series IDs.
+     *
+     * Uses the per-series cv_id cache first. If missing, attempts to recover
+     * the cv_id from cached series metadata, then falls back to the Metron
+     * series endpoint and populates the cache.
+    */
+    public function get_known_cv_ids( array $series_ids ) : array {
+
+        $map = [];
+
+            foreach ( $series_ids as $sid ) {
+
+                $sid = absint( $sid );
+
+                if ( ! $sid ) {
+                    continue;
+                }
+
+                $cv_cache_key   = "metron:series_cvid:{$sid}";
+                $miss_cache_key = "metron:series_cvid_missing:{$sid}";
+                $series_key     = "metron:series:{$sid}";
+
+                /*
+                * 1. Check dedicated CV ID cache.
+                */
+                $cached = get_transient( $cv_cache_key );
+
+                if ( $cached !== false ) {
+                    $map[ $sid ] = (int) $cached;
+
+                    continue;
+                }
+
+                /*
+                * Don't repeatedly hit Metron if we recently confirmed
+                * that this series has no cv_id.
+                */
+                if ( get_transient( $miss_cache_key ) !== false ) {
+
+                    $map[ $sid ] = null;
+
+                    continue;
+                }
+
+                /*
+                * 2. Check cached series metadata.
+                */
+                $series = get_transient( $series_key );
+
+                if (
+                    is_array( $series ) &&
+                    ! empty( $series['cv_id'] )
+                ) {
+
+                    $cv_id = (int) $series['cv_id'];
+
+                    set_transient(
+                        $cv_cache_key,
+                        $cv_id,
+                        YEAR_IN_SECONDS
+                    );
+
+                    $map[ $sid ] = $cv_id;
+
+                    continue;
+                }
+
+                /*
+                * 3. Nothing cached — fetch the series directly from Metron.
+                */
+
+                $url = $this->client->api_base . "series/{$sid}/";
+                $series = $this->client->api_get( $url );
+
+                if (
+                    !is_array($series) ||
+                    isset($series['error'])
+                ) {
+                    $map[$sid] = null;
+                    continue;
+                }
+
+                /*
+                * Keep the complete series metadata too, since other methods
+                * already use this transient.
+                */
+                if ( is_array( $series ) && ! empty( $series['name'] ) ) {
+                    set_transient(
+                        $series_key,
+                        $series,
+                        14 * DAY_IN_SECONDS
+                    );
+                }
+
+                /*
+                * 4. Found a CV ID — cache it.
+                */
+                if ( ! empty( $series['cv_id'] ) ) {
+
+                    $cv_id = (int) $series['cv_id'];
+
+                    set_transient(
+                        $cv_cache_key,
+                        $cv_id,
+                        YEAR_IN_SECONDS
+                    );
+
+                    $map[ $sid ] = $cv_id;
+
+                } else {
+
+                    /*
+                    * 5. Metron genuinely has no CV ID.
+                    *
+                    * Cache that fact briefly so AJAX requests don't repeatedly
+                    * query the same series.
+                    */
+                    set_transient(
+                        $miss_cache_key,
+                        1,
+                        6 * HOUR_IN_SECONDS
+                    );
+
+                    $map[ $sid ] = null;
+
+                }
+            }
+
+            return $map;
+        
+    }
+
+    /**
+     * Retrieve multiple Comic Vine issue images in one API request.
+     *
+     * Returns:
+     * [
+     *     comic_vine_issue_id => image_url
+     * ]
+     */
+    public function get_comicvine_issue_images_batch(array $cv_ids): array
+    {
+        $cv_ids = array_values(
+            array_unique(
+                array_filter(
+                    array_map('absint', $cv_ids)
+                )
+            )
+        );
+
+        if (empty($cv_ids)) {
+            return [];
+        }
+
+        $images    = [];
+        $uncached  = [];
+
+        foreach ($cv_ids as $cv_id) {
+            $cache_key = "cv_issue_image_{$cv_id}";
+            $cached    = get_transient($cache_key);
+
+            if ($cached !== false) {
+                $images[$cv_id] = is_string($cached) ? $cached : '';
+            } else {
+                $uncached[] = $cv_id;
+            }
+        }
+
+        if (empty($uncached)) {
+            return $images;
+        }
+
+        /*
+        * Comic Vine supports a maximum of 100 results per request.
+        * Chunking keeps this safe if the page size increases later.
+        */
+        foreach (array_chunk($uncached, 100) as $chunk) {
+            $body = $this->cv_api_get(
+                'https://comicvine.gamespot.com/api/issues/',
+                [
+                    'filter'     => 'id:' . implode('|', $chunk),
+                    'field_list' => 'id,image',
+                    'limit'      => count($chunk),
+                ]
+            );
+
+            $found = [];
+
+            if ($body === null) {
+                foreach ($chunk as $cv_id) {
+                    $images[$cv_id] = '';
+                }
+            
+                continue;
+            }
+
+            if (!empty($body['results']) && is_array($body['results'])) {
+                foreach ($body['results'] as $result) {
+                    $cv_id = (int) ($result['id'] ?? 0);
+
+                    if (!$cv_id) {
+                        continue;
+                    }
+
+                    $image = $result['image'] ?? [];
+
+                    $image_url =
+                        $image['small_url']
+                        ?? $image['medium_url']
+                        ?? $image['original_url']
+                        ?? '';
+
+                    $found[$cv_id]  = $image_url;
+                    $images[$cv_id] = $image_url;
+
+                    set_transient(
+                        "cv_issue_image_{$cv_id}",
+                        $image_url,
+                        $image_url ? 30 * DAY_IN_SECONDS : 6 * HOUR_IN_SECONDS
+                    );
+                }
+            }
+
+            /*
+            * Briefly cache confirmed misses. Don't cache an empty result for
+            * 30 days because a temporary Comic Vine problem could cause it.
+            */
+            foreach ($chunk as $cv_id) {
+                if (!array_key_exists($cv_id, $found)) {
+                    $images[$cv_id] = '';
+
+                    set_transient(
+                        "cv_issue_image_{$cv_id}",
+                        '',
+                        6 * HOUR_IN_SECONDS
+                    );
+                }
+            }
+        }
+
+        return $images;
+    }
+
+    /**
+     * Build Comic Vine information for a page of Metron issues.
+     *
+     * Comic Vine images are retrieved in one batch after resolving all
+     * Metron-to-Comic-Vine mappings.
+     */
+    public function get_cv_info_batch(array $issues): array
+    {
+        $cv_info_batch = [];
+        $metron_to_cv  = [];
+        $cv_ids        = [];
+
+        /*
+        * Permit no more than one individual Metron issue-detail
+        * fallback during an issue-list request.
+        *
+        * The primary issue list is more important than secondary
+        * Comic Vine cover enrichment. Limiting this to one prevents
+        * one browser request from consuming several consecutive
+        * Metron API slots.
+        */
+        $fallback_calls     = 0;
+        $max_fallback_calls = 1;
+
+        /*
+        * First pass: resolve Metron issue IDs to Comic Vine issue IDs.
+        */
+        foreach ($issues as $issue) {
+            $metron_id = (int) ($issue['id'] ?? 0);
+
+            if (!$metron_id) {
+                continue;
+            }
+
+            $cv_id     = null;
+            $cache_key = "metron:issue_cv_id:{$metron_id}";
+            $cached    = get_transient($cache_key);
+
+            if ($cached !== false) {
+                /*
+                * Cached mappings do not count toward the
+                * three-call fallback limit.
+                */
+                $cv_id = is_array($cached)
+                    ? (int) ($cached['cv_id'] ?? 0)
+                    : (int) $cached;
+
+            } elseif (!empty($issue['cv_id'])) {
+                /*
+                * The issue list already supplied the Comic Vine ID.
+                * This does not require another Metron request.
+                */
+                $cv_id = (int) $issue['cv_id'];
+
+                set_transient(
+                    $cache_key,
+                    ['cv_id' => $cv_id],
+                    30 * DAY_IN_SECONDS
+                );
+
+            } elseif ($fallback_calls < $max_fallback_calls) {
+                /*
+                * No cached mapping and no cv_id in the issue list.
+                * Make an individual Metron issue-detail request,
+                * up to three times during this page request.
+                */
+                $fallback_calls++;
+
+                $lookup_status = 'error';
+                
+                $cv_id = (int) $this->get_metron_cv_id(
+                    $metron_id,
+                    $lookup_status
+                );
+                
+                if ($cv_id && $lookup_status === 'found') {
+                    /*
+                     * Cache a confirmed Comic Vine mapping.
+                     */
+                    set_transient(
+                        $cache_key,
+                        ['cv_id' => $cv_id],
+                        30 * DAY_IN_SECONDS
+                    );
+                } elseif ($lookup_status === 'missing') {
+                    /*
+                     * Cache only a confirmed successful lookup that had no
+                     * Comic Vine mapping.
+                     *
+                     * API and connection errors must not create this transient.
+                     */
+                    set_transient(
+                        $cache_key,
+                        ['cv_id' => null],
+                        6 * HOUR_IN_SECONDS
+                    );
+                }
+                
+                /*
+                 * When $lookup_status is "error", leave the mapping uncached
+                 * so another request can retry it.
+                 */
+
+            } else {
+                /*
+                * The three-call limit has been reached.
+                *
+                * Do not cache this as a missing mapping because
+                * no lookup was attempted. It can be tried during
+                * a later page request.
+                */
+                $cv_id = null;
+            }
+
+            $metron_to_cv[$metron_id] = $cv_id ?: null;
+
+            if ($cv_id) {
+                $cv_ids[] = $cv_id;
+            }
+        }
+
+        /*
+        * Remove duplicate IDs before requesting Comic Vine images.
+        */
+        $cv_ids = array_values(
+            array_unique(
+                array_filter(
+                    array_map('absint', $cv_ids)
+                )
+            )
+        );
+
+        /*
+        * Fetch all resolved Comic Vine images in a batch.
+        */
+        $cv_images = $this->get_comicvine_issue_images_batch(
+            $cv_ids
+        );
+
+        /*
+        * Build the structure expected by the issue template.
+        */
+        foreach ($issues as $issue) {
+            $metron_id = (int) ($issue['id'] ?? 0);
+
+            if (!$metron_id) {
+                continue;
+            }
+
+            $cv_id = $metron_to_cv[$metron_id] ?? null;
+
+            $cv_info_batch[$metron_id] = [
+                'cv_id'            => $cv_id,
+                'comic_vine_image' => $cv_id
+                    ? ($cv_images[$cv_id] ?? '')
+                    : '',
+                'metron_image'     => $issue['image'] ?? '',
+            ];
+        }
+
+        return $cv_info_batch;
+    }
+
+    /**
+     * Last-resort per-series Metron fallback, only used when a series
+     * has no known cv_id at all.
+     */
+    public function get_series_first_issue_image( int $series_id ): string {
+        $url  = $this->client->api_base . "series/{$series_id}/issue_list/?page=1&page_size=1";
+        $data = $this->client->api_get( $url );
+        return $data['results'][0]['image'] ?? '';
+    }
+
+    private function get_filtered_series_lazy(
+        int $publisher_id, int $page, int $per_page,
+        string $search, string $letter, bool $force_api
+    ): array {
+        $needed_count = $page * $per_page;
+        $temporary_error = '';
+    
+        $progress_key = "metron:series_scan_progress:v1:{$publisher_id}";
+    
+        $empty_progress = [
+            'next_api_page' => 1,
+            'exhausted'     => false,
+            'raw_items'    => [],
+        ];
+    
+        $progress = $force_api ? false : get_transient($progress_key);
+        $progress = is_array($progress) ? $progress : $empty_progress;
+    
+        $filtered = $this->filter_series_list(
+            $progress['raw_items'],
+            $letter,
+            $search
+        );
+    
+        if (
+            count($filtered) < $needed_count &&
+            !$progress['exhausted'] &&
+            $this->acquire_scan_lock($publisher_id)
+        ) {
+            try {
+                // Another request may have advanced the scan before this lock.
+                if (!$force_api) {
+                    $latest = get_transient($progress_key);
+    
+                    $progress = is_array($latest)
+                        ? $latest
+                        : $empty_progress;
+    
+                    $filtered = $this->filter_series_list(
+                        $progress['raw_items'],
+                        $letter,
+                        $search
+                    );
+                }
+    
+                $started_at = microtime(true);
+    
+                // Bound processing between pages.
+                $max_scan_seconds = 0.25;
+                $max_pages_per_call = 25;
+    
+                $pages_processed = 0;
+                $progress_changed = false;
+    
+                while (
+                    count($filtered) < $needed_count &&
+                    !$progress['exhausted'] &&
+                    $pages_processed < $max_pages_per_call &&
+                    (
+                        $pages_processed === 0 ||
+                        microtime(true) - $started_at < $max_scan_seconds
+                    )
+                ) {
+                    /*
+                     * Check both:
+                     * - the processed series-page cache;
+                     * - the raw Metron response cache.
+                     *
+                     * This call cannot make an HTTP request.
+                     */
+                    $page_data = $this->get_series_api_page(
+                        $publisher_id,
+                        $progress['next_api_page'],
+                        100,
+                        $force_api,
+                        true
+                    );
+    
+                    if (!empty($page_data['cache_miss'])) {
+                        $this->schedule_series_scan(
+                            $publisher_id,
+                            1
+                        );
+                    
+                        break;
+                    }
+    
+                    if (!empty($page_data['temporary_error'])) {
+                        $temporary_error = $page_data['temporary_error'];
+                        break;
+                    }
+    
+                    $pages_processed++;
+                    $progress_changed = true;
+    
+                    $new_items = $page_data['items'];
+    
+                    if (empty($new_items)) {
+                        $progress['exhausted'] = true;
+                        break;
+                    }
+    
+                    $progress['raw_items'] = array_merge(
+                        $progress['raw_items'],
+                        $new_items
+                    );
+    
+                    $progress['next_api_page']++;
+                    $progress['exhausted'] = empty($page_data['has_next']);
+    
+                    // Filter newly added rows instead of rescanning every row.
+                    $filtered = array_merge(
+                        $filtered,
+                        $this->filter_series_list(
+                            $new_items,
+                            $letter,
+                            $search
+                        )
+                    );
+                }
+    
+                if ($progress_changed) {
+                    set_transient(
+                        $progress_key,
+                        $progress,
+                        30 * DAY_IN_SECONDS
+                    );
+                }
+
+            } catch (ComicApiTemporaryException $error) {
+                // Keep any pages successfully processed before the interruption.
+                if (!empty($progress_changed)) {
+                    set_transient(
+                        $progress_key,
+                        $progress,
+                        30 * DAY_IN_SECONDS
+                    );
+                }
+            
+                throw $error;
+            } finally {
+                $this->release_scan_lock($publisher_id);
+            }
+        }
+
+        $offset      = ( $page - 1 ) * $per_page;
+    
+        return [
+            'items' => array_slice(
+                $filtered,
+                $offset,
+                $per_page
+            ),
+            'total' => count($filtered),
+            'is_total_exact' => $progress['exhausted'],
+            'scan_complete' => (
+                count($filtered) >= $needed_count ||
+                $progress['exhausted']
+            ),
+            'page' => $page,
+            'per_page' => $per_page,
+            'temporary_error' => $temporary_error,
+        ];
+    }
+
+    private function acquire_scan_lock(int $publisher_id): bool {
+        return MetronClient::acquire_lock(
+            "series-scan:{$publisher_id}"
+        );
+    }
+    
+    private function release_scan_lock(int $publisher_id): void {
+        MetronClient::release_lock(
+            "series-scan:{$publisher_id}"
+        );
+    }
+
+    /** -----------------------------------------------------------------
+     * SERIES LIST for a publisher — fixed the current API page
+     *
+     * ----------------------------------------------------------------- */
+    public function get_series(
+        $publisher_id, $page = 1, $per_page = 10,
+        $search = '', $letter = 'all', $force_api = false, $batch_size = null   
+    ) {
+        $publisher_id = (int) $publisher_id;
+        $page         = max( 1, (int) $page );
+        $per_page     = max( 1, (int) $per_page );
+        $is_filtered  = ! empty( $search ) || $letter !== 'all';
+
+            /*
+            * Begin building the publisher's complete series index as soon
+            * as the publisher is selected. This prepares letter and search
+            * filters without delaying the current browser request.
+            */
+            if ($publisher_id > 0 && !$force_api) {
+                $progress_key =
+                    "metron:series_scan_progress:v1:{$publisher_id}";
+
+                $progress = get_transient($progress_key);
+
+                /*
+                * Schedule work only when the index does not exist or has
+                * not finished scanning all available API pages.
+                */
+                if (
+                    !is_array($progress) ||
+                    empty($progress['exhausted'])
+                ) {
+                    $this->schedule_series_scan(
+                        $publisher_id,
+                        1
+                    );
+                }
+            }
+
+
+        if ( $is_filtered ) {
+            return $this->get_filtered_series_lazy( $publisher_id, $page, $per_page, $search, $letter, $force_api );
+        }
+
+        $api_page_size = 100;
+        $block_size    = 1;
+
+        /*
+        * IMPORTANT:
+        * This maps your visible catalog page to the Metron API page.
+        *
+        * Because catalog page = 10 items
+        * and Metron page = 100 items:
+        *
+        * catalog pages 1–10  need Metron page 1
+        * catalog pages 11–20 need Metron page 2
+        * catalog pages 41–50 need Metron page 5
+        * catalog pages 51–60 need Metron page 6
+        */
+        $absolute_offset = ( $page - 1 ) * $per_page;
+        $needed_api_page = (int) floor( $absolute_offset / $api_page_size ) + 1;
+
+        /*
+        * Fetch API pages in blocks:
+        * needed 1–5  => fetch 1–5
+        * needed 6–10 => fetch 6–10
+        * needed 11–15 => fetch 11–15
+        */
+        $block_start = ( (int) floor( ( $needed_api_page - 1 ) / $block_size ) * $block_size ) + 1;
+        $block_end   = $block_start + $block_size - 1;
+
+        $block_items = [];
+        $api_total   = 0;
+        $api_has_next = false;
+
+        for ( $api_page = $block_start; $api_page <= $block_end; $api_page++ ) {
+            $page_data = $this->get_series_api_page(
+                $publisher_id,
+                $api_page,
+                $api_page_size,
+                $force_api
+            );
+
+            if (!empty($page_data['temporary_error'])) {
+                return [
+                    'items'           => [],
+                    'total'           => 0,
+                    'page'            => $page,
+                    'per_page'        => $per_page,
+                    'is_total_exact'  => false,
+                    'scan_complete'   => false,
+                    'temporary_error' =>
+                        $page_data['temporary_error'],
+                ];
+            }
+
+            if ( empty( $page_data['items'] ) ) {
+                break;
+            }
+
+            $block_items = array_merge( $block_items, $page_data['items'] );
+
+            if ( ! empty( $page_data['total'] ) ) {
+                $api_total = (int) $page_data['total'];
+            }
+
+            if ( ! empty( $page_data['has_next'] ) ) {
+                $api_has_next = true;
+            }
+        }
+
+        $filtered = $this->filter_series_list( $block_items, $letter, $search );
+
+        /*
+        * For normal unfiltered "all" browsing, use Metron's real total.
+        * For letter/search filters, we can only know the filtered total
+        * inside the loaded block unless you fetch every API page.
+        */
+        $is_filtered = ! empty( $search ) || $letter !== 'all';
+
+        $total = $is_filtered
+            ? count( $filtered )
+            : max( $api_total, count( $filtered ) );
+
+        /*
+        *
+        * Slice within the current API page.
+        */
+        if ( ! $is_filtered ) {
+            $block_absolute_start = ( $block_start - 1 ) * $api_page_size;
+            $offset_in_block      = max( 0, $absolute_offset - $block_absolute_start );
+        } else {
+            $offset_in_block = 0;
+        }
+
+        $paged_items = array_slice( $filtered, $offset_in_block, $per_page );
+
+        /*
+        * Prewarm the next Metron series API page when the user
+        * approaches the end of the current 100-record block.
+        *
+        * Visible pages 8-10 prewarm API page 2.
+        * Visible pages 18-20 prewarm API page 3, and so on.
+        */
+        $display_pages_per_api_page = max(
+            1,
+            (int) floor(
+                $api_page_size / $per_page
+            )
+        );
+
+        $position_in_api_page = (
+            ($page - 1) %
+            $display_pages_per_api_page
+        ) + 1;
+
+        $should_prewarm_next =
+            !$is_filtered &&
+            $api_has_next &&
+            $position_in_api_page >=
+                ($display_pages_per_api_page - 2);
+
+        if ($should_prewarm_next) {
+            $next_api_page = $needed_api_page + 1;
+
+            $next_fresh_key =
+                $this->series_page_cache_key(
+                    $publisher_id,
+                    $next_api_page,
+                    $api_page_size
+                );
+
+            $next_fresh = get_transient(
+                $next_fresh_key
+            );
+
+            $next_stale =
+                $this->get_stale_series_page(
+                    $publisher_id,
+                    $next_api_page,
+                    $api_page_size
+                );
+
+            /*
+            * Schedule only when the next API page is completely cold.
+            * A stale snapshot is already sufficient for immediate loading.
+            */
+            if (
+                $next_fresh === false &&
+                $next_stale === null
+            ) {
+                $this->schedule_series_page_refresh(
+                    $publisher_id,
+                    $next_api_page,
+                    $api_page_size,
+                    wp_rand(8, 15)
+                );
+            }
+        }
+
+        return [
+            'items'    => $paged_items,
+            'total'    => $total,
+            'page'     => $page,
+            'per_page' => $per_page,
+        ];
+    }
+
+    /**
+     * Return the normal series API-page cache key.
+     */
+    private function series_page_cache_key(
+        int $publisher_id,
+        int $api_page,
+        int $api_page_size
+    ): string {
+        return sprintf(
+            'metron:series_api_page:v4:%d:%d:%d',
+            absint($publisher_id),
+            max(1, absint($api_page)),
+            max(1, absint($api_page_size))
+        );
+    }
+
+    /**
+     * Return the longer-lived stale series-page key.
+     */
+    private function series_page_stale_key(
+        int $publisher_id,
+        int $api_page,
+        int $api_page_size
+    ): string {
+        return sprintf(
+            'metron:series_api_page_stale:v1:%d:%d:%d',
+            absint($publisher_id),
+            max(1, absint($api_page)),
+            max(1, absint($api_page_size))
+        );
+    }
+
+    /**
+     * Save the fresh series page and its stale fallback.
+     */
+    private function save_series_page_cache(
+        int $publisher_id,
+        int $api_page,
+        int $api_page_size,
+        array $result
+    ): void {
+        set_transient(
+            $this->series_page_cache_key(
+                $publisher_id,
+                $api_page,
+                $api_page_size
+            ),
+            $result,
+            30 * DAY_IN_SECONDS
+        );
+
+        set_transient(
+            $this->series_page_stale_key(
+                $publisher_id,
+                $api_page,
+                $api_page_size
+            ),
+            [
+                'result'     => $result,
+                'updated_at' => time(),
+            ],
+            180 * DAY_IN_SECONDS
+        );
+    }
+
+    /**
+     * Read a stale series-page snapshot without making an API request.
+     */
+    private function get_stale_series_page(
+        int $publisher_id,
+        int $api_page,
+        int $api_page_size
+    ): ?array {
+        $snapshot = get_transient(
+            $this->series_page_stale_key(
+                $publisher_id,
+                $api_page,
+                $api_page_size
+            )
+        );
+
+        if (
+            !is_array($snapshot) ||
+            !isset($snapshot['result']) ||
+            !is_array($snapshot['result']) ||
+            !isset($snapshot['result']['items']) ||
+            !is_array($snapshot['result']['items'])
+        ) {
+            return null;
+        }
+
+        return $snapshot['result'];
+    }
+
+    /**
+     * Schedule one series API-page refresh.
+     */
+    private function schedule_series_page_refresh(
+        int $publisher_id,
+        int $api_page,
+        int $api_page_size,
+        int $delay = 5,
+        int $attempt = 0
+    ): void {
+        $publisher_id = absint($publisher_id);
+        $api_page      = max(1, absint($api_page));
+        $api_page_size = max(1, absint($api_page_size));
+        $delay         = max(1, absint($delay));
+        $attempt       = max(0, min(5, absint($attempt)));
+    
+        if (!$publisher_id) {
+            return;
+        }
+    
+        $args = [
+            $publisher_id,
+            $api_page,
+            $api_page_size,
+            $attempt,
+        ];
+    
+        if (
+            !wp_next_scheduled(
+                'comicbooks_refresh_series_page_cache',
+                $args
+            )
+        ) {
+            wp_schedule_single_event(
+                time() + $delay,
+                'comicbooks_refresh_series_page_cache',
+                $args
+            );
+        }
+    }
+
+
+
+    /**
+     * Fetch one exact Metron series_list API page.
+     * No rolling "last page" state.
+     */
+    private function get_series_api_page(
+        int $publisher_id,
+        int $api_page,
+        int $api_page_size = 100,
+        bool $force_api = false,
+        bool $cache_only = false,
+        int $retries = 3
+    ): array {
+
+        $cache_key = $this->series_page_cache_key(
+            $publisher_id,
+            $api_page,
+            $api_page_size
+        );
+
+        if (!$force_api) {
+            $cached = get_transient(
+                $cache_key
+            );
+            
+            if (
+                $cached !== false &&
+                is_array($cached)
+            ) {
+                return $cached;
+            }
+
+            $stale = $this->get_stale_series_page(
+                $publisher_id,
+                $api_page,
+                $api_page_size
+            );
+
+            if ($stale !== null) {
+                /*
+                * Briefly restore the normal transient so simultaneous
+                * visitors all receive the stale snapshot immediately.
+                */
+                set_transient(
+                    $cache_key,
+                    $stale,
+                    10 * MINUTE_IN_SECONDS
+                );
+
+                /*
+                * The stale data is usable, but refresh it behind the
+                * current browser request.
+                */
+                $this->schedule_series_page_refresh(
+                    $publisher_id,
+                    $api_page,
+                    $api_page_size,
+                    5
+                );
+
+                return $stale;
+            }
+        }
+
+        $url = $this->client->api_base . "publisher/{$publisher_id}/series_list/?page={$api_page}&page_size={$api_page_size}";
+
+        $response = $this->client->api_get(
+            $url,
+            $retries,
+            1,
+            $cache_only
+        );
+        
+        // Let the scanner decide whether it can start an outbound request.
+        // Do not cache this result or interpret it as an empty page.
+        if (!empty($response['cache_miss'])) {
+            return ['cache_miss' => true];
+        }
+
+        if (
+            !is_array($response) ||
+            isset($response['error'])
+        ) {
+            return [
+                'items'    => [],
+                'total'    => 0,
+                'has_next' => false,
+            
+                'temporary_error' => is_array($response)
+                    ? (string) (
+                        $response['error']
+                        ?? 'Temporary Metron error'
+                    )
+                    : 'Invalid Metron response',
+            
+                'retry_after' => is_array($response)
+                    ? max(
+                        5,
+                        (int) ($response['retry_after'] ?? 10)
+                    )
+                    : 10,
+            ];
+        }
+
+        /*
+        * At this point the request succeeded, so an empty results array can
+        * safely be cached as a genuinely empty page.
+        */
+        if (
+            empty($response['results']) ||
+            (
+                    !empty($response['detail']) &&
+                    str_contains(
+                        $response['detail'],
+                        'Invalid page'
+                    )
+            )
+        ) {
+            $empty = [
+                    'items'    => [],
+                    'total'    => 0,
+                    'has_next' => false,
+            ];
+
+            $this->save_series_page_cache(
+                $publisher_id,
+                $api_page,
+                $api_page_size,
+                $empty
+            );
+            
+            return $empty;
+        }
+
+        $items = [];
+
+        foreach ( $response['results'] as $item ) {
+            
+            $items[] = [
+                'series_id'   => $item['id'],
+                'name'        => $item['series'],
+                'volume'      => $item['volume']      ?? '1',
+                'issue_count' => $item['issue_count'] ?? 0,
+                'year_began'  => $item['year_began']  ?? 'N/A',
+                'image'       => $item['image']       ?? '',
+                'cv_id'       => $item['cv_id']       ?? null,
+            ];
+        
+            $series_id = absint($item['id'] ?? 0);
+            $cv_id     = absint($item['cv_id'] ?? 0);
+            
+            if ($series_id && $cv_id) {
+                set_transient(
+                    "metron:series_cvid:{$series_id}",
+                    $cv_id,
+                    YEAR_IN_SECONDS
+                );
+            
+                /*
+                 * Remove an older negative result.
+                 */
+                delete_transient(
+                    "metron:series_cvid_missing:{$series_id}"
+                );
+            } elseif ($series_id) {
+                /*
+                 * A successful Metron series-list response authoritatively
+                 * reported that this series has no Comic Vine volume ID.
+                 *
+                 * Match this negative mapping to the API-page cache lifetime.
+                 */
+                set_transient(
+                    "metron:series_cvid_missing:{$series_id}",
+                    1,
+                    30 * DAY_IN_SECONDS
+                );
+            }
+        }
+
+        $result = [
+            'items'    => $items,
+            'total'    => (int) ( $response['count'] ?? 0 ),
+            'has_next' => ! empty( $response['next'] ),
+        ];
+
+        $this->save_series_page_cache(
+            $publisher_id,
+            $api_page,
+            $api_page_size,
+            $result
+        );
+        
+        return $result;
+    }
+
+    /**
+     * Refresh one cached Metron series-list API page.
+     *
+     * Called by WP-Cron. The stale snapshot remains untouched
+     * when Metron returns a temporary error.
+     */
+    public function refresh_series_api_page(
+        int $publisher_id,
+        int $api_page,
+        int $api_page_size = 100
+    ): array {
+        $publisher_id = absint($publisher_id);
+        $api_page = max(1, absint($api_page));
+        $api_page_size = max(
+            1,
+            absint($api_page_size)
+        );
+
+        if (!$publisher_id) {
+            return [
+                'success'   => false,
+                'temporary' => false,
+                'message'   => 'Invalid publisher ID.',
+            ];
+        }
+
+        /*
+        * force_api=true prevents the fresh/stale series-page
+        * caches from short-circuiting this refresh.
+        *
+        * cache_only=false permits the external request.
+        * retries=1 leaves retry scheduling to WP-Cron.
+        */
+        $result = $this->get_series_api_page(
+            $publisher_id,
+            $api_page,
+            $api_page_size,
+            true,
+            false,
+            1
+        );
+
+        if (!empty($result['temporary_error'])) {
+            return [
+                'success'     => false,
+                'temporary'   => true,
+                'retry_after' => max(
+                    5,
+                    (int) ($result['retry_after'] ?? 10)
+                ),
+                'message' => (string) (
+                    $result['temporary_error']
+                    ?? 'Temporary Metron error'
+                ),
+            ];
+        }
+
+        if (
+            !isset($result['items']) ||
+            !is_array($result['items'])
+        ) {
+            return [
+                'success'   => false,
+                'temporary' => false,
+                'message'   => 'Invalid series-page result.',
+            ];
+        }
+
+        return [
+            'success'   => true,
+            'temporary' => false,
+            'count'     => count($result['items']),
+            'total'     => max(
+                0,
+                (int) ($result['total'] ?? 0)
+            ),
+        ];
+    }
+
+    /**
+     * Apply letter and search filters to a raw series map.
+     */
+    private function filter_series_list( array $full, string $letter, string $search ): array {
+        $data = $full;
+
+        if ( $search ) {
+            $s    = strtolower( trim( $search ) );
+            $data = array_filter( $data, fn( $item ) => stripos( $item['name'], $s ) !== false );
+        }
+
+        if ( $letter !== 'all' ) {
+            $data = array_filter( $data, function( $item ) use ( $letter ) {
+                $title = preg_replace( '/^(The|A|An)\s+/i', '', trim( $item['name'] ) );
+                $first = strtoupper( mb_substr( $title, 0, 1 ) );
+                return $letter === '#' ? ! ctype_alpha( $first ) : $first === strtoupper( $letter );
+            } );
+        }
+
+        return array_values( $data );
+    }
+
+
+
+    /**
+     * Return the normal issue-page transient key.
+     */
+    private function issue_page_cache_key(
+        int $title_id,
+        int $api_page
+    ): string {
+        return sprintf(
+            'metron:issue_page:%d:%d',
+            absint($title_id),
+            max(1, absint($api_page))
+        );
+    }
+
+    /**
+     * Return the longer-lived stale snapshot key.
+     */
+    private function issue_page_stale_key(
+        int $title_id,
+        int $api_page
+    ): string {
+        return sprintf(
+            'metron:issue_page_stale:v1:%d:%d',
+            absint($title_id),
+            max(1, absint($api_page))
+        );
+    }
+
+    /**
+     * Save both the normal cache and its stale fallback.
+     */
+    private function save_issue_page_cache(
+        int $title_id,
+        int $api_page,
+        array $results,
+        int $total
+    ): void {
+        $cache_key = $this->issue_page_cache_key(
+            $title_id,
+            $api_page
+        );
+
+        $stale_key = $this->issue_page_stale_key(
+            $title_id,
+            $api_page
+        );
+
+        /*
+        * Normal fresh cache.
+        */
+        set_transient(
+            $cache_key,
+            $results,
+            30 * DAY_IN_SECONDS
+        );
+
+        /*
+        * Longer-lived fallback cache.
+        *
+        * This is not returned as permanently fresh. It is served
+        * immediately only while a background refresh is scheduled.
+        */
+        set_transient(
+            $stale_key,
+            [
+                'results'    => $results,
+                'total'      => max(0, $total),
+                'updated_at' => time(),
+            ],
+            180 * DAY_IN_SECONDS
+        );
+
+        if ($total > 0) {
+            set_transient(
+                "metron:issue_total:{$title_id}",
+                $total,
+                30 * DAY_IN_SECONDS
+            );
+        }
+    }
+
+    /**
+     * Read the stale issue-page fallback.
+     */
+    private function get_stale_issue_page(
+        int $title_id,
+        int $api_page
+    ): ?array {
+        $snapshot = get_transient(
+            $this->issue_page_stale_key(
+                $title_id,
+                $api_page
+            )
+        );
+
+        if (
+            !is_array($snapshot) ||
+            !isset($snapshot['results']) ||
+            !is_array($snapshot['results'])
+        ) {
+            return null;
+        }
+
+        return [
+            'results' => $snapshot['results'],
+            'total' => max(
+                0,
+                (int) ($snapshot['total'] ?? 0)
+            ),
+            'updated_at' => max(
+                0,
+                (int) ($snapshot['updated_at'] ?? 0)
+            ),
+        ];
+    }
+
+    /**
+     * Schedule an issue-page refresh without creating duplicate events.
+     */
+    private function schedule_issue_page_refresh(
+        int $title_id,
+        int $api_page,
+        int $delay = 5,
+        int $attempt = 0
+    ): void {
+        $title_id = absint($title_id);
+        $api_page = max(1, absint($api_page));
+        $delay    = max(1, absint($delay));
+        $attempt  = max(0, min(5, absint($attempt)));
+    
+        if (!$title_id) {
+            return;
+        }
+    
+        $args = [
+            $title_id,
+            $api_page,
+            $attempt,
+        ];
+    
+        if (
+            !wp_next_scheduled(
+                'comicbooks_refresh_issue_page_cache',
+                $args
+            )
+        ) {
+            wp_schedule_single_event(
+                time() + $delay,
+                'comicbooks_refresh_issue_page_cache',
+                $args
+            );
+        }
+    }
+
+    /**
+     * Refresh one Metron issue-list API page.
+     *
+     * Called by WP-Cron. Existing stale data is preserved when
+     * Metron returns a temporary error.
+     */
+    public function refresh_issue_api_page(
+        int $title_id,
+        int $api_page
+    ): array {
+        $title_id = absint($title_id);
+        $api_page = max(1, absint($api_page));
+        $api_size = 100;
+
+        if (!$title_id) {
+            return [
+                'success' => false,
+                'temporary' => false,
+                'message' => 'Invalid series ID.',
+            ];
+        }
+
+        $url = $this->client->api_base .
+            "series/{$title_id}/issue_list/" .
+            "?page={$api_page}&page_size={$api_size}";
+
+        $response = $this->client->api_get(
+            $url
+        );
+
+        if (
+            !is_array($response) ||
+            isset($response['error'])
+        ) {
+            return [
+                'success' => false,
+                'temporary' => true,
+                'retry_after' => max(
+                    5,
+                    (int) (
+                        is_array($response)
+                            ? ($response['retry_after'] ?? 10)
+                            : 10
+                    )
+                ),
+                'message' => is_array($response)
+                    ? (string) (
+                        $response['error']
+                        ?? 'Temporary Metron error'
+                    )
+                    : 'Invalid Metron response',
+            ];
+        }
+
+        $results = isset($response['results']) &&
+            is_array($response['results'])
+                ? $response['results']
+                : [];
+
+        $total = max(
+            0,
+            (int) ($response['count'] ?? 0)
+        );
+
+        $this->save_issue_page_cache(
+            $title_id,
+            $api_page,
+            $results,
+            $total
+        );
+
+        return [
+            'success' => true,
+            'temporary' => false,
+            'count' => count($results),
+            'total' => $total,
+        ];
+    }
+
+    /**
+     * Fetch the Metron API page containing the requested display page.
+     * Cached stale data may be returned while the API page is refreshed
+     * in the background.
+     */
+    public function get_series_issues( $title_id, $current_page = 1, $search = '' ) {
+        $title_id     = (int) $title_id;
+        $current_page = max( 1, (int) $current_page );
+        $per_page     = 10;
+        $api_size     = 100; // Metron page_size
+    
+        /* ── Series metadata ─────────────────────────────────────────────── */
+        $series_key = "metron:series:{$title_id}";
+
+        $series     = get_transient( $series_key );
+
+        if ( $series === false ) {
+
+            $series = $this->client->api_get(
+                $this->client->api_base .
+                "series/{$title_id}/"
+            );
+            
+            if (
+                !is_array($series) ||
+                isset($series['error'])
+            ) {
+                return [
+                    'error' => is_array($series)
+                        ? ($series['error'] ?? 'Temporary Metron error')
+                        : 'Invalid Metron response',
+
+                    'temporary_error' => !is_array($series) ||
+                        !empty($series['temporary_error']),
+
+                    'retry_after' => is_array($series)
+                        ? max(1, (int) ($series['retry_after'] ?? 2))
+                        : 2,
+                ];
+            }
+            
+            if (empty($series['name'])) {
+                return [
+                    'error' => 'Series not found',
+                ];
+            }
+            
+            set_transient(
+                $series_key,
+                $series,
+                14 * DAY_IN_SECONDS
+            );
+
+        }
+    
+        /* ── Backward compat: legacy v5 full-list cache ──────────────────── */
+        $full_key  = "metron:issue_list_full:{$title_id}:v5";
+        $full_data = get_transient( $full_key );
+        $use_new   = ( $full_data === false || ! isset( $full_data['results'] ) || ! is_array( $full_data['results'] ) );
+    
+        $combined = [];  /* api_page => results[]  (new mode only) */
+        $total    = 0;
+    
+        if ( $use_new ) {
+            /* display pages 1-10 → api page 1, 11-20 → 2, etc.*/
+            $api_pg_needed = max( 1, (int) ceil( $current_page * $per_page / $api_size ) );
+    
+            $total_key = "metron:issue_total:{$title_id}";
+            $total     = (int)( get_transient( $total_key ) ?: 0 );
+    
+            /*
+             * Fetch ONLY the Metron API page that covers the requested display
+             * page. Previously we also pulled prev/next speculatively on every
+             * load — up to 3 Metron calls per cold load. That only ever paid
+             * off exactly at a 100-item page boundary (display page 11, 21...),
+             * and the burst limit is shared across every visitor hitting this
+             * plugin. Each page is still cached 30 days once fetched, so
+             * repeat views of the same page cost nothing regardless.
+             */
+            $current_ap = $api_pg_needed;
+    
+            $current_key = $this->issue_page_cache_key(
+                $title_id,
+                $current_ap
+            );
+            
+            $current_data = get_transient(
+                $current_key
+            );
+            
+            if ($current_data === false) {
+
+                $stale_page = $this->get_stale_issue_page(
+                    $title_id,
+                    $current_ap
+                );
+            
+                if ($stale_page !== null) {
+                    /*
+                     * Return the stale snapshot immediately instead of
+                     * making the visitor wait for Metron.
+                     */
+                    $current_data = $stale_page['results'];
+            
+                    $total = max(
+                        0,
+                        (int) $stale_page['total']
+                    );
+            
+                    /*
+                     * Give the stale result a short fresh-cache lifetime so
+                     * simultaneous visitors do not all schedule refreshes.
+                     */
+                    set_transient(
+                        $current_key,
+                        $current_data,
+                        10 * MINUTE_IN_SECONDS
+                    );
+            
+                    $this->schedule_issue_page_refresh(
+                        $title_id,
+                        $current_ap,
+                        5
+                    );
+                } else {
+
+                    $url = $this->client->api_base .
+                    "series/{$title_id}/issue_list/" .
+                    "?page={$current_ap}" .
+                    "&page_size={$api_size}";
+            
+                    $current_resp =
+                        $this->client->api_get($url);
+            
+                    if (
+                        !is_array($current_resp) ||
+                        isset($current_resp['error'])
+                    ) {
+                        return [
+                            'error' => is_array($current_resp)
+                                ? (
+                                    $current_resp['error']
+                                    ?? 'Temporary Metron error'
+                                )
+                                : 'Invalid Metron response',
+            
+                            'temporary_error' =>
+                                !is_array($current_resp) ||
+                                !empty(
+                                    $current_resp['temporary_error']
+                                ),
+            
+                            'retry_after' => is_array($current_resp)
+                                ? max(
+                                    1,
+                                    (int) (
+                                        $current_resp['retry_after']
+                                        ?? 2
+                                    )
+                                )
+                                : 2,
+                        ];
+                    }
+            
+                    $current_data =
+                        isset($current_resp['results']) &&
+                        is_array($current_resp['results'])
+                            ? $current_resp['results']
+                            : [];
+            
+                    $response_total = max(
+                        0,
+                        (int) ($current_resp['count'] ?? 0)
+                    );
+            
+                    $total = $response_total;
+            
+                    /*
+                    * Save successful responses, including a confirmed empty
+                    * result. Temporary errors were returned above and therefore
+                    * never replace the stale snapshot.
+                    */
+                    $this->save_issue_page_cache(
+                        $title_id,
+                        $current_ap,
+                        $current_data,
+                        $response_total
+                    );
+                }
+            }
+    
+            if ( ! empty( $current_data ) ) {
+                    $combined[ $current_ap ] = $current_data;
+            }
+    
+            $all = $combined ? array_merge( ...array_values( $combined ) ) : [];
+
+            /*
+            * Prewarm the next Metron issue API page when the user
+            * approaches the end of the current 100-issue block.
+            */
+            $display_pages_per_api_page = max(
+                1,
+                (int) floor(
+                    $api_size / $per_page
+                )
+            );
+
+            $position_in_api_page = (
+                ($current_page - 1) %
+                $display_pages_per_api_page
+            ) + 1;
+
+            $next_api_page_exists =
+                $total >
+                ($current_ap * $api_size);
+
+            $should_prewarm_next =
+                trim((string) $search) === '' &&
+                $next_api_page_exists &&
+                $position_in_api_page >=
+                    ($display_pages_per_api_page - 2);
+
+            if ($should_prewarm_next) {
+                $next_api_page = $current_ap + 1;
+
+                $next_fresh_key =
+                    $this->issue_page_cache_key(
+                        $title_id,
+                        $next_api_page
+                    );
+
+                $next_fresh = get_transient(
+                    $next_fresh_key
+                );
+
+                $next_stale =
+                    $this->get_stale_issue_page(
+                        $title_id,
+                        $next_api_page
+                    );
+
+                /*
+                * Only prewarm a completely cold page. If a stale
+                * snapshot exists, it can already be shown immediately.
+                */
+                if (
+                    $next_fresh === false &&
+                    $next_stale === null
+                ) {
+                    $this->schedule_issue_page_refresh(
+                        $title_id,
+                        $next_api_page,
+                        wp_rand(8, 15)
+                    );
+                }
+            }
+    
+        } else {
+                /* Legacy complete cache */
+                $all   = $full_data['results'];
+                $total = count( $all );
+        }    
+ 
+        usort( $all, function( $a, $b ) {
+            $nA = is_numeric( trim( (string)( $a['number'] ?? '' ) ) ) ? (float) $a['number'] : INF;
+            $nB = is_numeric( trim( (string)( $b['number'] ?? '' ) ) ) ? (float) $b['number'] : INF;
+            return $nA !== $nB ? ( $nA <=> $nB ) : ( (int)( $a['id'] ?? 0 ) ) <=> ( (int)( $b['id'] ?? 0 ) );
+        } );
+    
+
+        if ( $search ) {
+            $s   = strtolower( trim( $search ) );
+            $all = array_values( array_filter( $all, fn( $i ) =>
+                stripos( $i['number']     ?? '', $s ) !== false ||
+                stripos( $i['issue']      ?? '', $s ) !== false ||
+                stripos( $i['cover_date'] ?? '', $s ) !== false
+            ) );
+            $total = count( $all );
+        }    
+
+        if ( $use_new && ! $search ) {
+            $min_api_page    = $combined ? min( array_keys( $combined ) ) : $api_pg_needed;
+            $assembled_start = ( $min_api_page - 1 ) * $api_size;
+            $abs_start       = ( $current_page  - 1 ) * $per_page;
+            $offset          = max( 0, $abs_start - $assembled_start );
+            $paged_issues    = array_slice( $all, $offset, $per_page );
+        } else {
+            $paged_issues = array_slice( $all, ( $current_page - 1 ) * $per_page, $per_page );
+        }
+    
+        $total_pages = max( 1, (int) ceil( $total / $per_page ) );
+    
+        if ( $current_page > $total_pages && $total > 0 ) {
+            $paged_issues = [];
+        }
+    
+        return [
+            'series'       => is_array( $series ) ? $series : [],
+            'issue_list'   => [ 'count' => $total, 'results' => $paged_issues ],
+            'current_page' => $current_page,
+            'total_pages'  => $total_pages,
+            'total_issues' => $total,
+            'per_page'     => $per_page,
+        ];
+    }
+            
+    
+    private static function cover_url($value): string {
+        if (
+            !is_string($value) ||
+            !preg_match('~^https?://~i', trim($value))
+        ) {
+            return '';
+        }
+    
+        $url = esc_url_raw(trim($value), ['http', 'https']);
+        $parts = wp_parse_url($url);
+    
+        return is_array($parts) &&
+            !empty($parts['host']) &&
+            in_array(
+                strtolower($parts['scheme'] ?? ''),
+                ['http', 'https'],
+                true
+            )
+                ? $url
+                : '';
+    }
+    
+    private static function cover_failure(
+        RuntimeException $error
+    ): array {
+        if ($error instanceof ComicApiTemporaryException) {
+            return [
+                'status' => 'retry',
+                'retry_after' => $error->retry_after,
+                'message' => $error->getMessage(),
+            ];
+        }
+    
+        return [
+            'status' => 'error',
+            'message' => $error->getMessage(),
+        ];
+    }
+    
+    public function get_cached_series_cover_result(
+        int $sid
+    ): ?array {
+        $cached = get_transient(
+            "metron:series_cover_result:v1:{$sid}"
+        );
+    
+        if (is_array($cached)) {
+            if (($cached['status'] ?? '') === 'missing') {
+                return ['status' => 'missing'];
+            }
+    
+            $url = self::cover_url($cached['url'] ?? '');
+    
+            if (
+                ($cached['status'] ?? '') === 'found' &&
+                $url !== ''
+            ) {
+                return [
+                    'status' => 'found',
+                    'url' => $url,
+                ];
+            }
+        }
+    
+        // Preserve old positive caches.
+        // Old __missing__ values do not pass URL validation.
+        $url = self::cover_url(
+            get_transient("metron:series_image:{$sid}")
+        );
+    
+        return $url !== ''
+            ? ['status' => 'found', 'url' => $url]
+            : null;
+    }
+    
+    private function cover_metron_data(
+        string $path,
+        callable $valid
+    ): array {
+        $url = $this->client->api_base . $path;
+        $data = $this->client->api_get($url, 1);
+    
+        if (is_array($data) && isset($data['error'])) {
+            if (!empty($data['temporary_error'])) {
+                throw new ComicApiTemporaryException(
+                    'Metron cover lookup is temporarily unavailable.',
+                    $data['retry_after'] ?? 2
+                );
+            }
+    
+            throw new RuntimeException(
+                'Metron cover lookup failed. Check API access.'
+            );
+        }
+    
+        if (!is_array($data) || !$valid($data)) {
+            // Invalidate only this malformed API response.
+            delete_transient(
+                'metron:api:' . md5(esc_url_raw($url))
+            );
+    
+            throw new ComicApiTemporaryException(
+                'Metron returned incomplete cover data.'
+            );
+        }
+    
+        return $data;
+    }
+    
+    private function series_cover_cv_id(int $sid): int {
+        $cached = get_transient(
+            "metron:series_cvid:{$sid}"
+        );
+    
+        if (
+            is_scalar($cached) &&
+            ctype_digit((string) $cached) &&
+            (int) $cached > 0
+        ) {
+            return (int) $cached;
+        }
+    
+        $valid = static function (array $series) use ($sid): bool {
+            $cv = $series['cv_id'] ?? null;
+    
+            return (int) ($series['id'] ?? 0) === $sid &&
+                is_string($series['name'] ?? null) &&
+                $series['name'] !== '' &&
+                array_key_exists('cv_id', $series) &&
+                (
+                    $cv === null ||
+                    (is_int($cv) && $cv >= 0) ||
+                    (is_string($cv) && ctype_digit($cv))
+                );
+        };
+    
+        $series = get_transient(
+            "metron:series:{$sid}"
+        );
+    
+        if (!is_array($series) || !$valid($series)) {
+            $series = $this->cover_metron_data(
+                "series/{$sid}/",
+                $valid
+            );
+    
+            set_transient(
+                "metron:series:{$sid}",
+                $series,
+                14 * DAY_IN_SECONDS
+            );
+        }
+    
+        $cv_id = (int) ($series['cv_id'] ?? 0);
+    
+        if ($cv_id > 0) {
+            set_transient(
+                "metron:series_cvid:{$sid}",
+                $cv_id,
+                YEAR_IN_SECONDS
+            );
+        }
+    
+        return $cv_id;
+    }
+    
+    private static function cover_from_url($value): array {
+        if (
+            $value === null ||
+            (is_string($value) && trim($value) === '')
+        ) {
+            return ['status' => 'missing'];
+        }
+    
+        $url = self::cover_url($value);
+    
+        if ($url === '') {
+            throw new ComicApiTemporaryException(
+                'The API returned an invalid cover URL.'
+            );
+        }
+    
+        return [
+            'status' => 'found',
+            'url' => $url,
+        ];
+    }
+    
+    private function metron_first_cover_result(int $sid): array {
+        $data = $this->cover_metron_data(
+            "series/{$sid}/issue_list/?page=1&page_size=1",
+            static function (array $data): bool {
+                return is_array($data['results'] ?? null) &&
+                    is_int($data['count'] ?? null) &&
+                    $data['count'] >= count($data['results']) &&
+                    (
+                        $data['count'] === 0 ||
+                        !empty($data['results'][0])
+                    );
+            }
+        );
+    
+        if ($data['count'] === 0) {
+            return ['status' => 'missing'];
+        }
+    
+        $issue = $data['results'][0];
+    
+        if (
+            !is_array($issue) ||
+            !array_key_exists('image', $issue)
+        ) {
+            throw new ComicApiTemporaryException(
+                'Metron omitted the issue image field.'
+            );
+        }
+    
+        return self::cover_from_url($issue['image']);
+    }
+    
+    private static function cv_cover_result(array $issue): array {
+        if (!array_key_exists('image', $issue)) {
+            throw new ComicApiTemporaryException(
+                'Comic Vine omitted the image field.'
+            );
+        }
+    
+        if ($issue['image'] === null) {
+            return ['status' => 'missing'];
+        }
+    
+        if (!is_array($issue['image'])) {
+            throw new ComicApiTemporaryException(
+                'Comic Vine returned invalid image data.'
+            );
+        }
+    
+        $saw_field = false;
+        $invalid = false;
+    
+        foreach (
+            ['small_url', 'medium_url', 'original_url']
+            as $field
+        ) {
+            if (!array_key_exists($field, $issue['image'])) {
+                continue;
+            }
+    
+            $saw_field = true;
+    
+            try {
+                $result = self::cover_from_url(
+                    $issue['image'][$field]
+                );
+    
+                if ($result['status'] === 'found') {
+                    return $result;
+                }
+            } catch (ComicApiTemporaryException $error) {
+                $invalid = true;
+            }
+        }
+    
+        if (!$saw_field || $invalid) {
+            throw new ComicApiTemporaryException(
+                'Comic Vine returned incomplete image data.'
+            );
+        }
+    
+        return ['status' => 'missing'];
+    }
+    
+    private function cv_first_cover_results(
+        array $series_to_cv
+    ): array {
+        $key = get_option('comic_vine_api_key', '');
+    
+        if (!is_string($key) || trim($key) === '') {
+            throw new RuntimeException(
+                'Comic Vine API key is not configured.'
+            );
+        }
+    
+        $volume_ids = array_values(
+            array_unique(array_values($series_to_cv))
+        );
+    
+        $response = $this->client->http_get(
+            add_query_arg(
+                [
+                    'api_key' => $key,
+                    'format' => 'json',
+                    'field_list' => 'id,volume,image,issue_number',
+                    'filter' =>
+                        'volume:' .
+                        implode('|', $volume_ids) .
+                        ',issue_number:1',
+                    'limit' => 100,
+                    'offset' => 0,
+                ],
+                'https://comicvine.gamespot.com/api/issues/'
+            ),
+            [
+                'headers' => [
+                    'User-Agent' =>
+                        'ComicBookFetcher/1.1 (+' .
+                        get_site_url() . ')',
+                ],
+            ]
+        );
+    
+        if (is_wp_error($response)) {
+            throw new ComicApiTemporaryException(
+                'Comic Vine cover request failed.'
+            );
+        }
+    
+        $header = trim(
+            (string) wp_remote_retrieve_header(
+                $response,
+                'retry-after'
+            )
+        );
+    
+        $retry_after = ctype_digit($header)
+            ? max(1, (int) $header)
+            : 30;
+    
+        if ($header !== '' && !ctype_digit($header)) {
+            $date = strtotime($header);
+    
+            if ($date !== false) {
+                $retry_after = max(1, $date - time());
+            }
+        }
+    
+        $http = (int) wp_remote_retrieve_response_code($response);
+    
+        if (
+            in_array($http, [408, 425, 429], true) ||
+            $http >= 500
+        ) {
+            throw new ComicApiTemporaryException(
+                'Comic Vine is temporarily unavailable.',
+                $retry_after
+            );
+        }
+    
+        if ($http !== 200) {
+            throw new RuntimeException(
+                "Comic Vine returned HTTP {$http}. Check API access."
+            );
+        }
+    
+        $body = json_decode(
+            wp_remote_retrieve_body($response),
+            true
+        );
+    
+        if (
+            json_last_error() !== JSON_ERROR_NONE ||
+            !is_array($body) ||
+            !is_scalar($body['status_code'] ?? null) ||
+            !ctype_digit((string) $body['status_code'])
+        ) {
+            throw new ComicApiTemporaryException(
+                'Comic Vine returned invalid JSON data.'
+            );
+        }
+    
+        $code = (int) $body['status_code'];
+    
+        if (
+            in_array(
+                $code,
+                [100, 101, 102, 103, 104, 105],
+                true
+            )
+        ) {
+            throw new RuntimeException(
+                "Comic Vine rejected the request (code {$code}). " .
+                'Check API settings.'
+            );
+        }
+    
+        if ($code !== 1) {
+            throw new ComicApiTemporaryException(
+                "Comic Vine reported an API failure (code {$code}).",
+                $retry_after
+            );
+        }
+    
+        if (!is_array($body['results'] ?? null)) {
+            throw new ComicApiTemporaryException(
+                'Comic Vine omitted its results.'
+            );
+        }
+    
+        $rows = $body['results'];
+        $total = $body['number_of_total_results'] ?? null;
+        $page_count = $body['number_of_page_results'] ?? null;
+        $offset = $body['offset'] ?? null;
+    
+        // Absence is trustworthy only when the response is complete.
+        $complete =
+            is_scalar($total) &&
+            ctype_digit((string) $total) &&
+            is_scalar($page_count) &&
+            ctype_digit((string) $page_count) &&
+            is_scalar($offset) &&
+            ctype_digit((string) $offset) &&
+            (int) $offset === 0 &&
+            (int) $page_count === count($rows) &&
+            (int) $total === count($rows);
+    
+        $found = [];
+        $bad_volumes = [];
+        $unassigned_bad_row = false;
+    
+        foreach ($rows as $issue) {
+            $volume_data =
+                is_array($issue) &&
+                is_array($issue['volume'] ?? null)
+                    ? $issue['volume']
+                    : [];
+    
+            $raw_volume = $volume_data['id'] ?? null;
+    
+            $volume =
+                is_scalar($raw_volume) &&
+                ctype_digit((string) $raw_volume)
+                    ? (int) $raw_volume
+                    : 0;
+    
+            if (
+                !$volume ||
+                !in_array($volume, $volume_ids, true)
+            ) {
+                $unassigned_bad_row = true;
+                continue;
+            }
+    
+            try {
+                if (
+                    !is_scalar($issue['issue_number'] ?? null) ||
+                    trim((string) $issue['issue_number']) !== '1'
+                ) {
+                    throw new ComicApiTemporaryException(
+                        'Comic Vine returned an unexpected issue.'
+                    );
+                }
+    
+                $result = self::cv_cover_result($issue);
+    
+                if ($result['status'] === 'found') {
+                    $found[$volume] = $result;
+                }
+            } catch (ComicApiTemporaryException $error) {
+                $bad_volumes[$volume] = true;
+            }
+        }
+    
+        $results = [];
+    
+        foreach ($series_to_cv as $sid => $volume) {
+            if (isset($found[$volume])) {
+                $results[$sid] = $found[$volume];
+            } elseif (
+                $complete &&
+                !$unassigned_bad_row &&
+                empty($bad_volumes[$volume])
+            ) {
+                $results[$sid] = ['status' => 'missing'];
+            } else {
+                $results[$sid] = [
+                    'status' => 'retry',
+                    'retry_after' => 3,
+                    'message' =>
+                        'Comic Vine did not complete this cover lookup.',
+                ];
+            }
+        }
+    
+        return $results;
+    }
+    
+    public function get_series_cover_results(
+        array $series_ids
+    ): array {
+        $results = [];
+        $uncached = [];
+        $cv_map = [];
+    
+        // Collect cached entries before attempting external requests.
+        foreach ($series_ids as $sid) {
+            $cached = $this->get_cached_series_cover_result(
+                (int) $sid
+            );
+    
+            if ($cached !== null) {
+                $results[$sid] = $cached;
+            } else {
+                $uncached[] = (int) $sid;
+            }
+        }
+    
+        foreach ($uncached as $sid) {
+            try {
+                $cv_id = $this->series_cover_cv_id($sid);
+    
+                if ($cv_id > 0) {
+                    $cv_map[$sid] = $cv_id;
+                } else {
+                    $results[$sid] =
+                        $this->metron_first_cover_result($sid);
+                }
+            } catch (RuntimeException $error) {
+                $results[$sid] = self::cover_failure($error);
+            }
+        }
+    
+        if ($cv_map) {
+            try {
+                $cv_results = $this->cv_first_cover_results($cv_map);
+    
+                foreach ($cv_results as $sid => $result) {
+                    $results[$sid] = $result;
+                }
+            } catch (RuntimeException $error) {
+                foreach ($cv_map as $sid => $cv_id) {
+                    $results[$sid] = self::cover_failure($error);
+                }
+            }
+        }
+    
+        // Temporary/configuration failures never become negative caches.
+        foreach ($uncached as $sid) {
+            $result = $results[$sid] ?? [
+                'status' => 'retry',
+                'retry_after' => 3,
+            ];
+    
+            $results[$sid] = $result;
+    
+            if (
+                in_array(
+                    $result['status'],
+                    ['found', 'missing'],
+                    true
+                )
+            ) {
+                set_transient(
+                    "metron:series_cover_result:v1:{$sid}",
+                    $result,
+                    $result['status'] === 'found'
+                        ? 30 * DAY_IN_SECONDS
+                        : 6 * HOUR_IN_SECONDS
+                );
+            }
+        }
+    
+        return $results;
+    }
+
+    /* -----------------------------------------------------------------
+    **  SINGLE ISSUE
+    ** ----------------------------------------------------------------- */
+
+    /**
+     * Fetch a single issue, including verification it belongs to the given series.
+     * Returns the issue data only (series is fetched but not merged — caller can fetch series separately if needed).
+     *
+     * @param int $title_id  Series ID
+     * @param int $issue_id  Issue ID
+     * @return array|null    Issue data array or null on failure
+     */
+    public function get_single_issue($title_id, $issue_id) {
+        $title_id = absint($title_id);
+        $issue_id = absint($issue_id);
+    
+        if (!$title_id || !$issue_id) {
+            return null;
+        }
+    
+        $cache_key = "metron:issue:{$title_id}_{$issue_id}";
+        $cached    = get_transient($cache_key);
+    
+        if (
+            is_array($cached) &&
+            empty($cached['error']) &&
+            (int) ($cached['id'] ?? 0) === $issue_id &&
+            (int) ($cached['series']['id'] ?? 0) === $title_id
+        ) {
+            /*
+             * Only accept a complete detail response. Older cached list
+             * records might not contain cv_id.
+             */
+            if (array_key_exists('cv_id', $cached)) {
+                return $cached;
+            }
+        }
+    
+        $url = $this->client->api_base . "issue/{$issue_id}/";
+        $issue_data = $this->client->api_get($url);
+    
+        if (
+            !is_array($issue_data) ||
+            isset($issue_data['error']) ||
+            (int) ($issue_data['id'] ?? 0) !== $issue_id ||
+            (int) ($issue_data['series']['id'] ?? 0) !== $title_id
+        ) {
+            /*
+             * Do not overwrite a previously valid cached record with
+             * an error or incomplete API response.
+             */
+            return null;
+        }
+    
+        /*
+         * wp_parse_args adds defaults without removing any API fields.
+         * This preserves all issue details returned by Metron.
+         */
+        $issue_data = wp_parse_args(
+            $issue_data,
+            [
+                'cv_id'       => null,
+                'number'      => '',
+                'name'        => '',
+                'cover_date'  => '',
+                'image'       => '',
+                'description' => '',
+                'desc'        => '',
+                'credits'     => [],
+                'characters'  => [],
+                'reprints'    => [],
+                'publisher'   => [],
+                'series'      => [],
+            ]
+        );
+    
+        set_transient(
+            $cache_key,
+            $issue_data,
+            2 * WEEK_IN_SECONDS
+        );
+    
+        return $issue_data;
+    }
+
+    /* -----------------------------------------------------------------
+    *  COMIC VINE PUBLISHER FALLBACK
+    * ----------------------------------------------------------------- */
+    public function get_comicvine_publisher_info( $cv_id ) {
+
+        if ( empty( $cv_id ) ) {
+            return [];
+        }
+    
+        $cache_key = 'cv_publisher_' . absint( $cv_id );
+    
+        $cached = get_transient( $cache_key );
+    
+        if ( $cached !== false ) {
+            return $cached;
+        }
+    
+        $cv_key = get_option( 'comic_vine_api_key', '' );
+    
+        if ( empty( $cv_key ) ) {
+            return [];
+        }
+    
+        $url = add_query_arg(
+            [
+                'api_key' => $cv_key,
+                'format'  => 'json',
+            ],
+            'https://comicvine.gamespot.com/api/publisher/4010-' . absint( $cv_id ) . '/'
+        );
+    
+        $response = $this->client->http_get(
+            $url,
+            [
+                'timeout' => 30,
+                'headers' => [
+                    'User-Agent' => 'ComicBookFetcher/1.1 (+' . get_site_url() . ')'
+                ],
+            ]
+        );
+    
+        if ( is_wp_error( $response ) ) {    
+            return [];
+        }
+    
+        $body = json_decode(
+            wp_remote_retrieve_body( $response ),
+            true
+        );
+    
+        if ( empty( $body['results'] ) ) {       
+            return [];
+        }
+    
+        $publisher = $body['results'];
+    
+        $result = [
+            'image'   => $publisher['image']['original_url'] ?? '',
+            'desc'    => $publisher['deck']
+                ?? $publisher['description']
+                ?? '',
+            'founded' => $publisher['start_year'] ?? '',
+        ];
+    
+        if ( empty( $result['founded'] ) && ! empty( $publisher['description'] ) ) {
+            if (
+                preg_match(
+                    '/founded.*?(\d{4})/i',
+                    strip_tags( $publisher['description'] ),
+                    $matches
+                )
+            ) {
+                $result['founded'] = $matches[1];
+            }
+        }
+    
+        set_transient(
+            $cache_key,
+            $result,
+            30 * DAY_IN_SECONDS
+        );
+    
+        return $result;
+    }
+
+    public function normalize_publisher_description(
+        $description,
+        $fallback = 'No description available.'
+    ) {
+        $description = html_entity_decode(
+            (string) $description,
+            ENT_QUOTES | ENT_HTML5,
+            'UTF-8'
+        );
+    
+        $description = preg_replace(
+            [
+                '#<br\s*/?>#i',
+                '#</p\s*>#i',
+                '#</h[1-6]\s*>#i',
+                '#</li\s*>#i',
+                '#</(?:div|ul|ol)\s*>#i',
+            ],
+            [
+                ' ',
+                ' ',
+                ': ',
+                ' ',
+                ' ',
+            ],
+            $description
+        );
+    
+        $description = wp_strip_all_tags(
+            $description,
+            true
+        );
+    
+        $description = preg_replace(
+            '/\s+/u',
+            ' ',
+            $description
+        );
+    
+        $description = rtrim(
+            trim($description),
+            " ;"
+        );
+    
+        return $description !== ''
+            ? $description
+            : $fallback;
+    }   
+
+    /* -----------------------------------------------------------------
+     *  COMIC VINE + METRON merged issue data
+     * ----------------------------------------------------------------- */
+    public function get_comicvine_issue_info(
+        $cv_id,
+        array $metron_issue = []
+    ) {
+        $cv_id = absint($cv_id);
+    
+        if (!$cv_id) {
+            return null;
+        }
+    
+        /*
+         * Versioned raw-response cache.
+         *
+         * Only the raw Comic Vine response is cached here. The result
+         * merged with Metron is constructed below for the current issue.
+         */
+        $cache_key = "tcs:cv_issue_raw:v3:{$cv_id}";
+        $cv_issue  = get_transient($cache_key);
+    
+        if (
+            !is_array($cv_issue) ||
+            (int) ($cv_issue['id'] ?? 0) !== $cv_id
+        ) {
+            $cv_key = get_option('comic_vine_api_key', '');
+    
+            if (!$cv_key) {
+                return null;
+            }
+    
+            $url = add_query_arg(
+                [
+                    'api_key' => $cv_key,
+                    'format'  => 'json',
+                ],
+                "https://comicvine.gamespot.com/api/issue/4000-{$cv_id}/"
+            );
+    
+            $response = $this->client->http_get(
+                $url,
+                [
+                    'timeout' => 30,
+                    'headers' => [
+                        'User-Agent' =>
+                            'CollectibleSpotBot/1.1 (+' .
+                            get_site_url() .
+                            ')',
+                    ],
+                ]
+            );
+    
+            if (is_wp_error($response)) {
+                return null;
+            }
+    
+            $status = (int) wp_remote_retrieve_response_code($response);
+            $body   = json_decode(
+                wp_remote_retrieve_body($response),
+                true
+            );
+    
+            if (
+                $status !== 200 ||
+                !is_array($body) ||
+                !is_array($body['results'] ?? null) ||
+                (int) ($body['results']['id'] ?? 0) !== $cv_id
+            ) {
+                return null;
+            }
+    
+            /*
+             * Preserve the complete Comic Vine results array. Do not
+             * select only individual fields.
+             */
+            $cv_issue = $body['results'];
+    
+            set_transient(
+                $cache_key,
+                $cv_issue,
+                $this->get_dataset_ttl()
+            );
+        }
+    
+        /*
+         * Begin with every Comic Vine field.
+         */
+        $merged = $cv_issue;
+        $merged['cv_id'] = $cv_id;
+    
+        /*
+         * If no Metron record was supplied, attempt to locate it.
+         * Do not cache this merged result under the Comic Vine ID.
+         */
+        $metron = $metron_issue;
+    
+        if (empty($metron)) {
+            $metron_response = $this->client->api_get(
+                $this->client->api_base .
+                'issue/?cv_id=' .
+                $cv_id
+            );
+    
+            if (
+                is_array($metron_response) &&
+                empty($metron_response['error']) &&
+                is_array($metron_response['results'][0] ?? null)
+            ) {
+                $metron = $metron_response['results'][0];
+            }
+        }
+    
+        if (!empty($metron)) {
+            /*
+             * Retain the complete corresponding Metron record.
+             */
+            $merged['metron'] = $metron;
+    
+            if (
+                empty($merged['cover_date']) &&
+                !empty($metron['cover_date'])
+            ) {
+                $merged['cover_date'] = $metron['cover_date'];
+            }
+    
+            if (empty($merged['description'])) {
+                $metron_description =
+                    ($metron['description'] ?? '')
+                    ?: ($metron['desc'] ?? '');
+    
+                if ($metron_description !== '') {
+                    $merged['description'] = $metron_description;
+                }
+            }
+    
+            if (
+                !empty($metron['reprints']) &&
+                is_array($metron['reprints'])
+            ) {
+                $merged['reprint_info'] = array_values(
+                    array_filter(
+                        array_column(
+                            $metron['reprints'],
+                            'issue'
+                        )
+                    )
+                );
+            }
+        }
+    
+        /*
+         * Calculate derived highlights after merging so they always
+         * correspond to the current Metron issue.
+         */
+        $highlights = [];
+    
+        $highlight_fields = [
+            'first_appearance_characters' =>
+                'First Appearance of Characters',
+            'characters_died_in' =>
+                'Character Deaths',
+            'first_appearance_locations' =>
+                'New Locations Introduced',
+            'first_appearance_objects' =>
+                'First Appearance of Objects',
+            'first_appearance_concepts' =>
+                'First Appearance of Concepts',
+        ];
+    
+        foreach ($highlight_fields as $field => $label) {
+            if (!empty($merged[$field])) {
+                $highlights[] = $label;
+            }
+        }
+    
+        foreach (
+            is_array($merged['concept_credits'] ?? null)
+                ? $merged['concept_credits']
+                : []
+            as $concept
+        ) {
+            $name = strtolower(
+                (string) ($concept['name'] ?? '')
+            );
+    
+            if (strpos($name, 'homage') !== false) {
+                $highlights[] = 'Homage Cover';
+            }
+    
+            if (strpos($name, 'reprint') !== false) {
+                $highlights[] = 'Reprint Issue';
+            }
+        }
+    
+        if (!empty($merged['reprint_info'])) {
+            $highlights[] = 'Contains Reprinted Material';
+        }
+    
+        $plain_description = strtolower(
+            wp_strip_all_tags(
+                (string) ($merged['description'] ?? '')
+            )
+        );
+    
+        if (
+            strpos($plain_description, 'first appearance') !== false
+        ) {
+            $highlights[] = 'First Appearance Mentioned';
+        }
+    
+        if (strpos($plain_description, 'death of') !== false) {
+            $highlights[] = 'Mentions a Death';
+        }
+    
+        if (
+            strpos($plain_description, 'second appearance') !== false
+        ) {
+            $highlights[] = 'Second Appearance';
+        }
+    
+        $merged['_highlights'] = array_values(
+            array_unique($highlights)
+        );
+    
+        return $merged;
+    }
+    
+
+    /* -----------------------------------------------------------------
+     *  Helper – clean ComicVine description
+     * ----------------------------------------------------------------- */
+        public function clean_cv_description( $desc ) {
+
+            if ( empty( $desc ) ) {
+                return '';
+            }
+
+            $desc = str_replace(
+                ['Ã€', 'Ã', 'Ã‚', 'Ãƒ', 'Ã„', 'Ã…', 'Ã†', 'Ã‡', 'Ãˆ', 'Ã‰', 'ÃŠ', 'Ã‹', 'ÃŒ', 'Ã', 'ÃŽ', 'Ã', 'Ã', 'Ã‘', 'Ã’', 'Ã“', 'Ã”', 'Ã•', 'Ã–', 'Ã—', 'Ã˜', 'Ã™', 'Ãš', 'Ã›', 'Ãœ', 'Ã', 'Ãž', 'ÃŸ',
+                 'Ã ', 'Ã¡', 'Ã¢', 'Ã£', 'Ã¤', 'Ã¥', 'Ã¦', 'Ã§', 'Ã¨', 'Ã©', 'Ãª', 'Ã«', 'Ã¬', 'Ã­', 'Ã®', 'Ã¯', 'Ã°', 'Ã±', 'Ã²', 'Ã³', 'Ã´', 'Ãµ', 'Ã¶', 'Ã·', 'Ã¸', 'Ã¹', 'Ãº', 'Ã»', 'Ã¼', 'Ã½', 'Ã¾', 'Ã¿'],
+                ['À', 'Á', 'Â', 'Ã', 'Ä', 'Å', 'Æ', 'Ç', 'È', 'É', 'Ê', 'Ë', 'Ì', 'Í', 'Î', 'Ï', 'Ð', 'Ñ', 'Ò', 'Ó', 'Ô', 'Õ', 'Ö', '×', 'Ø', 'Ù', 'Ú', 'Û', 'Ü', 'Ý', 'Þ', 'ß',
+                 'à', 'á', 'â', 'ã', 'ä', 'å', 'æ', 'ç', 'è', 'é', 'ê', 'ë', 'ì', 'í', 'î', 'ï', 'ð', 'ñ', 'ò', 'ó', 'ô', 'õ', 'ö', '÷', 'ø', 'ù', 'ú', 'û', 'ü', 'ý', 'þ', 'ÿ'],
+                $desc
+            );
+        
+            /* -------------------------------------------------
+             * 1. Encoding Normalization (NO GUESSING)
+             * ------------------------------------------------- */
+        
+            // Remove Unicode replacement characters FIRST
+            $desc = str_replace("\xEF\xBF\xBD", '', $desc);
+
+            // Decode HTML entities
+            $desc = html_entity_decode($desc, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+            // Only convert if the string is not valid UTF-8
+            if (!mb_check_encoding($desc, 'UTF-8')) {
+                $desc = mb_convert_encoding($desc, 'UTF-8', 'Windows-1252');
+            }
+
+            // Normalize Unicode composition
+            if (class_exists('Normalizer')) {
+                $desc = Normalizer::normalize($desc, Normalizer::FORM_C);
+            }
+
+            // Remove control characters
+            $desc = preg_replace('/[^\P{C}\n]+/u', '', $desc);
+        
+            /* -------------------------------------------------
+             * 2. Your Existing Cleanup Logic
+             * ------------------------------------------------- */
+        
+
+            // Remove FULL-BLOCK italics but keep inline italics intact
+            $desc = preg_replace('/<p>\s*<(em|i)>(.*?)<\/\1>\s*<\/p>/is', '<p>$2</p>', $desc);
+
+            // Remove root-level italics (no <p> wrapper)
+            $desc = preg_replace('/^<(em|i)>(.*?)<\/\1>$/is', '$2', $desc);
+        
+            // Strip links but keep text
+            $desc = preg_replace( '/<a\s+[^>]*>(.*?)<\/a>/is', '$1', $desc );
+        
+            // Clean <li> formatting
+            $desc = preg_replace_callback( '/<li>(.*?)<\/li>/is', function ( $m ) {
+        
+                $item = $m[1];
+        
+                $item = preg_replace( '/^<b>\s*["\']\s*(<[^>]+>[^<]+<\/[^>]+>)\s*["\']\s*<\/b>/i', '<b>$1</b>', $item );
+                $item = preg_replace( '/<b>\s*["\']\s*(<em>[^<]+<\/em>)\s*["\']\s*<\/b>/i', '<b>$1</b>', $item );
+                $item = preg_replace( '/<b>\s*["\']([^<]+)["\']\s*<\/b>/i', '<b>$1</b>', $item );
+                $item = preg_replace( '/(<\/(?:em|strong|b)>)["\']/', '$1', $item );
+                $item = preg_replace( '/"(<(?:em|strong)[^>]*>.*?<\/(?:em|strong)>)"/i', '$1', $item );
+        
+                return '<li>' . $item . '</li>';
+        
+            }, $desc );
+        
+            $desc = preg_replace( '/"(<(?:em|strong)[^>]*>.*?<\/(?:em|strong)>)"/i', '$1', $desc );
+            $desc = preg_replace( '/^["\']\s*|\s*["\']$/i', '', $desc );
+        
+        
+            /* -------------------------------------------------
+             * 3. Table Cleanup
+             * ------------------------------------------------- */
+        
+            $desc = preg_replace_callback( '/<table.*?>.*?<\/table>/is', function ( $m ) {
+        
+                $dom = new DOMDocument();
+                libxml_use_internal_errors( true );
+                $dom->loadHTML( '<?xml encoding="utf-8" ?>' . $m[0] );
+        
+                $xpath = new DOMXPath( $dom );
+                $header_ths = $xpath->query( '//th' );
+        
+                $sidebar_idx = -1;
+        
+                foreach ( $header_ths as $i => $th ) {
+                    if ( trim( $th->textContent ) === 'Sidebar Location' ) {
+                        $sidebar_idx = $i;
+                        $th->parentNode->removeChild( $th );
+                        break;
+                    }
+                }
+        
+                if ( $sidebar_idx > -1 ) {
+                    foreach ( $xpath->query( '//tr' ) as $row ) {
+                        $tds = $row->getElementsByTagName( 'td' );
+                        if ( $tds->length > $sidebar_idx ) {
+                            $row->removeChild( $tds->item( $sidebar_idx ) );
+                        }
+                    }
+                }
+        
+                $body = $dom->getElementsByTagName( 'body' )->item( 0 );
+                $html = '';
+        
+                foreach ( $body->childNodes as $child ) {
+                    $html .= $dom->saveHTML( $child );
+                }
+        
+                return $html;
+        
+            }, $desc );
+        
+        
+            /* -------------------------------------------------
+             * 4. Heading Normalization
+             * ------------------------------------------------- */
+        
+            $has_h2 = preg_match( '/<h2\b/i', $desc );
+        
+            $desc = preg_replace( '/<h6([^>]*)>/i', '<h5$1>', $desc );
+            $desc = preg_replace( '/<\/h6>/i', '</h5>', $desc );
+        
+            $desc = preg_replace( '/<h5([^>]*)>/i', '<h4$1>', $desc );
+            $desc = preg_replace( '/<\/h5>/i', '</h4>', $desc );
+        
+            $desc = preg_replace( '/<h4([^>]*)>/i', '<h3$1>', $desc );
+            $desc = preg_replace( '/<\/h4>/i', '</h3>', $desc );
+        
+            if ( $has_h2 ) {
+                $desc = preg_replace( '/<h3([^>]*)>/i', '<h4$1>', $desc );
+                $desc = preg_replace( '/<\/h3>/i', '</h4>', $desc );
+        
+                $desc = preg_replace( '/<h2([^>]*)>/i', '<h3$1>', $desc );
+                $desc = preg_replace( '/<\/h2>/i', '</h3>', $desc );
+            }
+        
+            $desc = preg_replace( '/<h1([^>]*)>/i', '<h3$1>', $desc );
+            $desc = preg_replace( '/<\/h1>/i', '</h3>', $desc );
+        
+            return $desc;
+        }
+
+    
+    /* -----------------------------------------------------------------
+     *  METRON to COMIC VINE ID lookup
+     * ----------------------------------------------------------------- */
+    public function get_metron_cv_id(
+        $metron_id,
+        &$status = null
+    ) {
+        /*
+         * Default to error so unexpected exit paths never become
+         * confirmed negative cache entries.
+         */
+        $status    = 'error';
+        $metron_id = absint($metron_id);
+    
+        if (!$metron_id) {
+            $status = 'invalid';
+    
+            return null;
+        }
+    
+        $cache_key = "metron:issue_vine:v2:{$metron_id}";
+        $cached    = get_transient($cache_key);
+    
+        if (is_array($cached)) {
+            if (!empty($cached['found'])) {
+                $cv_id = absint($cached['cv_id'] ?? 0);
+    
+                if ($cv_id) {
+                    $status = 'found';
+    
+                    return $cv_id;
+                }
+            }
+    
+            /*
+             * A valid cached record with found=false represents
+             * a previously confirmed missing mapping.
+             */
+            if (
+                array_key_exists('found', $cached) &&
+                $cached['found'] === false
+            ) {
+                $status = 'missing';
+            }
+    
+            return null;
+        }
+    
+        $url = $this->client->api_base .
+            "issue/{$metron_id}/";
+    
+        $data = $this->client->api_get($url);
+    
+        if (
+            !is_array($data) ||
+            isset($data['error']) ||
+            (int) ($data['id'] ?? 0) !== $metron_id
+        ) {
+            /*
+             * Do not cache connection errors, API errors, malformed
+             * responses or mismatched issue records.
+             */
+            $status = 'error';
+    
+            return null;
+        }
+    
+        $cv_id = absint($data['cv_id'] ?? 0);
+    
+        if ($cv_id) {
+            $status = 'found';
+    
+            set_transient(
+                $cache_key,
+                [
+                    'found' => true,
+                    'cv_id' => $cv_id,
+                ],
+                30 * DAY_IN_SECONDS
+            );
+    
+            return $cv_id;
+        }
+    
+        /*
+         * Metron returned the requested issue successfully but
+         * confirmed that it has no Comic Vine ID.
+         */
+        $status = 'missing';
+    
+        set_transient(
+            $cache_key,
+            [
+                'found' => false,
+                'cv_id' => 0,
+            ],
+            6 * HOUR_IN_SECONDS
+        );
+    
+        return null;
+    }
+
+    
+    
+
+}
