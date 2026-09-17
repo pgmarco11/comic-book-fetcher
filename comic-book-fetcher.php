@@ -967,6 +967,35 @@ add_action(
     2
 );
 
+/**
+ * Register Comic Catalog query variables.
+ */
+function comicbooks_register_catalog_query_vars(
+    array $query_vars
+): array {
+    $catalog_query_vars = [
+        'publisher_id',
+        'title_id',
+        'issue_id',
+        'letter',
+        'search',
+    ];
+
+    return array_values(
+        array_unique(
+            array_merge(
+                $query_vars,
+                $catalog_query_vars
+            )
+        )
+    );
+}
+
+add_filter(
+    'query_vars',
+    'comicbooks_register_catalog_query_vars'
+);
+
 function render_api_settings_page() {
     // Save API credentials
     if (isset($_POST['submit']) && check_admin_referer('save_api_settings')) {
