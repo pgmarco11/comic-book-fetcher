@@ -234,26 +234,29 @@ jQuery(document).ready(function($){
             });
     }
 
-    // UI updates
+    /*
+    * Update the selected letter in the interface.
+    *
+    * This function must not modify browser history because it is also
+    * called during initial page rendering and after AJAX requests.
+    */
     function updateActiveLetter(letter) {
-   
-        if (window.location.pathname.includes('/issues/') || window.location.pathname.includes('/issue/')) {    
+        if (
+            window.location.pathname.includes('/issues/') ||
+            window.location.pathname.includes('/issue/')
+        ) {
             return;
         }
-    
+
+        const normalizedLetter = letter || 'all';
+
         $('.letter-btn').removeClass('active');
-        $(`.letter-btn[data-letter="${letter}"]`).addClass('active');
-        currentLetter = letter;
-    
-        const params = new URLSearchParams(window.location.search);
-        params.set('letter', letter || 'all');
-        if (!params.has('page') || currentPage === 1) {
-            params.set('page', currentPage);
-        }
-    
-        const newUrl = `${window.location.pathname}?${params.toString()}`;
-     
-        history.pushState({ page: parseInt(params.get('page')) || 1, letter }, '', newUrl);
+
+        $(
+            `.letter-btn[data-letter="${normalizedLetter}"]`
+        ).addClass('active');
+
+        currentLetter = normalizedLetter;
     }
 
     function showLetterButtons(show) {
@@ -1572,7 +1575,20 @@ jQuery(document).ready(function($){
             if (!page || isNaN(page) || page < 1) {
                 page = 1;
             }
-        }      
+        } 
+        
+        /*
+        * Keep the JavaScript state synchronized with the page being
+        * displayed. This is needed for browser Back/Forward navigation.
+        */
+        page = Number.parseInt(page, 10);
+
+        if (!Number.isInteger(page) || page < 1) {
+            page = 1;
+        }
+
+        currentPage = page;
+        currentSearch = search || '';
 
         /* ======================================================
         * AJAX PATH
@@ -1703,33 +1719,104 @@ jQuery(document).ready(function($){
     // ===================================================================
     // Update URLs
     // ===================================================================
-    function updateIssuesUrl(titleId, page, search) {
-        // Only run on issues list pages
-        if (!window.location.pathname.includes('/issues/')) {
-              return;
+    /*
+    * Add one browser-history entry for a real user navigation.
+    *
+    * Do not add another entry when the requested URL is already the
+    * current URL.
+    */
+    function pushCatalogState(state, url) {
+        if (url.href === window.location.href) {
+            return;
         }
-    
-        const url = new URL('/comic-catalog/issues/', window.location.origin);
-        url.searchParams.set('title_id', titleId);
-        url.searchParams.set('page', page);
-        if (search) url.searchParams.set('search', search);
-        else url.searchParams.delete('search');
-    
-        history.pushState({ title_id: titleId, page, search }, '', url);
+
+        history.pushState(
+            state,
+            '',
+            url
+        );
     }
 
-    function updatePublisherUrl(letter, page, search) {
-        const url = new URL(window.location);
-        if(letter){
-            url.searchParams.set('letter', letter);
-        }     
-        url.searchParams.set('page', page);
+    function updateIssuesUrl(titleId, page, search) {
+        /*
+         * Only update the URL while viewing an issues-list page.
+         */
+        if (
+            !window.location.pathname.includes(
+                '/comic-catalog/issues/'
+            )
+        ) {
+            return;
+        }
+    
+        const url = new URL(
+            '/comic-catalog/issues/',
+            window.location.origin
+        );
+    
+        url.searchParams.set(
+            'title_id',
+            String(titleId)
+        );
+    
+        url.searchParams.set(
+            'page',
+            String(page)
+        );
+    
         if (search) {
-            url.searchParams.set('search', search);
+            url.searchParams.set(
+                'search',
+                search
+            );
         } else {
             url.searchParams.delete('search');
-        }    
-        history.pushState({ letter: letter, page, search }, '', url);
+        }
+    
+        pushCatalogState(
+            {
+                title_id: Number(titleId),
+                page: Number(page),
+                search: search || ''
+            },
+            url
+        );
+    }   
+
+    function updatePublisherUrl(letter, page, search) {
+        const normalizedLetter = letter || 'all';
+    
+        const url = new URL(
+            window.location.href
+        );
+    
+        url.searchParams.set(
+            'letter',
+            normalizedLetter
+        );
+    
+        url.searchParams.set(
+            'page',
+            String(page)
+        );
+    
+        if (search) {
+            url.searchParams.set(
+                'search',
+                search
+            );
+        } else {
+            url.searchParams.delete('search');
+        }
+    
+        pushCatalogState(
+            {
+                letter: normalizedLetter,
+                page: Number(page),
+                search: search || ''
+            },
+            url
+        );
     }
 
     // Ensure main content is visible
@@ -1822,7 +1909,6 @@ jQuery(document).ready(function($){
 
         $('#comic-search').val('').attr('placeholder', publisherId ? 'Search titles...' : 'Search publishers...');        
         showLetterButtons(true);
-        updateActiveLetter('all');
 
         if (publisherId) {
             const newUrl = `${baseUrl}?publisher_id=${publisherId}&letter=all`;
@@ -1835,18 +1921,47 @@ jQuery(document).ready(function($){
         }
     }, 300));
 
-    $(document).on('click', '.letter-btn', debounce(function() {
-        const letter = $(this).attr('data-letter') || 'all';
-        currentLetter = letter;
-        currentPage = 1;
-        updateActiveLetter(letter); 
+    $(document).on(
+        'click',
+        '.letter-btn',
+        debounce(function () {
+            const letter =
+                $(this).attr('data-letter') || 'all';
     
-        if (currentPublisherId) {
-            fetchBooks(currentPublisherId, 1, currentSearch, letter);
-        } else {
-            fetchPublishers(currentSearch, 1, letter);
-        }
-    }, 300));
+            currentLetter = letter;
+            currentPage = 1;
+    
+            /*
+             * Update the interface.
+             */
+            updateActiveLetter(letter);
+    
+            /*
+             * This is an actual user navigation, so add one browser
+             * history entry.
+             */
+            updatePublisherUrl(
+                letter,
+                1,
+                currentSearch
+            );
+    
+            if (currentPublisherId) {
+                fetchBooks(
+                    currentPublisherId,
+                    1,
+                    currentSearch,
+                    letter
+                );
+            } else {
+                fetchPublishers(
+                    currentSearch,
+                    1,
+                    letter
+                );
+            }
+        }, 300)
+    );
     
     // ===================================================================
     // EVENT: Pagination Click
@@ -1884,13 +1999,28 @@ jQuery(document).ready(function($){
             return;
         }   
         if (isIssuesPage && hasTitleId) {
-            updateIssuesUrl(titleId, page, search);
-            fetchIssues(titleId, page, search);        
-
+            /*
+             * Save the requested page before updating the browser URL.
+             */
+            currentPage = page;
+            currentSearch = search || '';
+        
+            updateIssuesUrl(
+                titleId,
+                currentPage,
+                currentSearch
+            );
+        
+            fetchIssues(
+                titleId,
+                currentPage,
+                currentSearch
+            );
+        
             $('html, body').animate({
                 scrollTop: $('#issues-list').offset().top
             }, 100);
-    
+        
             return;
         }
     
@@ -1948,10 +2078,25 @@ jQuery(document).ready(function($){
 
         input.setCustomValidity('');
 
-        const search = $('#issue-search').val() || currentSearch || '';
-
-        updateIssuesUrl(titleId, requestedPage, search);
-        fetchIssues(titleId, requestedPage, search);
+        const search =
+            $('#issue-search').val() ||
+            currentSearch ||
+            '';
+        
+        currentPage = requestedPage;
+        currentSearch = search;
+        
+        updateIssuesUrl(
+            titleId,
+            currentPage,
+            currentSearch
+        );
+        
+        fetchIssues(
+            titleId,
+            currentPage,
+            currentSearch
+        );
 
         $('html, body').animate({
             scrollTop: $('#issues-list').offset().top
@@ -2149,10 +2294,20 @@ jQuery(document).ready(function($){
 
     // Popstate handler
     $(window).on('popstate', function(event) {
-        const params = new URLSearchParams(window.location.search);
-        const page = parseInt(params.get('page')) || 1;
-        const letter = params.get('letter') || 'all';
-        const search = params.get('search') || '';
+        const params =
+            new URLSearchParams(window.location.search);
+
+        const page =
+            Number.parseInt(params.get('page'), 10) || 1;
+
+        const letter =
+            params.get('letter') || 'all';
+
+        const search =
+            params.get('search') || '';
+
+        const titleId = params.get('title_id') || null;
+
         const rawPublisherId = params.get('publisher_id');
         const parsedPublisherId = parseInt(rawPublisherId, 10);
 
@@ -2160,8 +2315,6 @@ jQuery(document).ready(function($){
             Number.isInteger(parsedPublisherId) && parsedPublisherId > 0
                 ? parsedPublisherId
                 : null;
-
-        const titleId = params.get('title_id') || null;
     
         // DO NOT run if we're already on the correct page
         if (currentPage === page && 
@@ -2177,11 +2330,24 @@ jQuery(document).ready(function($){
         currentPublisherId = publisherId;
     
         if (titleId) {
-            fetchIssues(titleId, page, search);      
+            fetchIssues(
+                titleId,
+                currentPage,
+                currentSearch
+            );
         } else if (publisherId) {
-            fetchBooks(publisherId, page, search, letter);
+            fetchBooks(
+                publisherId,
+                currentPage,
+                currentSearch,
+                currentLetter
+            );
         } else {
-            fetchPublishers(search, page, letter);
+            fetchPublishers(
+                currentSearch,
+                currentPage,
+                currentLetter
+            );
         }
     });
 

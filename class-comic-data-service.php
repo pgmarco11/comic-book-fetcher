@@ -16,6 +16,12 @@ class ComicDataService {
     /** Default TTL for cached API responses (2 weeks) */
     const DEFAULT_DATASET_TTL = 1209600; // 14 days in seconds
 
+    private const PUBLISHER_SNAPSHOT = 'comicbooks_publishers_snapshot_v1';
+    private const PUBLISHER_JOB = 'comicbooks_publishers_job_v1';
+    private const PUBLISHER_HOOK = 'comicbooks_refresh_publisher_list';
+    private const PUBLISHER_LOCK = 'publisher-list-refresh';
+    private const PUBLISHER_FRESH_SECONDS = 14 * DAY_IN_SECONDS;
+
     public function __construct( MetronClient $client ) {
         $this->client = $client;
     }
@@ -31,9 +37,7 @@ class ComicDataService {
         return isset( $this->client->dataset_ttl )
             ? (int) $this->client->dataset_ttl
             : self::DEFAULT_DATASET_TTL;
-    }   
-
-    
+    }       
     
     public function with_cached_catalog_details(array $items, string $type): array
         {
@@ -84,12 +88,6 @@ class ComicDataService {
 
         return $items;
     }
-
-    private const PUBLISHER_SNAPSHOT = 'comicbooks_publishers_snapshot_v1';
-    private const PUBLISHER_JOB = 'comicbooks_publishers_job_v1';
-    private const PUBLISHER_HOOK = 'comicbooks_refresh_publisher_list';
-    private const PUBLISHER_LOCK = 'publisher-list-refresh';
-    private const PUBLISHER_FRESH_SECONDS = 14 * DAY_IN_SECONDS;
     
     private static function publisher_option($key) {
         // Re-read these non-autoloaded options after acquiring the lock.
@@ -3707,11 +3705,138 @@ class ComicDataService {
 
             // Remove control characters
             $desc = preg_replace('/[^\P{C}\n]+/u', '', $desc);
+
+            /*
+            * Comic Vine sometimes supplies a lazy-loaded image followed by
+            * the same image inside <noscript>. The primary image is normalized
+            * below, so remove the duplicate fallback block first.
+            */
+            $desc = preg_replace(
+                '#<noscript\b[^>]*>.*?</noscript>#is',
+                '',
+                $desc
+            );
+
+            $desc = preg_replace_callback(
+                '#<img\b[^>]*>#is',
+                static function ($matches) {
+                    $tag = $matches[0];
+
+                    $get_attribute = static function (
+                        string $name
+                    ) use ($tag): string {
+                        $pattern =
+                            '/\s' .
+                            preg_quote($name, '/') .
+                            '\s*=\s*(["\'])(.*?)\1/is';
+
+                        if (preg_match($pattern, $tag, $attribute)) {
+                            return html_entity_decode(
+                                trim($attribute[2]),
+                                ENT_QUOTES | ENT_HTML5,
+                                'UTF-8'
+                            );
+                        }
+
+                        return '';
+                    };
+
+                    /*
+                    * Prefer the lazy-load URL over the placeholder src.
+                    */
+                    $candidates = [
+                        $get_attribute('data-src'),
+                        $get_attribute('data-lazy-src'),
+                        $get_attribute('data-original'),
+                        $get_attribute('src'),
+                    ];
+
+                    $image_url = '';
+
+                    foreach ($candidates as $candidate) {
+                        $candidate = esc_url_raw($candidate);
+
+                        if (
+                            $candidate !== '' &&
+                            preg_match('#^https?://#i', $candidate)
+                        ) {
+                            $image_url = $candidate;
+                            break;
+                        }
+                    }
+
+                    /*
+                    * Remove only images with no usable HTTP/HTTPS URL.
+                    * This removes transparent data-image placeholders when
+                    * no real lazy-load URL is available.
+                    */
+                    if ($image_url === '') {
+                        return '';
+                    }
+
+                    $alt = sanitize_text_field(
+                        $get_attribute('alt')
+                    );
+
+                    $width = absint(
+                        $get_attribute('width')
+                            ?: $get_attribute('data-width')
+                    );
+
+                    $height = absint(
+                        $get_attribute('height')
+                            ?: $get_attribute('data-height')
+                    );
+
+                    $clean_image = sprintf(
+                        '<img src="%s" alt="%s" loading="lazy" decoding="async"',
+                        esc_url($image_url),
+                        esc_attr($alt)
+                    );
+
+                    if ($width) {
+                        $clean_image .= sprintf(
+                            ' width="%d"',
+                            $width
+                        );
+                    }
+
+                    if ($height) {
+                        $clean_image .= sprintf(
+                            ' height="%d"',
+                            $height
+                        );
+                    }
+
+                    $clean_image .= '>';
+
+                    return $clean_image;
+                },
+                $desc
+            );
+
+            /*
+            * Remove figure wrappers left empty after deleting images, while
+            * preserving figures containing meaningful captions or text.
+            */
+            $desc = preg_replace(
+                '#<figure\b[^>]*>\s*</figure>#is',
+                '',
+                $desc
+            );
+
+            /*
+            * Remove paragraphs that became empty after image removal.
+            */
+            $desc = preg_replace(
+                '#<p\b[^>]*>(?:\s|&nbsp;|<br\s*/?>)*</p>#is',
+                '',
+                $desc
+            );
         
             /* -------------------------------------------------
              * 2. Your Existing Cleanup Logic
-             * ------------------------------------------------- */
-        
+             * ------------------------------------------------- */        
 
             // Remove FULL-BLOCK italics but keep inline italics intact
             $desc = preg_replace('/<p>\s*<(em|i)>(.*?)<\/\1>\s*<\/p>/is', '<p>$2</p>', $desc);
@@ -3811,7 +3936,51 @@ class ComicDataService {
             $desc = preg_replace( '/<h1([^>]*)>/i', '<h3$1>', $desc );
             $desc = preg_replace( '/<\/h1>/i', '</h3>', $desc );
         
-            return $desc;
+           /*
+            * Keep normal description formatting but remove unsupported,
+            * potentially unsafe or API-specific markup.
+            */
+            $allowed_html = [
+                'p' => [],
+                'br' => [],
+                'strong' => [],
+                'b' => [],
+                'em' => [],
+                'i' => [],
+                'ul' => [],
+                'ol' => [],
+                'li' => [],
+                'blockquote' => [],
+                'h3' => [],
+                'h4' => [],
+                'h5' => [],
+                'table' => [],
+                'thead' => [],
+                'tbody' => [],
+                'tfoot' => [],
+                'tr' => [],
+                'th' => [
+                    'colspan' => true,
+                    'rowspan' => true,
+                ],
+                'td' => [
+                    'colspan' => true,
+                    'rowspan' => true,
+                ],
+                'img' => [
+                    'src' => true,
+                    'alt' => true,
+                    'width' => true,
+                    'height' => true,
+                    'loading' => true,
+                    'decoding' => true,
+                ],
+            ];
+
+            $desc = wp_kses($desc, $allowed_html);
+
+            return trim($desc);
+
         }
 
     
