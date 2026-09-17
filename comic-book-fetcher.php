@@ -996,6 +996,76 @@ add_filter(
     'comicbooks_register_catalog_query_vars'
 );
 
+/**
+ * Preserve pagination on Comic Catalog routes.
+ *
+ * WordPress treats "page" as pagination for a single WordPress page
+ * and may remove it through redirect_canonical(). These catalog
+ * templates use it for API-result pagination instead.
+ */
+function comicbooks_preserve_catalog_page_parameter(
+    $redirect_url,
+    $requested_url
+) {
+    if (is_admin()) {
+        return $redirect_url;
+    }
+
+    $requested_page = isset($_GET['page'])
+        ? absint(wp_unslash($_GET['page']))
+        : 0;
+
+    if ($requested_page < 1) {
+        return $redirect_url;
+    }
+
+    $requested_path = wp_parse_url(
+        $requested_url,
+        PHP_URL_PATH
+    );
+
+    if (!is_string($requested_path)) {
+        return $redirect_url;
+    }
+
+    $requested_path = trailingslashit(
+        $requested_path
+    );
+
+    $catalog_path = trailingslashit(
+        wp_parse_url(
+            home_url('/comic-catalog/'),
+            PHP_URL_PATH
+        )
+    );
+
+    $issues_path = trailingslashit(
+        wp_parse_url(
+            home_url('/comic-catalog/issues/'),
+            PHP_URL_PATH
+        )
+    );
+
+    if (
+        $requested_path === $catalog_path ||
+        $requested_path === $issues_path
+    ) {
+        /*
+         * Prevent WordPress from stripping the catalog page number.
+         */
+        return false;
+    }
+
+    return $redirect_url;
+}
+
+add_filter(
+    'redirect_canonical',
+    'comicbooks_preserve_catalog_page_parameter',
+    10,
+    2
+);
+
 function render_api_settings_page() {
     // Save API credentials
     if (isset($_POST['submit']) && check_admin_referer('save_api_settings')) {
