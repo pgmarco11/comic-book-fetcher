@@ -203,7 +203,7 @@
     $('#tci-search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(filterChanged, 350); });
     $('#tci-reset').addEventListener('click', event => {
         event.preventDefault(); clearTimeout(searchTimer);
-        filters.querySelectorAll('input[type=search],select').forEach(el => { el.value = el.name === 'collection_sort' ? 'recent' : ''; });
+        filters.querySelectorAll('input[type=search],select').forEach(el => { el.value = el.name === 'collection_sort' ? 'collection' : ''; });
         filters.elements.collection_duplicates.checked = false;
         filterChanged();
     });
@@ -282,7 +282,7 @@
             else el.value = query.get(el.name) || ({
                 collection_page: '1',
                 collection_view: 'inventory',
-                collection_sort: 'recent'
+                collection_sort: 'collection'
             }[el.name] || '');
         });
         setView(filters.elements.collection_view.value);

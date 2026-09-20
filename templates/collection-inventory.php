@@ -75,11 +75,26 @@ $inventory_url = tcs_inventory_url();
                 <?php endforeach; ?>
             </select></div>
         <div><label for="tci-sort">Sort by</label><select id="tci-sort" name="collection_sort">
-                <?php foreach (['recent' => 'Recently added', 'title' => 'Series A–Z', 'issue' => 'Series + issue number', 'oldest' => 'Oldest added'] as $key => $label) : ?>
-                <option value="<?php echo esc_attr($key); ?>" <?php selected($value('collection_sort', 'recent' ),
-                    $key); ?>>
-                    <?php echo esc_html($label); ?>
-                </option>
+                <?php foreach ([
+                    'collection' =>
+                        'Publisher + series + volume',
+                    'recent' =>
+                        'Recently added',
+                    'title' =>
+                        'Series A–Z',
+                    'issue' =>
+                        'Series + issue number',
+                    'oldest' =>
+                        'Oldest added',
+                ] as $key => $label) : ?>
+                    <option value="<?php  echo esc_attr($key); ?>" 
+                                    <?php selected($value(
+                                                'collection_sort',
+                                                'collection'
+                                            ),
+                                    $key); ?>>
+                        <?php echo esc_html($label); ?>
+                    </option>
                 <?php endforeach; ?>
             </select></div>
         <input type="hidden" name="collection_page" value="<?php echo (int) $results['page']; ?>">

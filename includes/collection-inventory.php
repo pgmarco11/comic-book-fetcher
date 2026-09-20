@@ -169,6 +169,7 @@ function tcs_inventory_record(int $id): array {
         'title' => get_the_title($id),
         'issue' => $read('issue_number'),
         'volume' => $read('volume'),
+        'year' => $read('year'),
         'series_id' => absint($read('title_id')),
         'issue_id' => absint($read('issue_id')),
         'qty' => max(1, (int) $read('qty', '1')),
@@ -243,6 +244,89 @@ function tcs_inventory_record(int $id): array {
             )
             : get_permalink($id);
     return $record;
+}
+
+function tcs_inventory_sort_records(
+    array &$records
+): void {
+    usort(
+        $records,
+        static function (
+            array $a,
+            array $b
+        ): int {
+
+            /*
+             * 1. Publisher
+             */
+            $comparison = strnatcasecmp(
+                (string) ($a['publisher'] ?? ''),
+                (string) ($b['publisher'] ?? '')
+            );
+
+            if ($comparison !== 0) {
+                return $comparison;
+            }
+
+            /*
+             * 2. Series title
+             */
+            $comparison = strnatcasecmp(
+                (string) ($a['title'] ?? ''),
+                (string) ($b['title'] ?? '')
+            );
+
+            if ($comparison !== 0) {
+                return $comparison;
+            }
+
+            /*
+             * 3. Volume
+             */
+            $volume_a = trim(
+                (string) ($a['volume'] ?? '')
+            );
+
+            $volume_b = trim(
+                (string) ($b['volume'] ?? '')
+            );
+
+            $comparison = strnatcasecmp(
+                $volume_a,
+                $volume_b
+            );
+
+            if ($comparison !== 0) {
+                return $comparison;
+            }
+
+            /*
+             * 4. Issue number
+             */
+            $issue_a = trim(
+                (string) ($a['issue'] ?? '')
+            );
+
+            $issue_b = trim(
+                (string) ($b['issue'] ?? '')
+            );
+
+            $comparison = strnatcasecmp(
+                $issue_a,
+                $issue_b
+            );
+
+            if ($comparison !== 0) {
+                return $comparison;
+            }
+
+            /*
+             * Stable fallback.
+             */
+            return ((int) ($a['id'] ?? 0))
+                <=> ((int) ($b['id'] ?? 0));
+        }
+    );
 }
 
 function tcs_inventory_series_options(
@@ -496,11 +580,19 @@ function tcs_inventory_overview(
 
 function tcs_inventory_results(array $input): array {
     $page = max(1, absint(tcs_inventory_text($input['collection_page'] ?? 1)));
-    $sort = tcs_inventory_text($input['collection_sort'] ?? 'recent');
+    $sort = tcs_inventory_text(
+        $input['collection_sort'] ?? 'collection'
+    );
     $args = [
-        'post_type' => 'collection', 'post_status' => 'publish',
-        'author' => get_current_user_id(), 'posts_per_page' => 24, 'paged' => $page,
-        'orderby' => ['date' => 'DESC', 'ID' => 'DESC'],
+        'post_type' => 'collection', 
+        'post_status' => 'publish',
+        'author' => get_current_user_id(), 
+        'posts_per_page' => 24, 
+        'paged' => $page,
+        'orderby' => [
+            'date' => 'DESC', 
+            'ID' => 'DESC'
+        ],
         'ignore_sticky_posts' => true,
     ];
     $search = tcs_inventory_text($input['collection_search'] ?? '');
@@ -587,6 +679,77 @@ function tcs_inventory_results(array $input): array {
             'ID'           => 'ASC',
         ];
     }
+
+    if ($sort === 'collection') {
+
+        /*
+         * Retrieve every matching collection entry first.
+         * Sorting has to happen before pagination because
+         * publisher and series are taxonomy-backed fields.
+         */
+        $collection_args = $args;
+    
+        $collection_args['posts_per_page'] = -1;
+        $collection_args['paged'] = 1;
+        $collection_args['fields'] = 'ids';
+    
+        unset($collection_args['orderby']);
+    
+        $collection_query = new WP_Query(
+            $collection_args
+        );
+    
+        $records = array_map(
+            static function ($post_id): array {
+                return tcs_inventory_record(
+                    (int) $post_id
+                );
+            },
+            $collection_query->posts
+        );
+    
+        tcs_inventory_sort_records(
+            $records
+        );
+    
+        $total = count($records);
+    
+        $per_page = 24;
+    
+        $pages = max(
+            1,
+            (int) ceil(
+                $total / $per_page
+            )
+        );
+    
+        $page = min(
+            $page,
+            $pages
+        );
+    
+        $offset = (
+            $page - 1
+        ) * $per_page;
+    
+        $page_records = array_slice(
+            $records,
+            $offset,
+            $per_page
+        );
+    
+        return [
+            'records' => $page_records,
+            'total' => $total,
+            'page' => $page,
+            'pages' => $pages,
+            'html' =>
+                tcs_inventory_items_html(
+                    $page_records
+                ),
+        ];
+    }
+
     $query = new WP_Query($args);
     // WordPress skips found_rows when an offset returns no posts. Read page one
     // to recover the real last page after deletions or an out-of-range URL.
@@ -628,7 +791,24 @@ function tcs_inventory_items_html(array $records): string {
                     <div class="tci-item-info">
                         <p class="tci-publisher"><?php echo esc_html($record['publisher'] ?: 'Publisher not set'); ?></p>
                         <h3 id="tci-title-<?php echo (int) $id; ?>"><a href="<?php echo esc_url($record['catalog_url']); ?>"><?php echo esc_html($record['title']); ?> <span>#<?php echo esc_html($record['issue'] ?: '—'); ?></span></a></h3>
-                        <p class="tci-volume">Volume <?php echo esc_html($record['volume'] ?: '—'); ?></p>
+                        <p class="tci-volume">
+                            <?php
+                            if ($record['volume'] !== '') {
+                                echo 'Volume ' .
+                                    esc_html(
+                                        $record['volume']
+                                    );
+                            } else {
+                                echo 'Volume —';
+                            }
+                            if ($record['year'] !== '') {
+                                echo ' · ' .
+                                    esc_html(
+                                        $record['year']
+                                    );
+                            }
+                            ?>
+                        </p>
                     </div>
                     <dl class="tci-item-facts">
                         <div><dt>Quantity</dt><dd><?php echo (int) $record['qty']; ?></dd></div>
@@ -1013,6 +1193,7 @@ function tcs_inventory_taxonomy_tree(
             publisher_terms.name AS publisher_name,
             series_terms.term_id AS series_id,
             series_terms.name AS series_name,
+            MAX(volume_meta.volume) AS volume,
             COUNT(DISTINCT posts.ID) AS issue_count,
             SUM(
                 GREATEST(
@@ -1060,6 +1241,16 @@ function tcs_inventory_taxonomy_tree(
             GROUP BY post_id
         ) quantity
             ON quantity.post_id = posts.ID
+
+        LEFT JOIN (
+            SELECT
+                post_id,
+                MAX(meta_value) AS volume
+            FROM {$wpdb->postmeta}
+            WHERE meta_key = 'volume'
+            GROUP BY post_id
+        ) volume_meta
+            ON volume_meta.post_id = posts.ID
 
         WHERE posts.post_type = 'collection'
             AND posts.post_status = 'publish'
@@ -1136,10 +1327,20 @@ function tcs_inventory_taxonomy_tree(
         $copy_count = (int) $row['copy_count'];
 
         $tree[$publisher_id]['series'][] = [
-            'id'          => (int) $row['series_id'],
-            'name'        => (string) $row['series_name'],
-            'issue_count' => $issue_count,
-            'copy_count'  => $copy_count,
+            'id' =>
+                (int) $row['series_id'],
+        
+            'name' =>
+                (string) $row['series_name'],
+        
+            'volume' =>
+                (string) ($row['volume'] ?? ''),
+        
+            'issue_count' =>
+                $issue_count,
+        
+            'copy_count' =>
+                $copy_count,
         ];
 
         $tree[$publisher_id]['issue_count'] +=
@@ -1231,11 +1432,24 @@ function tcs_inventory_taxonomy_html(
                                 <li>
                                     <a href="<?php
                                         echo esc_url($series_url);
-                                    ?>">
+                                                                            ?>">
                                         <span>
-                                            <?php echo esc_html(
+                                            <?php
+                                            echo esc_html(
                                                 $series['name']
-                                            ); ?>
+                                            );
+
+                                            if (
+                                                !empty(
+                                                    $series['volume']
+                                                )
+                                            ) {
+                                                echo ' — Vol. ' .
+                                                    esc_html(
+                                                        $series['volume']
+                                                    );
+                                            }
+                                            ?>
                                         </span>
 
                                         <span class="tci-count">
