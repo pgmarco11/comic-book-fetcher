@@ -2438,41 +2438,66 @@ class ComicDataService {
                 $this->client->api_base . 'issue/'
             );
 
-            $response = $this->client->api_get($url);
-
-            if (
-                !is_array($response) ||
-                isset($response['error'])
-            ) {
-                return [
-                    'error' => is_array($response)
-                        ? (
-                            $response['error']
-                            ?? 'Temporary Metron error'
-                        )
-                        : 'Invalid Metron response',
-
-                    'temporary_error' =>
-                        !is_array($response) ||
-                        !empty($response['temporary_error']),
-
-                    'retry_after' => is_array($response)
-                        ? max(
-                            1,
-                            (int) (
-                                $response['retry_after']
-                                ?? 2
+            $results = [];
+            $search_page = 1;
+            
+            do {
+            
+                $args['page'] = $search_page;
+            
+                $url = add_query_arg(
+                    $args,
+                    $this->client->api_base . 'issue/'
+                );
+            
+                $response = $this->client->api_get($url);
+            
+                if (
+                    !is_array($response) ||
+                    isset($response['error'])
+                ) {
+                    return [
+                        'error' => is_array($response)
+                            ? (
+                                $response['error']
+                                ?? 'Temporary Metron error'
                             )
-                        )
-                        : 2,
-                ];
-            }
-
-            $results = isset($response['results']) &&
-                is_array($response['results'])
-                    ? $response['results']
-                    : [];
-
+                            : 'Invalid Metron response',
+            
+                        'temporary_error' =>
+                            !is_array($response) ||
+                            !empty($response['temporary_error']),
+            
+                        'retry_after' => is_array($response)
+                            ? max(
+                                1,
+                                (int) (
+                                    $response['retry_after']
+                                    ?? 2
+                                )
+                            )
+                            : 2,
+                    ];
+                }
+            
+                $page_results =
+                    isset($response['results']) &&
+                    is_array($response['results'])
+                        ? $response['results']
+                        : [];
+            
+                $results = array_merge(
+                    $results,
+                    $page_results
+                );
+            
+                $has_next =
+                    !empty($response['next']);
+            
+                $search_page++;
+            
+            } while ($has_next);
+            
             /*
             * Critical safeguard:
             *
