@@ -270,6 +270,22 @@ class Comicbooks {
         );
     
         if (isset($data['error'])) {
+
+            if (!empty($data['temporary_error'])) {
+        
+                $retry_after = max(
+                    1,
+                    (int) (
+                        $data['retry_after']
+                        ?? 3
+                    )
+                );
+        
+                header(
+                    'Retry-After: ' . $retry_after
+                );
+            }
+        
             wp_send_json_error(
                 $data,
                 !empty($data['temporary_error'])

@@ -1605,7 +1605,12 @@ jQuery(document).ready(function($){
         $wrapper.html(html);
     }
 
-    function fetchIssues(titleId = null, page = null, search = '', retries = 3) {
+    function fetchIssues(
+        titleId = null,
+        page = null,
+        search = '',
+        retries = 6
+    ) {
         showSpinner();
         // Resolve params from URL if needed
         if (titleId === null || page === null) {
@@ -1650,11 +1655,14 @@ jQuery(document).ready(function($){
         * ====================================================== */
         const $issuesList = $('#issues-list');
 
-        const fadeOutPromise = $issuesList
-            .stop(true, false)
-            .removeClass('loaded')
-            .fadeTo(450, 0)
-            .promise();
+        const fadeOutPromise = $.Deferred()
+        .resolve()
+        .promise();
+    
+        $issuesList
+            .stop(true, true)
+            .addClass('loaded')
+            .css('opacity', 1);
 
         $.ajax({
             url: comicbooks_fetchers_data.ajax_url,
@@ -1708,18 +1716,28 @@ jQuery(document).ready(function($){
                 const currentPageFromResponse = Number(data.current_page || page);
                 const totalPagesFromResponse = Number(data.total_pages || Math.ceil((data.total_issues || 0) / 10));
             
-                fadeOutPromise.done(function () {
-                    $issuesList
-                        .removeClass('server-rendered')
-                        .html(html)
-                        .attr('data-total', Number(data.total_issues || 0))
-                        .attr('data-page', currentPageFromResponse)
-                        .addClass('loaded')
-                        .css('opacity', 0)
-                        .fadeTo(500, 1, function () {
+                $issuesList
+                    .stop(true, true)
+                    .removeClass('server-rendered')
+                    .html(html)
+                    .attr(
+                        'data-total',
+                        Number(data.total_issues || 0)
+                    )
+                    .attr(
+                        'data-page',
+                        currentPageFromResponse
+                    )
+                    .addClass('loaded')
+                    .css('opacity', 0)
+                    .fadeTo(
+                        350,
+                        1,
+                        function () {
                             hideSpinner();
-                        });
-                
+                        }
+                    );
+                    
                     // New buttons now exist; refresh their saved status.
                     $(document).trigger('comicbooks:issues-rendered');
                 
@@ -1735,37 +1753,63 @@ jQuery(document).ready(function($){
                     $('#book-container')
                         .attr('aria-busy', 'false')
                         .css('visibility', 'visible');
-                });  
+            
             },
 
             error(xhr, status) {
-                $('#book-container')
-                .attr('aria-busy', 'false')
-                .css('visibility', 'visible');
 
-                hideSpinner();
-
+                const retryable =
+                    xhr.status === 429 ||
+                    xhr.status === 503 ||
+                    status === 'timeout';
+            
                 if (
-                    (
-                        xhr.status === 429 ||
-                        xhr.status === 503 ||
-                        status === 'timeout'
-                    ) &&
+                    retryable &&
                     retries > 0
                 ) {
+            
+                    /*
+                     * Keep the loading state active while the server
+                     * finishes warming the issue cache.
+                     */
+                    $('#book-container')
+                        .attr('aria-busy', 'true')
+                        .css('visibility', 'visible');
+            
+                    showSpinner();
+            
                     setTimeout(
-                        () => fetchIssues(titleId, page, search, retries - 1),
+                        () => {
+                            fetchIssues(
+                                titleId,
+                                page,
+                                search,
+                                retries - 1
+                            );
+                        },
                         apiRetryDelay(xhr)
                     );
-                } else {
-                    $issuesList
-                        .stop(true, true)
-                        .html('<p>Error loading issues.</p>')
-                        .addClass('loaded')
-                        .css('opacity', 0)
-                        .fadeTo(250, 1);
-                    $('#pagination-wrapper').empty();
+            
+                    return;
                 }
+            
+                /*
+                 * This is a real failure, or all retries have been exhausted.
+                 */
+                $('#book-container')
+                    .attr('aria-busy', 'false')
+                    .css('visibility', 'visible');
+            
+                hideSpinner();
+            
+                $issuesList
+                    .stop(true, true)
+                    .html('<p>Error loading issues.</p>')
+                    .addClass('loaded')
+                    .css('opacity', 0)
+                    .fadeTo(250, 1);
+            
+                $('#pagination-wrapper').empty();
             }
         });
     }    
