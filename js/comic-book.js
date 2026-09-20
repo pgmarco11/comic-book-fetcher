@@ -218,6 +218,7 @@ jQuery(document).ready(function($){
                 opacity: 1
             }, 200);
     }
+    
     function hideSpinner() {
         $('#loading-spinner')
             .stop(true, true)
@@ -233,6 +234,60 @@ jQuery(document).ready(function($){
                     });
             });
     }
+
+    /*
+    * Immediately clear a navigation loading state.
+    *
+    * Unlike hideSpinner(), this does not animate. Browser Back/Forward
+    * may restore the previous DOM from memory with the spinner still
+    * visible, even though no request is currently running.
+    */
+    function resetCatalogLoadingState() {
+        $('#loading-spinner')
+            .stop(true, true)
+            .removeClass('visible')
+            .addClass('hidden')
+            .css({
+                display: 'none',
+                opacity: 0
+            });
+
+        $('#book-container, #issues-list')
+            .removeAttr('aria-busy')
+            .css({
+                visibility: 'visible',
+                opacity: 1
+            });
+    }
+    /*
+    * Prevent the browser from storing a visible navigation spinner in
+    * its Back/Forward Cache.
+    */
+    $(window).on(
+        'pagehide.comicCatalogLoading',
+        function () {
+            resetCatalogLoadingState();
+        }
+    );
+
+    /*
+    * A persisted pageshow event means the browser restored this page
+    * from its Back/Forward Cache rather than loading it normally.
+    */
+    $(window).on(
+        'pageshow.comicCatalogLoading',
+        function (event) {
+            const originalEvent = event.originalEvent;
+
+            if (
+                originalEvent &&
+                originalEvent.persisted
+            ) {
+                resetCatalogLoadingState();
+            }
+        }
+    );
+        
 
     /*
     * Update the selected letter in the interface.
@@ -2294,6 +2349,12 @@ jQuery(document).ready(function($){
 
     // Popstate handler
     $(window).on('popstate', function(event) {
+        /*
+        * Browser history navigation must never inherit a loading
+        * spinner from the page being left.
+        */
+        resetCatalogLoadingState();
+
         const params =
             new URLSearchParams(window.location.search);
 

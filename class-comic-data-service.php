@@ -2350,7 +2350,7 @@ class ComicDataService {
      * Fetch the Metron API page containing the requested display page.
      * Cached stale data may be returned while the API page is refreshed
      * in the background.
-     */
+    */
     public function get_series_issues( $title_id, $current_page = 1, $search = '' ) {
         $title_id     = (int) $title_id;
         $current_page = max( 1, (int) $current_page );
@@ -2400,6 +2400,143 @@ class ComicDataService {
             );
 
         }
+
+        /**
+        * Search specifically within the currently selected series.
+        *
+        * Metron's issue endpoint supports series_name and
+        * series_year_began. We also verify series.id locally so an
+        * unrelated issue can never leak into this series page.
+        */
+        $search = trim((string) $search);
+
+        if ($search !== '') {
+
+            $series_name = trim(
+                (string) ($series['name'] ?? '')
+            );
+
+            $series_year = absint(
+                $series['year_began'] ?? 0
+            );
+
+            $args = [
+                'page'      => 1,
+                'page_size' => 100,
+            ];
+
+            if ($series_name !== '') {
+                $args['series_name'] = $series_name;
+            }
+
+            if ($series_year > 0) {
+                $args['series_year_began'] = $series_year;
+            }
+
+            $url = add_query_arg(
+                $args,
+                $this->client->api_base . 'issue/'
+            );
+
+            $response = $this->client->api_get($url);
+
+            if (
+                !is_array($response) ||
+                isset($response['error'])
+            ) {
+                return [
+                    'error' => is_array($response)
+                        ? (
+                            $response['error']
+                            ?? 'Temporary Metron error'
+                        )
+                        : 'Invalid Metron response',
+
+                    'temporary_error' =>
+                        !is_array($response) ||
+                        !empty($response['temporary_error']),
+
+                    'retry_after' => is_array($response)
+                        ? max(
+                            1,
+                            (int) (
+                                $response['retry_after']
+                                ?? 2
+                            )
+                        )
+                        : 2,
+                ];
+            }
+
+            $results = isset($response['results']) &&
+                is_array($response['results'])
+                    ? $response['results']
+                    : [];
+
+            /*
+            * Critical safeguard:
+            *
+            * Never trust the remote filters alone. Only retain issues whose
+            * Metron series ID is the series currently being viewed.
+            */
+            $results = array_values(
+                array_filter(
+                    $results,
+                    static function ($issue) use ($title_id) {
+
+                        $issue_series_id = absint(
+                            $issue['series']['id'] ?? 0
+                        );
+
+                        return $issue_series_id === $title_id;
+                    }
+                )
+            );
+
+            $results = array_values(
+                array_filter(
+                    $results,
+                    static function ($issue) use ($search) {
+            
+                        $issue_number = trim(
+                            (string) ($issue['number'] ?? '')
+                        );
+            
+                        return stripos(
+                            $issue_number,
+                            $search
+                        ) !== false;
+                    }
+                )
+            );
+
+            usort(
+                $results,
+                static function ($a, $b) {
+                    return
+                        absint($a['id'] ?? 0) <=>
+                        absint($b['id'] ?? 0);
+                }
+            );
+
+            $total = count($results);
+
+            return [
+                'series' => is_array($series)
+                    ? $series
+                    : [],
+
+                'issue_list' => [
+                    'count'   => $total,
+                    'results' => $results,
+                ],
+
+                'current_page' => 1,
+                'total_pages'  => 1,
+                'total_issues' => $total,
+                'per_page'     => $per_page,
+            ];
+        }
     
         /* ── Backward compat: legacy v5 full-list cache ──────────────────── */
         $full_key  = "metron:issue_list_full:{$title_id}:v5";
@@ -2418,11 +2555,7 @@ class ComicDataService {
     
             /*
              * Fetch ONLY the Metron API page that covers the requested display
-             * page. Previously we also pulled prev/next speculatively on every
-             * load — up to 3 Metron calls per cold load. That only ever paid
-             * off exactly at a 100-item page boundary (display page 11, 21...),
-             * and the burst limit is shared across every visitor hitting this
-             * plugin. Each page is still cached 30 days once fetched, so
+             * page. Each page is still cached 30 days once fetched, so
              * repeat views of the same page cost nothing regardless.
              */
             $current_ap = $api_pg_needed;
@@ -2614,20 +2747,9 @@ class ComicDataService {
             $nA = is_numeric( trim( (string)( $a['number'] ?? '' ) ) ) ? (float) $a['number'] : INF;
             $nB = is_numeric( trim( (string)( $b['number'] ?? '' ) ) ) ? (float) $b['number'] : INF;
             return $nA !== $nB ? ( $nA <=> $nB ) : ( (int)( $a['id'] ?? 0 ) ) <=> ( (int)( $b['id'] ?? 0 ) );
-        } );
-    
+        } );   
 
-        if ( $search ) {
-            $s   = strtolower( trim( $search ) );
-            $all = array_values( array_filter( $all, fn( $i ) =>
-                stripos( $i['number']     ?? '', $s ) !== false ||
-                stripos( $i['issue']      ?? '', $s ) !== false ||
-                stripos( $i['cover_date'] ?? '', $s ) !== false
-            ) );
-            $total = count( $all );
-        }    
-
-        if ( $use_new && ! $search ) {
+        if ( $use_new ) {
             $min_api_page    = $combined ? min( array_keys( $combined ) ) : $api_pg_needed;
             $assembled_start = ( $min_api_page - 1 ) * $api_size;
             $abs_start       = ( $current_page  - 1 ) * $per_page;

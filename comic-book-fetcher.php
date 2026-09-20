@@ -496,8 +496,8 @@ add_action('init', function () {
 function comicbooks_enqueue_scripts() {
     global $post;
 
-    $load_comic_assets = false;
-    $load_category_archive = false;
+    $load_comic_assets      = false;
+    $load_category_archive  = false;
 
     // Load on specific pages
     if (is_page(['comic-catalog', 'issues', 'issue'])) {
@@ -559,8 +559,9 @@ function comicbooks_enqueue_scripts() {
 
     }
 
-    // === WISHLIST ASSETS (always load) ===
+    // === WISHLIST ASSETS ===
     wp_enqueue_script('toastify-js', 'https://cdn.jsdelivr.net/npm/toastify-js', [], null, true);
+
     wp_enqueue_style('toastify-css', 'https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css');
 
     wp_enqueue_script(
@@ -578,10 +579,13 @@ function comicbooks_enqueue_scripts() {
         filemtime( COMICBOOKS_PLUGIN_DIR . 'css/wishlist.css' )
     );
 
-    wp_localize_script('wishlist-script', 'wishlist_ajax_obj', [
-        'ajax_url' => admin_url('admin-ajax.php'),
-        'nonce'    => wp_create_nonce('wishlist_nonce')
-    ]);
+    wp_localize_script(
+        'wishlist-script', 
+        'wishlist_ajax_obj', [
+            'ajax_url' => admin_url('admin-ajax.php'),
+            'nonce'    => wp_create_nonce('wishlist_nonce')
+        ]
+    );
 }
 add_action('wp_enqueue_scripts', 'comicbooks_enqueue_scripts');
 
