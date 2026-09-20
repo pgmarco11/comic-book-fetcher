@@ -2347,6 +2347,334 @@ class ComicDataService {
     }
 
     /**
+     * Build the complete searchable issue pool for one Metron series.
+     *
+     * Search reuses the existing 100-issue page cache rather than
+     * independently paging through Metron's /issue/ endpoint.
+     *
+     * Fresh cache is preferred. Stale cache may be served immediately
+     * while refreshes happen in the background.
+     *
+     * On a completely cold series, at most page 1 is requested
+     * synchronously so we can determine the total number of issues.
+     * Remaining missing pages are queued in the background.
+     */
+    private function get_series_issue_search_pool(
+        int $title_id,
+        int $api_size = 100
+    ): array {
+
+        $title_id = absint($title_id);
+        $api_size = max(1, absint($api_size));
+
+        if (!$title_id) {
+            return [
+                'error' => 'Invalid series ID.',
+                'temporary_error' => false,
+            ];
+        }
+
+        $total_key = "metron:issue_total:{$title_id}";
+
+        $total = max(
+            0,
+            (int) (
+                get_transient($total_key)
+                ?: 0
+            )
+        );
+
+        $pages = [];
+
+        /*
+        * First try page 1 from the normal fresh cache.
+        */
+        $page_one_key = $this->issue_page_cache_key(
+            $title_id,
+            1
+        );
+
+        $page_one = get_transient(
+            $page_one_key
+        );
+
+        /*
+        * If fresh page 1 is gone, try its stale snapshot.
+        */
+        if ($page_one === false) {
+
+            $stale_page_one =
+                $this->get_stale_issue_page(
+                    $title_id,
+                    1
+                );
+
+            if ($stale_page_one !== null) {
+
+                $page_one =
+                    $stale_page_one['results'];
+
+                $total = max(
+                    $total,
+                    (int) $stale_page_one['total']
+                );
+
+                /*
+                * Refresh stale page 1 later.
+                */
+                $this->schedule_issue_page_refresh(
+                    $title_id,
+                    1,
+                    5
+                );
+            }
+        }
+
+        /*
+        * If we still don't know the total and page 1 has never
+        * been cached, make ONE immediate Metron request.
+        *
+        * This keeps a cold search from firing 4-5 API calls at once.
+        */
+        if (
+            $total <= 0 &&
+            $page_one === false
+        ) {
+
+            $url =
+                $this->client->api_base .
+                "series/{$title_id}/issue_list/" .
+                "?page=1" .
+                "&page_size={$api_size}";
+
+            $response =
+                $this->client->api_get($url);
+
+            if (
+                !is_array($response) ||
+                isset($response['error'])
+            ) {
+                return [
+                    'error' => is_array($response)
+                        ? (
+                            $response['error']
+                            ?? 'Temporary Metron error'
+                        )
+                        : 'Invalid Metron response',
+
+                    'temporary_error' =>
+                        !is_array($response) ||
+                        !empty(
+                            $response['temporary_error']
+                        ),
+
+                    'retry_after' => is_array($response)
+                        ? max(
+                            1,
+                            (int) (
+                                $response['retry_after']
+                                ?? 2
+                            )
+                        )
+                        : 2,
+                ];
+            }
+
+            $page_one =
+                isset($response['results']) &&
+                is_array($response['results'])
+                    ? $response['results']
+                    : [];
+
+            $total = max(
+                0,
+                (int) (
+                    $response['count']
+                    ?? count($page_one)
+                )
+            );
+
+            /*
+            * Store this through the same cache mechanism normal
+            * browsing already uses.
+            */
+            $this->save_issue_page_cache(
+                $title_id,
+                1,
+                $page_one,
+                $total
+            );
+        }
+
+        /*
+        * If page 1 was already cached but the total transient
+        * expired, its stale snapshot may still know the total.
+        */
+        if ($total <= 0) {
+
+            $stale_page_one =
+                $this->get_stale_issue_page(
+                    $title_id,
+                    1
+                );
+
+            if ($stale_page_one !== null) {
+                $total = max(
+                    0,
+                    (int) $stale_page_one['total']
+                );
+            }
+        }
+
+        if (
+            is_array($page_one)
+        ) {
+            $pages[1] = $page_one;
+        }
+
+        /*
+        * We need the total to know how many 100-issue pages
+        * belong to the series.
+        */
+        if ($total <= 0) {
+            return [
+                'error' =>
+                    'Issue search data is still being prepared.',
+
+                'temporary_error' => true,
+                'retry_after' => 3,
+            ];
+        }
+
+        $api_pages = max(
+            1,
+            (int) ceil(
+                $total / $api_size
+            )
+        );
+
+        $missing_pages = [];
+
+        /*
+        * Page 1 was handled above. Check the remaining pages.
+        */
+        for (
+            $api_page = 2;
+            $api_page <= $api_pages;
+            $api_page++
+        ) {
+
+            $cache_key =
+                $this->issue_page_cache_key(
+                    $title_id,
+                    $api_page
+                );
+
+            $page_data =
+                get_transient($cache_key);
+
+            /*
+            * Fresh cached page.
+            */
+            if (
+                $page_data !== false &&
+                is_array($page_data)
+            ) {
+                $pages[$api_page] =
+                    $page_data;
+
+                continue;
+            }
+
+            /*
+            * Try the long-lived stale snapshot.
+            */
+            $stale_page =
+                $this->get_stale_issue_page(
+                    $title_id,
+                    $api_page
+                );
+
+            if ($stale_page !== null) {
+
+                $pages[$api_page] =
+                    $stale_page['results'];
+
+                /*
+                * Stale data is good enough to search immediately.
+                * Refresh it quietly in the background.
+                */
+                $this->schedule_issue_page_refresh(
+                    $title_id,
+                    $api_page,
+                    5 + ($api_page * 2)
+                );
+
+                continue;
+            }
+
+            /*
+            * Completely uncached page.
+            *
+            * Do NOT request it synchronously here.
+            * Queue it instead so one visitor cannot create a
+            * burst of Metron requests.
+            */
+            $missing_pages[] =
+                $api_page;
+
+            $this->schedule_issue_page_refresh(
+                $title_id,
+                $api_page,
+                2 + (($api_page - 1) * 2)
+            );
+        }
+
+        /*
+        * Do not return misleading partial search results.
+        *
+        * The existing AJAX retry system can try again while the
+        * background workers populate the missing pages.
+        */
+        if (!empty($missing_pages)) {
+
+            return [
+                'error' =>
+                    'Issue search cache is warming. Retrying shortly…',
+
+                'temporary_error' => true,
+
+                'retry_after' => 3,
+
+                'missing_pages' =>
+                    $missing_pages,
+            ];
+        }
+
+        ksort($pages);
+
+        $issues = [];
+
+        foreach ($pages as $page_results) {
+
+            if (!is_array($page_results)) {
+                continue;
+            }
+
+            $issues = array_merge(
+                $issues,
+                $page_results
+            );
+        }
+
+        return [
+            'success' => true,
+            'results' => $issues,
+            'total'   => $total,
+        ];
+    }
+
+    /**
      * Fetch the Metron API page containing the requested display page.
      * Cached stale data may be returned while the API page is refreshed
      * in the background.
@@ -2412,121 +2740,99 @@ class ComicDataService {
 
         if ($search !== '') {
 
-            $series_name = trim(
-                (string) ($series['name'] ?? '')
-            );
-
-            $series_year = absint(
-                $series['year_began'] ?? 0
-            );
-
-            $args = [
-                'page'      => 1,
-                'page_size' => 100,
-            ];
-
-            if ($series_name !== '') {
-                $args['series_name'] = $series_name;
-            }
-
-            if ($series_year > 0) {
-                $args['series_year_began'] = $series_year;
-            }
-
-            $url = add_query_arg(
-                $args,
-                $this->client->api_base . 'issue/'
-            );
-
-            $results = [];
-            $search_page = 1;
-            
-            do {
-            
-                $args['page'] = $search_page;
-            
-                $url = add_query_arg(
-                    $args,
-                    $this->client->api_base . 'issue/'
+            $search_pool =
+                $this->get_series_issue_search_pool(
+                    $title_id,
+                    $api_size
                 );
-            
-                $response = $this->client->api_get($url);
-            
-                if (
-                    !is_array($response) ||
-                    isset($response['error'])
-                ) {
-                    return [
-                        'error' => is_array($response)
-                            ? (
-                                $response['error']
-                                ?? 'Temporary Metron error'
-                            )
-                            : 'Invalid Metron response',
-            
-                        'temporary_error' =>
-                            !is_array($response) ||
-                            !empty($response['temporary_error']),
-            
-                        'retry_after' => is_array($response)
-                            ? max(
-                                1,
-                                (int) (
-                                    $response['retry_after']
-                                    ?? 2
-                                )
-                            )
-                            : 2,
-                    ];
-                }
-            
-                $page_results =
-                    isset($response['results']) &&
-                    is_array($response['results'])
-                        ? $response['results']
-                        : [];
-            
-                $results = array_merge(
-                    $results,
-                    $page_results
-                );
-            
-                $has_next =
-                    !empty($response['next']);
-            
-                $search_page++;
-            
-            } while ($has_next);
-            
+        
+            if (
+                !empty($search_pool['error'])
+            ) {
+                return [
+                    'error' =>
+                        $search_pool['error'],
+        
+                    'temporary_error' =>
+                        !empty(
+                            $search_pool[
+                                'temporary_error'
+                            ]
+                        ),
+        
+                    'retry_after' => max(
+                        1,
+                        (int) (
+                            $search_pool[
+                                'retry_after'
+                            ]
+                            ?? 3
+                        )
+                    ),
+                ];
+            }
+        
+            $results =
+                isset($search_pool['results']) &&
+                is_array(
+                    $search_pool['results']
+                )
+                    ? $search_pool['results']
+                    : [];
+        
             /*
-            * Critical safeguard:
-            *
-            * Never trust the remote filters alone. Only retain issues whose
-            * Metron series ID is the series currently being viewed.
-            */
+             * Defensive series check.
+             *
+             * Normally series/{id}/issue_list already guarantees this,
+             * but keep the safeguard anyway.
+             */
             $results = array_values(
                 array_filter(
                     $results,
-                    static function ($issue) use ($title_id) {
-
-                        $issue_series_id = absint(
-                            $issue['series']['id'] ?? 0
-                        );
-
-                        return $issue_series_id === $title_id;
+                    static function (
+                        $issue
+                    ) use ($title_id) {
+        
+                        $issue_series_id =
+                            absint(
+                                $issue['series']['id']
+                                ?? $title_id
+                            );
+        
+                        return
+                            $issue_series_id ===
+                            $title_id;
                     }
                 )
             );
-
+        
+            /*
+             * Search ONLY issue numbers.
+             *
+             * Examples:
+             *
+             * 55 matches:
+             * 55
+             * 155
+             * 255
+             * 355
+             *
+             * It does not search cover dates or years.
+             */
             $results = array_values(
                 array_filter(
                     $results,
-                    static function ($issue) use ($search) {
-            
+                    static function (
+                        $issue
+                    ) use ($search) {
+        
                         $issue_number = trim(
-                            (string) ($issue['number'] ?? '')
+                            (string) (
+                                $issue['number']
+                                ?? ''
+                            )
                         );
-            
+        
                         return stripos(
                             $issue_number,
                             $search
@@ -2534,28 +2840,60 @@ class ComicDataService {
                     }
                 )
             );
-
+        
+            /*
+             * Sort naturally by issue number.
+             */
             usort(
                 $results,
                 static function ($a, $b) {
+        
+                    $number_a = trim(
+                        (string) (
+                            $a['number']
+                            ?? ''
+                        )
+                    );
+        
+                    $number_b = trim(
+                        (string) (
+                            $b['number']
+                            ?? ''
+                        )
+                    );
+        
+                    if (
+                        is_numeric($number_a) &&
+                        is_numeric($number_b)
+                    ) {
+                        $comparison =
+                            (float) $number_a <=>
+                            (float) $number_b;
+        
+                        if ($comparison !== 0) {
+                            return $comparison;
+                        }
+                    }
+        
                     return
                         absint($a['id'] ?? 0) <=>
                         absint($b['id'] ?? 0);
                 }
             );
-
+        
             $total = count($results);
-
+        
             return [
-                'series' => is_array($series)
-                    ? $series
-                    : [],
-
+                'series' =>
+                    is_array($series)
+                        ? $series
+                        : [],
+        
                 'issue_list' => [
                     'count'   => $total,
                     'results' => $results,
                 ],
-
+        
                 'current_page' => 1,
                 'total_pages'  => 1,
                 'total_issues' => $total,
