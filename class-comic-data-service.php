@@ -2730,12 +2730,12 @@ class ComicDataService {
         }
 
         /**
-        * Search specifically within the currently selected series.
-        *
-        * Metron's issue endpoint supports series_name and
-        * series_year_began. We also verify series.id locally so an
-        * unrelated issue can never leak into this series page.
-        */
+         * Search specifically within the currently selected series.
+         *
+         * Search reuses the cached 100-issue series pages and filters
+         * issue numbers locally. Missing pages are populated through
+         * the existing background refresh queue.
+         */
         $search = trim((string) $search);
 
         if ($search !== '') {
