@@ -1149,6 +1149,72 @@ add_filter(
     2
 );
 
+/**
+ * Prevent full-page caching of logged-in Comic Catalog requests.
+ *
+ * The catalog exposes user-specific collection/wishlist controls whose
+ * AJAX requests use WordPress nonces. A cached page can contain a nonce
+ * belonging to another session or an expired nonce.
+ */
+function comicbooks_protect_logged_in_catalog_pages(): void
+{
+    if (!is_user_logged_in()) {
+        return;
+    }
+
+    $request_uri = isset($_SERVER['REQUEST_URI'])
+        ? wp_unslash($_SERVER['REQUEST_URI'])
+        : '';
+
+    $path = wp_parse_url(
+        $request_uri,
+        PHP_URL_PATH
+    );
+
+    if (!is_string($path)) {
+        return;
+    }
+
+    $path = trailingslashit($path);
+
+    $catalog_paths = [
+        trailingslashit(
+            wp_parse_url(
+                home_url('/comic-catalog/'),
+                PHP_URL_PATH
+            )
+        ),
+        trailingslashit(
+            wp_parse_url(
+                home_url('/comic-catalog/issues/'),
+                PHP_URL_PATH
+            )
+        ),
+        trailingslashit(
+            wp_parse_url(
+                home_url('/comic-catalog/issue/'),
+                PHP_URL_PATH
+            )
+        ),
+    ];
+
+    if (!in_array($path, $catalog_paths, true)) {
+        return;
+    }
+
+    if (!defined('DONOTCACHEPAGE')) {
+        define('DONOTCACHEPAGE', true);
+    }
+
+    nocache_headers();
+}
+
+add_action(
+    'template_redirect',
+    'comicbooks_protect_logged_in_catalog_pages',
+    0
+);
+
 
 function render_api_settings_page() {
     // Save API credentials

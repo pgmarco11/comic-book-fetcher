@@ -103,8 +103,16 @@ jQuery(document).ready(function($) {
                     });
                 }
             },
-            error: function () {
-                toast("Wishlist status check failed.", "#f00");
+            error: function (jqXHR) {
+                const payload = jqXHR.responseJSON?.data;
+            
+                const message =
+                    typeof payload === 'string'
+                        ? payload
+                        : payload?.message ||
+                          'Wishlist status check failed.';
+            
+                toast(message, "#f00");
             }
         });
     }
@@ -154,8 +162,16 @@ jQuery(document).ready(function($) {
                     toast(response.data || "Wishlist error", "#ffa500");
                 }
             },
-            error: function() {
-                toast("Error processing wishlist request.", "#f00");
+            error: function(jqXHR) {
+                const payload = jqXHR.responseJSON?.data;
+            
+                const message =
+                    typeof payload === 'string'
+                        ? payload
+                        : payload?.message ||
+                          'Error processing wishlist request.';
+            
+                toast(message, "#f00");
             }
         });
     });

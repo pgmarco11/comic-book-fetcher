@@ -49,10 +49,34 @@ function mwp_get_user_wishlist($user_id) {
  * ================================================================== */
 add_action('wp_ajax_check_wishlist_status_batch', 'check_wishlist_status_batch');
 function check_wishlist_status_batch() {
-    check_ajax_referer('wishlist_nonce', 'nonce');
-    if (!is_user_logged_in()) wp_send_json_error();
+    if (
+        !check_ajax_referer(
+            'wishlist_nonce',
+            'nonce',
+            false
+        )
+    ) {
+        wp_send_json_error(
+            [
+                'code'    => 'invalid_nonce',
+                'message' => 'Your session has expired. Please refresh the page and try again.',
+            ],
+            403
+        );
+    }
+
+    if (!is_user_logged_in()) {
+        wp_send_json_error(
+            [
+                'code'    => 'not_logged_in',
+                'message' => 'Please sign in and try again.',
+            ],
+            401
+        );
+    }
 
     $user_id = get_current_user_id();
+
     $wishlist = mwp_get_user_wishlist($user_id);
     $request = wp_unslash($_POST);
     $item_ids = array_map(
@@ -66,8 +90,31 @@ function check_wishlist_status_batch() {
 
 add_action('wp_ajax_add_to_wishlist', 'add_to_wishlist_ajax');
 function add_to_wishlist_ajax() {
-    check_ajax_referer('wishlist_nonce', 'nonce');
-    if (!is_user_logged_in()) wp_send_json_error('Login required.');
+    if (
+        !check_ajax_referer(
+            'wishlist_nonce',
+            'nonce',
+            false
+        )
+    ) {
+        wp_send_json_error(
+            [
+                'code'    => 'invalid_nonce',
+                'message' => 'Your session has expired. Please refresh the page and try again.',
+            ],
+            403
+        );
+    }
+
+    if (!is_user_logged_in()) {
+        wp_send_json_error(
+            [
+                'code'    => 'not_logged_in',
+                'message' => 'Please sign in and try again.',
+            ],
+            401
+        );
+    }
 
     $user_id = get_current_user_id();
     $wishlist = mwp_get_user_wishlist($user_id);
@@ -104,12 +151,49 @@ function add_to_wishlist_ajax() {
 
 add_action('wp_ajax_remove_from_wishlist', 'remove_from_wishlist_ajax');
 function remove_from_wishlist_ajax() {
-    check_ajax_referer('wishlist_nonce', 'nonce');
-    if (!is_user_logged_in()) wp_send_json_error();
+    if (
+        !check_ajax_referer(
+            'wishlist_nonce',
+            'nonce',
+            false
+        )
+    ) {
+        wp_send_json_error(
+            [
+                'code'    => 'invalid_nonce',
+                'message' => 'Your session has expired. Please refresh the page and try again.',
+            ],
+            403
+        );
+    }
+
+    if (!is_user_logged_in()) {
+        wp_send_json_error(
+            [
+                'code'    => 'not_logged_in',
+                'message' => 'Please sign in and try again.',
+            ],
+            401
+        );
+    }
 
     $user_id = get_current_user_id();
-    $item_id = sanitize_text_field($_POST['item_id']);
-    $wishlist = mwp_get_user_wishlist($user_id);
+
+    $request = wp_unslash($_POST);
+
+    $item_id = sanitize_text_field(
+        $request['item_id'] ?? ''
+    );
+
+    if ($item_id === '') {
+        wp_send_json_success([
+            'in_wishlist' => false,
+        ]);
+    }
+
+    $wishlist = mwp_get_user_wishlist(
+        get_current_user_id()
+    );
 
     $wishlist = array_filter($wishlist, fn($i) => $i['item_id'] !== $item_id);
     update_user_meta($user_id, 'user_wishlist', array_values($wishlist));
@@ -119,10 +203,43 @@ function remove_from_wishlist_ajax() {
 
 add_action('wp_ajax_check_wishlist_status', 'check_wishlist_status_ajax');
 function check_wishlist_status_ajax() {
-    check_ajax_referer('wishlist_nonce', 'nonce');
-    if (!is_user_logged_in()) wp_send_json_success(['in_wishlist' => false]);
+    if (
+        !check_ajax_referer(
+            'wishlist_nonce',
+            'nonce',
+            false
+        )
+    ) {
+        wp_send_json_error(
+            [
+                'code'    => 'invalid_nonce',
+                'message' => 'Your session has expired. Please refresh the page and try again.',
+            ],
+            403
+        );
+    }
 
-    $item_id = sanitize_text_field($_POST['item_id']);
+    if (!is_user_logged_in()) {
+        wp_send_json_success([
+            'in_wishlist' => false,
+        ]);
+    }
+
+    $request = wp_unslash($_POST);
+
+    $item_id = sanitize_text_field(
+        $request['item_id'] ?? ''
+    );
+
+    if ($item_id === '') {
+        wp_send_json_error(
+            [
+                'code'    => 'missing_item_id',
+                'message' => 'Missing wishlist item information.',
+            ],
+            400
+        );
+    }
     $wishlist = mwp_get_user_wishlist(get_current_user_id());
 
     $in = in_array($item_id, array_column($wishlist, 'item_id'), true);
