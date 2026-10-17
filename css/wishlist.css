@@ -39,6 +39,8 @@ ul.user-wishlist li {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  margin: 0 auto;
+  text-align: center;
 }
 
 /* HALFTONE */
