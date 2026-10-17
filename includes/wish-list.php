@@ -1,4 +1,29 @@
 <?php
+
+function mwp_wishlist_ebay_id(array $item) {
+    $id = isset($item['ebay_id']) && is_scalar($item['ebay_id']) ? trim((string) $item['ebay_id']) : '';
+    if (preg_match('/\A[0-9]{9,20}\z/', $id)) return $id;
+    if (preg_match('/\Av1\|([0-9]{9,20})\|[0-9]+\z/', $id, $m)) return $m[1];
+    $url = isset($item['item_url']) && is_string($item['item_url']) ? wp_parse_url($item['item_url']) : false;
+    if (!is_array($url) || !preg_match('/(?:^|\.)ebay\.[a-z.]+\z/', strtolower($url['host'] ?? ''))) return '';
+    return preg_match('~^/itm/(?:[^/]+/)?([0-9]{9,20})/?$~', $url['path'] ?? '', $m) ? $m[1] : '';
+}
+
+function mwp_wishlist_request_item(array $request) {
+    $item = [];
+    foreach (['item_id', 'type', 'ebay_id', 'item_url'] as $key) {
+        $item[$key] = isset($request[$key]) && is_scalar($request[$key]) ? sanitize_text_field((string) $request[$key]) : '';
+    }
+    return $item;
+}
+
+function mwp_wishlist_items_match(array $saved, array $candidate) {
+    $ebay = mwp_wishlist_ebay_id($candidate);
+    if ($ebay !== '') return mwp_wishlist_ebay_id($saved) === $ebay;
+    return (string) ($saved['item_id'] ?? '') === (string) ($candidate['item_id'] ?? '')
+        && (($candidate['type'] ?? '') === '' || ($saved['type'] ?? '') === $candidate['type']);
+}
+
 function mwp_get_user_wishlist($user_id) {
     $wishlist = get_user_meta($user_id, 'user_wishlist', true);
 
@@ -41,6 +66,15 @@ function mwp_get_user_wishlist($user_id) {
 
     unset($item);
 
+    foreach ($wishlist as &$item) {
+        if (!is_array($item)) continue;
+        $id = mwp_wishlist_ebay_id($item);
+        if ($id !== '') {
+            $item['ebay_id'] = $id;
+            $item['item_url'] = 'https://www.ebay.com/itm/' . $id;
+        }
+    }
+    unset($item);
     return $wishlist;
 }
 
@@ -79,13 +113,25 @@ function check_wishlist_status_batch() {
 
     $wishlist = mwp_get_user_wishlist($user_id);
     $request = wp_unslash($_POST);
-    $item_ids = array_map(
-        'sanitize_text_field',
-        (array) ($request['item_ids'] ?? [])
-    );
-
-    $in_wishlist = array_intersect(array_column($wishlist, 'item_id'), $item_ids);
-    wp_send_json_success(array_values($in_wishlist));
+    $items = isset($request['items']) && is_array($request['items']) ? $request['items'] : [];
+    if (!$items && isset($request['item_ids']) && is_array($request['item_ids'])) {
+        foreach ($request['item_ids'] as $id) {
+            if (is_scalar($id)) $items[] = ['item_id' => (string) $id];
+        }
+    }
+    $matched = [];
+    foreach ($items as $candidate) {
+        if (!is_array($candidate)) continue;
+        $candidate = mwp_wishlist_request_item($candidate);
+        if ($candidate['item_id'] === '') continue;
+        foreach ($wishlist as $saved) {
+            if (is_array($saved) && mwp_wishlist_items_match($saved, $candidate)) {
+                $matched[] = $candidate['item_id'];
+                break;
+            }
+        }
+    }
+    wp_send_json_success(array_values(array_unique($matched)));
 }
 
 add_action('wp_ajax_add_to_wishlist', 'add_to_wishlist_ajax');
@@ -138,8 +184,13 @@ function add_to_wishlist_ajax() {
         );
     }
 
+    $ebay = mwp_wishlist_ebay_id($new);
+    if ($ebay !== '') {
+        $new['ebay_id'] = $ebay;
+        $new['item_url'] = 'https://www.ebay.com/itm/' . $ebay;
+    }
     foreach ($wishlist as $item) {
-        if ($item['type'] === $new['type'] && $item['item_id'] === $new['item_id']) {
+        if (is_array($item) && mwp_wishlist_items_match($item, $new)) {
             wp_send_json_error('Already in wishlist.');
         }
     }
@@ -195,7 +246,18 @@ function remove_from_wishlist_ajax() {
         get_current_user_id()
     );
 
-    $wishlist = array_filter($wishlist, fn($i) => $i['item_id'] !== $item_id);
+    $candidate = mwp_wishlist_request_item($request);
+    if (mwp_wishlist_ebay_id($candidate) === '') {
+        foreach ($wishlist as $saved) {
+            if (is_array($saved) && (string) ($saved['item_id'] ?? '') === $item_id) {
+                $candidate = $saved;
+                break;
+            }
+        }
+    }
+    $wishlist = array_filter($wishlist, static function ($saved) use ($candidate) {
+        return !is_array($saved) || !mwp_wishlist_items_match($saved, $candidate);
+    });
     update_user_meta($user_id, 'user_wishlist', array_values($wishlist));
 
     wp_send_json_success();
@@ -242,7 +304,14 @@ function check_wishlist_status_ajax() {
     }
     $wishlist = mwp_get_user_wishlist(get_current_user_id());
 
-    $in = in_array($item_id, array_column($wishlist, 'item_id'), true);
+    $in = false;
+    $candidate = mwp_wishlist_request_item($request);
+    foreach ($wishlist as $saved) {
+        if (is_array($saved) && mwp_wishlist_items_match($saved, $candidate)) {
+            $in = true;
+            break;
+        }
+    }
     wp_send_json_success(['in_wishlist' => $in]);
 }
 

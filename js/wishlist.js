@@ -72,14 +72,20 @@ jQuery(document).ready(function($) {
 
     // Batch wishlist status check
     function checkWishlistStatusBatch() {
-        let itemIds = [];
+        let items = [];
 
         $('.add-to-wishlist').each(function () {
-            let id = $(this).data('item-id');
-            if (id) itemIds.push(id);
+            const button = $(this);
+            const id = button.attr('data-item-id');
+            if (id) items.push({
+                item_id: id,
+                type: button.attr('data-type') || '',
+                ebay_id: button.attr('data-ebay-id') || '',
+                item_url: button.attr('data-item-url') || ''
+            });
         });
 
-        if (itemIds.length === 0) return;
+        if (items.length === 0) return;
 
         $.ajax({
             url: wishlist_ajax_obj.ajax_url,
@@ -87,19 +93,19 @@ jQuery(document).ready(function($) {
             data: {
                 action: 'check_wishlist_status_batch',
                 nonce: wishlist_ajax_obj.nonce,
-                item_ids: itemIds
+                items: items
             },
             success: function (response) {
                 if (response.success && Array.isArray(response.data)) {
                     $('.add-to-wishlist').each(function () {
                         let button = $(this);
-                        let id = button.data('item-id').toString();
+                        let id = button.attr('data-item-id') || '';
 
-                        if (response.data.includes(id)) {
-                            button.addClass('in-wishlist')
-                                .css('background-color', 'red')
-                                .text('Remove from Wishlist');
-                        }
+                        const saved = response.data.includes(id);
+                        button.toggleClass('in-wishlist', saved)
+                            .css('background-color', saved ? 'red' : '')
+                            .css('color', saved ? '#fff' : '')
+                            .text(saved ? 'Remove from Wishlist' : 'Add to Wishlist');
                     });
                 }
             },
@@ -122,13 +128,18 @@ jQuery(document).ready(function($) {
         e.preventDefault();
 
         let button = $(this);
+        if (button.prop('disabled')) return;
         let isInWishlist = button.hasClass('in-wishlist');
         let data = {
             action: isInWishlist ? 'remove_from_wishlist' : 'add_to_wishlist',
             nonce: wishlist_ajax_obj.nonce,
-            item_id: button.data('item-id'),
+            item_id: button.attr('data-item-id'),
+            type: button.attr('data-type') || '',
+            ebay_id: button.attr('data-ebay-id') || '',
+            item_url: button.attr('data-item-url') || '',
         };
 
+        button.prop('disabled', true);
         if (!isInWishlist) {
             data.type = button.data('type');
             data.title = button.data('title');
@@ -138,13 +149,14 @@ jQuery(document).ready(function($) {
             data.volume = button.data('volume');
         } else {
             const confirmed = await toastConfirm('Are you sure you want to remove this item from your wishlist?');
-            if (!confirmed) return;
+            if (!confirmed) { button.prop('disabled', false); return; }
         }
 
         $.ajax({
             url: wishlist_ajax_obj.ajax_url,
             method: 'POST',
             data: data,
+            complete: function () { button.prop("disabled", false); },
             success: function(response) {
                 if (response.success) {
                     if (isInWishlist) {
@@ -158,7 +170,9 @@ jQuery(document).ready(function($) {
                             .text('Remove from Wishlist');
                         toast("Added to wishlist!", "#27ae60");
                     }
+                    checkWishlistStatusBatch();
                 } else {
+                    checkWishlistStatusBatch();
                     toast(response.data || "Wishlist error", "#ffa500");
                 }
             },
@@ -234,10 +248,11 @@ jQuery(document).ready(function($) {
     });
 
     // Recheck wishlist buttons after AJAX replaces the issues.
-    $(document).on('comicbooks:issues-rendered', function () {
+    $(document).on('comicbooks:issues-rendered tcs:wishlist-refresh', function () {
         checkWishlistStatusBatch();
     });
 
     // Check buttons rendered during the initial page load.
     checkWishlistStatusBatch();
 });
+
