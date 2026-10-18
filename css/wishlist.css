@@ -118,6 +118,9 @@
   #fffdf8;
   border: 3px solid #111;
   box-shadow: 5px 5px 0 #001c38;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 /* Cover stage */
@@ -323,6 +326,35 @@
   letter-spacing: 0.8px;
   text-align: center;
   pointer-events: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .tcs-wishlist ul.user-wishlist > li:hover {
+    z-index: 2;
+    transform: translateY(-6px) rotate(-1deg) scale(1.015);
+    box-shadow: 9px 11px 0 #ffad24;
+  }
+
+  /* Alternate the tilt direction for neighboring cards. */
+  .tcs-wishlist[data-view="cards"] ul.user-wishlist > li:nth-child(even):hover {
+    transform: translateY(-6px) rotate(1deg) scale(1.015);
+  }
+
+  /* Keep list rows easier to scan. */
+  .tcs-wishlist[data-view="list"] ul.user-wishlist > li:hover {
+    transform: translateY(-3px) rotate(-0.2deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tcs-wishlist ul.user-wishlist > li {
+    transition: none;
+  }
+
+  .tcs-wishlist[data-view] ul.user-wishlist > li:hover,
+  .tcs-wishlist[data-view="cards"] ul.user-wishlist > li:nth-child(even):hover {
+    transform: none;
+  }
 }
 
 /* Mobile */
