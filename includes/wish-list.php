@@ -82,6 +82,7 @@ function mwp_get_user_wishlist($user_id) {
  *  WISHLIST FUNCTIONS
  * ================================================================== */
 add_action('wp_ajax_check_wishlist_status_batch', 'check_wishlist_status_batch');
+
 function check_wishlist_status_batch() {
     if (
         !check_ajax_referer(
@@ -135,6 +136,7 @@ function check_wishlist_status_batch() {
 }
 
 add_action('wp_ajax_add_to_wishlist', 'add_to_wishlist_ajax');
+
 function add_to_wishlist_ajax() {
     if (
         !check_ajax_referer(
@@ -201,6 +203,7 @@ function add_to_wishlist_ajax() {
 }
 
 add_action('wp_ajax_remove_from_wishlist', 'remove_from_wishlist_ajax');
+
 function remove_from_wishlist_ajax() {
     if (
         !check_ajax_referer(
@@ -264,6 +267,7 @@ function remove_from_wishlist_ajax() {
 }
 
 add_action('wp_ajax_check_wishlist_status', 'check_wishlist_status_ajax');
+
 function check_wishlist_status_ajax() {
     if (
         !check_ajax_referer(
@@ -373,51 +377,119 @@ function mwp_wishlist_tools_url(array $item) {
     if ($term instanceof WP_Term) $args['category_term'] = $term->term_id;
     return add_query_arg($args, home_url('/tools/'));
 }
-
 add_shortcode('user_wishlist', 'mwp_display_user_wishlist');
+
 function mwp_display_user_wishlist() {
     if (!is_user_logged_in()) {
-        echo '<p class="has-white-color">Please <a class="text-white" href="' . esc_url(
-            wp_login_url(
-                home_url('/wish-list/')
-            )
-        ) . '">log in</a> to view your wishlist.</p>';
-        return; 
+        return '<p class="has-white-color">Please <a class="text-white" href="' .
+            esc_url(wp_login_url(home_url('/wish-list/'))) .
+            '">log in</a> to view your wishlist.</p>';
     }
 
     $wishlist = mwp_get_user_wishlist(get_current_user_id());
+
     if (empty($wishlist)) {
         return '<p class="has-white-color">Your wishlist is empty.</p>';
     }
 
-    ob_start(); ?>
-    <ul class="user-wishlist" style="list-style:none;padding:0;">
-        <?php foreach ($wishlist as $item): ?>
-            <li style="margin-bottom:15px;">
-                <img src="<?php echo esc_url($item['image_url']); ?>" alt="" style="object-fit:cover;">
-                <div style="flex:1;">
-                    <a href="<?php echo esc_url($item['item_url']); ?>" target="_blank"><strong><?php echo esc_html($item['title']); ?></strong></a>
-                    <?php if ($item['volume']): ?>
-                        <small>Vol <?php echo esc_html($item['volume']); ?></small>
-                    <?php elseif (!empty($item['ebay_id'])): ?>
-                        <small>eBay <?php echo esc_html($item['ebay_id']); ?></small>
-                    <?php endif; ?>
-                </div>
-                <?php
+    // Remember presentation only, never wishlist contents.
+    $saved_view = isset($_COOKIE['tcs_wishlist_view'])
+        && is_string($_COOKIE['tcs_wishlist_view'])
+        ? wp_unslash($_COOKIE['tcs_wishlist_view'])
+        : '';
+
+    $view = in_array($saved_view, ['list', 'cards'], true)
+        ? $saved_view
+        : 'cards';
+
+    ob_start();
+    ?>
+    <div class="tcs-wishlist" data-view="<?php echo esc_attr($view); ?>">
+        <div class="wishlist-toolbar">
+            <p class="wishlist-summary">
+                <strong class="wishlist-count"><?php
+                    echo esc_html(count($wishlist));
+                ?></strong>
+                <span>saved items</span>
+            </p>
+            <div
+                class="wishlist-view-controls"
+                role="group"
+                aria-label="Wishlist display"
+                hidden
+            >
+                <span>View:</span>
+
+                <?php foreach (['list' => 'List', 'cards' => 'Cards'] as $key => $label): ?>
+                    <button
+                        type="button"
+                        class="wishlist-view-button"
+                        data-wishlist-view="<?php echo esc_attr($key); ?>"
+                        aria-pressed="<?php echo $view === $key ? 'true' : 'false'; ?>"
+                    >
+                        <?php echo esc_html($label); ?>
+                    </button>
+                <?php endforeach; ?>
+            </div>
+        </div><!-- .wishlist-toolbar -->
+
+        <ul class="user-wishlist">
+            <?php foreach ($wishlist as $item):
                 $tools_url = mwp_wishlist_tools_url($item);
                 $tools_label = mwp_wishlist_ebay_id($item) !== ''
-                    ? 'Check Item on Tools' : 'Search eBay';
-                ?>
-                <?php if ($tools_url !== ''): ?>
-                    <a class="btn btn-secondary" href="<?php echo esc_url($tools_url); ?>">
-                        <?php echo esc_html($tools_label); ?>
-                    </a>
-                <?php endif; ?>
-                <button type="button" class="remove-from-wishlist button" data-item-id="<?php echo esc_attr($item['item_id']); ?>">Remove</button>
-            </li>
-        <?php endforeach; ?>
-    </ul>
+                    ? 'Check Item on Tools'
+                    : 'Search eBay';
+            ?>
+                <li>
+                    <div class="wishlist-image">
+                        <?php if (!empty($item['image_url'])): ?>
+                            <img
+                                src="<?php echo esc_url($item['image_url']); ?>"
+                                alt=""
+                                loading="lazy"
+                                decoding="async"
+                            >
+                        <?php else: ?>
+                            <span>No image</span>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="wishlist-details">
+                        <a
+                            href="<?php echo esc_url($item['item_url']); ?>"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                        >
+                            <strong><?php echo esc_html($item['title']); ?></strong>
+                        </a>
+
+                        <?php if (!empty($item['volume'])): ?>
+                            <small>Vol <?php echo esc_html($item['volume']); ?></small>
+                        <?php endif; ?>
+
+                        <?php if (!empty($item['ebay_id'])): ?>
+                            <small>eBay <?php echo esc_html($item['ebay_id']); ?></small>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="wishlist-actions">
+                        <?php if ($tools_url !== ''): ?>
+                            <a class="btn btn-secondary" href="<?php echo esc_url($tools_url); ?>">
+                                <?php echo esc_html($tools_label); ?>
+                            </a>
+                        <?php endif; ?>
+
+                        <button
+                            type="button"
+                            class="remove-from-wishlist button"
+                            data-item-id="<?php echo esc_attr($item['item_id']); ?>"
+                        >Remove</button>
+                    </div>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+    </div>
     <?php
+
     return ob_get_clean();
 }
-

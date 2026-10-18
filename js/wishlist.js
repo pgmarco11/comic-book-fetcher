@@ -123,6 +123,35 @@ jQuery(document).ready(function($) {
         });
     }
 
+    // Show controls only when JavaScript is available.
+    $('.tcs-wishlist .wishlist-view-controls').prop('hidden', false);
+
+    $(document).on('click', '[data-wishlist-view]', function () {
+        const view = $(this).attr('data-wishlist-view');
+    
+        if (view !== 'list' && view !== 'cards') {
+            return;
+        }
+    
+        $('.tcs-wishlist').attr('data-view', view);
+    
+        $('[data-wishlist-view]').each(function () {
+                $(this).attr(
+                    'aria-pressed',
+                    String($(this).attr('data-wishlist-view') === view)
+                );
+        });
+    
+        const secure = window.location.protocol === 'https:'
+                ? '; Secure'
+                : '';
+    
+        document.cookie =
+            'tcs_wishlist_view=' + view +
+            '; Max-Age=31536000; Path=/; SameSite=Lax' +
+            secure;
+    });
+
     // Handle add/remove wishlist with async confirmation for removal
     $(document).on('click', '.add-to-wishlist', async function(e) {
         e.preventDefault();
@@ -231,9 +260,13 @@ jQuery(document).ready(function($) {
     
                 const list = button.closest('.user-wishlist');
                 button.closest('li').remove();
-    
+
+                list.closest('.tcs-wishlist')
+                    .find('.wishlist-count')
+                    .text(list.children('li').length);
+                    
                 if (!list.children('li').length) {
-                    list.replaceWith(
+                    list.closest('.tcs-wishlist').replaceWith(
                         '<p class="has-white-color">Your wishlist is empty.</p>'
                     );
                 }

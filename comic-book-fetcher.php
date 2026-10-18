@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Comic Books Fetcher & Manager
  * Description: Manage Comic Collection, edit API settings, and enqueues scripts for displaying comic book data from the Metron & Comic Vine API.
- * Version: 1.1.0
+ * Version: 1.1.1
  * Author: Peter Giammarco
  * Author URI: https://www.pgiammarco.com
  * License: GPL-2.0-or-later
