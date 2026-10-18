@@ -277,7 +277,6 @@
   outline-offset: 3px;
 }
 
-/* List view: every row uses the same columns and full width */
 /* List view: continuous rows with existing comic styling */
 .tcs-wishlist[data-view="list"] ul.user-wishlist {
   grid-template-columns: minmax(0, 1fr);

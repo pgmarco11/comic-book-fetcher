@@ -462,14 +462,12 @@ function mwp_display_user_wishlist() {
                         >
                             <strong><?php echo esc_html($item['title']); ?></strong>
                         </a>
-
+                        
                         <?php if (!empty($item['volume'])): ?>
                             <small>Vol <?php echo esc_html($item['volume']); ?></small>
                         <?php endif; ?>
 
-                        <?php if (!empty($item['ebay_id'])): ?>
-                            <small>eBay <?php echo esc_html($item['ebay_id']); ?></small>
-                        <?php endif; ?>
+
                     </div>
 
                     <div class="wishlist-actions">
