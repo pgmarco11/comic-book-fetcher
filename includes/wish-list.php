@@ -315,6 +315,65 @@ function check_wishlist_status_ajax() {
     wp_send_json_success(['in_wishlist' => $in]);
 }
 
+/** Resolve a local WordPress category; never mistake a Metron ID for a post ID. */
+function mwp_wishlist_category_term(array $item) {
+    $id = (string) ($item['item_id'] ?? '');
+    $url = wp_parse_url((string) ($item['item_url'] ?? ''));
+    $comic_path = untrailingslashit((string) wp_parse_url(home_url('/comic-catalog/issue/'), PHP_URL_PATH));
+    $is_comic = strpos($id, 'metron:issue:') === 0
+        || (is_array($url) && untrailingslashit($url['path'] ?? '') === $comic_path);
+    if ($is_comic) {
+        $term = get_category_by_slug('comic-books-memorabilia');
+        return $term instanceof WP_Term ? $term : null;
+    }
+    // Discogs items should search within records/music.
+    $host = is_array($url)
+        ? strtolower($url['host'] ?? '')
+        : '';
+
+    if (
+        $host === 'discogs.com' ||
+        substr($host, -12) === '.discogs.com'
+    ) {
+        foreach (['vinyl-records', 'records', 'music'] as $slug) {
+            $term = get_category_by_slug($slug);
+
+            if ($term instanceof WP_Term) {
+                return $term;
+            }
+        }
+    }
+
+    if (($item['type'] ?? '') !== 'post' || !ctype_digit($id)) return null;
+    $terms = get_the_terms((int) $id, 'category');
+    if (!is_array($terms)) return null;
+    $best = null;
+    $depth = -1;
+    foreach ($terms as $term) {
+        if (!$term instanceof WP_Term || $term->slug === 'uncategorized') continue;
+        $candidate_depth = count(get_ancestors($term->term_id, 'category', 'taxonomy'));
+        if ($candidate_depth > $depth) {
+            $best = $term;
+            $depth = $candidate_depth;
+        }
+    }
+    return $best;
+}
+
+/** Build a Tools link from an existing wishlist entry. */
+function mwp_wishlist_tools_url(array $item) {
+    $id = mwp_wishlist_ebay_id($item);
+    if ($id !== '') {
+        return add_query_arg('item_id', $id, home_url('/tools/'));
+    }
+    $title = trim(wp_strip_all_tags((string) ($item['title'] ?? '')));
+    if ($title === '') return '';
+    $args = ['search_query' => rawurlencode($title)];
+    $term = mwp_wishlist_category_term($item);
+    if ($term instanceof WP_Term) $args['category_term'] = $term->term_id;
+    return add_query_arg($args, home_url('/tools/'));
+}
+
 add_shortcode('user_wishlist', 'mwp_display_user_wishlist');
 function mwp_display_user_wishlist() {
     if (!is_user_logged_in()) {
@@ -340,10 +399,20 @@ function mwp_display_user_wishlist() {
                     <a href="<?php echo esc_url($item['item_url']); ?>" target="_blank"><strong><?php echo esc_html($item['title']); ?></strong></a>
                     <?php if ($item['volume']): ?>
                         <small>Vol <?php echo esc_html($item['volume']); ?></small>
-                    <?php elseif ($item['ebay_id']): ?>
-                        <small><a href="https://thecollectiblespot.com/tools/?item_id=<?php echo urlencode($item['ebay_id']); ?>">eBay <?php echo esc_html($item['ebay_id']); ?></a></small>
+                    <?php elseif (!empty($item['ebay_id'])): ?>
+                        <small>eBay <?php echo esc_html($item['ebay_id']); ?></small>
                     <?php endif; ?>
                 </div>
+                <?php
+                $tools_url = mwp_wishlist_tools_url($item);
+                $tools_label = mwp_wishlist_ebay_id($item) !== ''
+                    ? 'Check Item on Tools' : 'Search eBay';
+                ?>
+                <?php if ($tools_url !== ''): ?>
+                    <a class="btn btn-secondary" href="<?php echo esc_url($tools_url); ?>">
+                        <?php echo esc_html($tools_label); ?>
+                    </a>
+                <?php endif; ?>
                 <button type="button" class="remove-from-wishlist button" data-item-id="<?php echo esc_attr($item['item_id']); ?>">Remove</button>
             </li>
         <?php endforeach; ?>
@@ -351,3 +420,4 @@ function mwp_display_user_wishlist() {
     <?php
     return ob_get_clean();
 }
+
