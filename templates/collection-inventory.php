@@ -86,6 +86,10 @@ $inventory_url = tcs_inventory_url();
                         'Series + issue number',
                     'oldest' =>
                         'Oldest added',
+                    'price_asc' =>
+                        'Price: Low to High',
+                    'price_desc' =>
+                        'Price: High to Low',
                 ] as $key => $label) : ?>
                     <option value="<?php  echo esc_attr($key); ?>" 
                                     <?php selected($value(

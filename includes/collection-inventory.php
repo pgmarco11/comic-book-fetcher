@@ -578,6 +578,56 @@ function tcs_inventory_overview(
     ];
 }
 
+/**
+ * Sort recorded prices numerically, with missing prices last.
+ */
+function tcs_inventory_sort_by_price(
+    array &$records,
+    bool $descending = false
+): void {
+    $price_in_cents = static function ($record): ?int {
+        $price = trim((string) ($record['price'] ?? ''));
+
+        if (!preg_match('/^\d{1,7}(\.\d{1,2})?$/D', $price)) {
+            return null;
+        }
+
+        $parts = explode('.', $price, 2);
+
+        return ((int) $parts[0] * 100)
+            + (int) str_pad($parts[1] ?? '', 2, '0');
+    };
+
+    usort(
+        $records,
+        static function ($a, $b) use (
+            $price_in_cents,
+            $descending
+        ): int {
+            $a_price = $price_in_cents($a);
+            $b_price = $price_in_cents($b);
+
+            // Blank or invalid prices stay last in either direction.
+            if ($a_price === null && $b_price !== null) {
+                return 1;
+            }
+
+            if ($a_price !== null && $b_price === null) {
+                return -1;
+            }
+
+            $comparison = $descending
+                ? ($b_price <=> $a_price)
+                : ($a_price <=> $b_price);
+
+            // Stable ordering when prices match.
+            return $comparison ?: (
+                (int) $a['id'] <=> (int) $b['id']
+            );
+        }
+    );
+}
+
 function tcs_inventory_results(array $input): array {
     $page = max(1, absint(tcs_inventory_text($input['collection_page'] ?? 1)));
     $sort = tcs_inventory_text(
@@ -680,7 +730,11 @@ function tcs_inventory_results(array $input): array {
         ];
     }
 
-    if ($sort === 'collection') {
+    if (in_array(
+        $sort,
+        ['collection', 'price_asc', 'price_desc'],
+        true
+    )) {
 
         /*
          * Retrieve every matching collection entry first.
@@ -708,9 +762,14 @@ function tcs_inventory_results(array $input): array {
             $collection_query->posts
         );
     
-        tcs_inventory_sort_records(
-            $records
-        );
+        if ($sort === 'collection') {
+            tcs_inventory_sort_records($records);
+        } else {
+            tcs_inventory_sort_by_price(
+                $records,
+                $sort === 'price_desc'
+            );
+        }
     
         $total = count($records);
     
