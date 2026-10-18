@@ -44,6 +44,7 @@ class Comicbooks {
         $ajax_actions = [
             'load_publishers' => 'ajax_load_publishers',
             'load_book' => 'ajax_load_book',
+            'load_series_letters' => 'ajax_load_series_letters',
             'load_issues' => 'ajax_load_issues',
             'load_series_images_batch' => 'ajax_load_series_images_batch',
             'load_publisher_images_batch' => 'ajax_load_publisher_images_batch',
@@ -84,10 +85,38 @@ class Comicbooks {
 
     }
 
+    public function ajax_load_series_letters() {
+        check_ajax_referer(
+            'comicbooks_fetchers_data',
+            'nonce'
+        );
     
-         /* -----------------------------------------------------------------
+        $publisher_id = (
+            isset($_POST['publisher_id']) &&
+            is_scalar($_POST['publisher_id'])
+        )
+            ? absint(wp_unslash($_POST['publisher_id']))
+            : 0;
+    
+        if (!$publisher_id) {
+            wp_send_json_error(
+                ['message' => 'Select a valid publisher.'],
+                400
+            );
+        }
+    
+        wp_send_json_success(
+            $this->data_service->get_series_letters($publisher_id)
+        );
+    }
+
+    
+    /* 
+     * -----------------------------------------------------------------
      *  AJAX – Publishers (list + detailed info)
-     * ----------------------------------------------------------------- */
+     * ----------------------------------------------------------------- 
+     * 
+    */
     public function ajax_load_publishers() {
         check_ajax_referer(
             'comicbooks_fetchers_data',

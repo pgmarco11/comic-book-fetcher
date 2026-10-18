@@ -26,6 +26,10 @@ class ComicRenderer {
         return $this->data_service->get_publishers( $name, $page, $per_page, $letter, $bypass_cache );
     }
 
+    public function get_series_letters($publisher_id): array {
+        return $this->data_service->get_series_letters($publisher_id);
+    }
+
     public function get_publisher_info( $publisher_id ) {
         return $this->data_service->get_publisher_info( $publisher_id );
     }

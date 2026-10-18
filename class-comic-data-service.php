@@ -2090,6 +2090,67 @@ class ComicDataService {
     }
 
     /**
+    * Read available letters from the complete cached publisher index.
+    * Does not make API requests.
+    */
+    public function get_series_letters($publisher_id): array {
+        $publisher_id = absint($publisher_id);
+
+        $progress = get_transient(
+            "metron:series_scan_progress:v1:{$publisher_id}"
+        );
+
+        if (
+            !is_array($progress) ||
+            empty($progress['exhausted']) ||
+            !isset($progress['raw_items']) ||
+            !is_array($progress['raw_items'])
+        ) {
+            return [
+                'complete' => false,
+                'letters'  => [],
+            ];
+        }
+
+        $letters = [];
+
+        foreach ($progress['raw_items'] as $item) {
+            if (
+                !is_array($item) ||
+                !isset($item['name']) ||
+                !is_string($item['name'])
+            ) {
+                // Do not hide letters based on malformed cached data.
+                return [
+                    'complete' => false,
+                    'letters'  => [],
+                ];
+            }
+
+            // Match the existing series filter's title handling.
+            $title = preg_replace(
+                '/^(The|A|An)\s+/i',
+                '',
+                trim($item['name'])
+            );
+
+            $first = strtoupper(mb_substr($title, 0, 1));
+
+            $letter = (
+                $first !== '' &&
+                ctype_alpha($first)
+            ) ? $first : '#';
+
+            $letters[$letter] = true;
+        }
+
+        return [
+            'complete' => true,
+            'letters'  => array_keys($letters),
+        ];
+    }
+
+    /**
      * Apply letter and search filters to a raw series map.
      */
     private function filter_series_list( array $full, string $letter, string $search ): array {

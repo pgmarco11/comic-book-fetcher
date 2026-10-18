@@ -288,6 +288,131 @@ jQuery(document).ready(function($){
         }
     );
         
+    let seriesLettersTimer = null;
+    let seriesLettersRequestId = 0;
+    let seriesLettersPublisherId = null;
+
+    function refreshSeriesLetters(publisherId) {
+        const parsedId = Number(publisherId);
+
+        const id = Number.isInteger(parsedId) && parsedId > 0
+            ? parsedId
+            : null;
+    
+        // Keep the existing letters when only the selected letter changes.
+        if (id === seriesLettersPublisherId) {
+            return;
+        }
+    
+        seriesLettersPublisherId = id;
+    
+        clearTimeout(seriesLettersTimer);
+        const requestId = ++seriesLettersRequestId;
+
+        const letterContainer = $('#letter-buttons');
+
+        const renderedPublisherId = Number(
+            letterContainer.attr('data-publisher-id')
+        );
+
+        let renderedLetters = null;
+
+        try {
+            renderedLetters = JSON.parse(
+                letterContainer.attr('data-series-letters') || 'null'
+            );
+        } catch (error) {
+            renderedLetters = null;
+        }
+
+        if (
+            id !== null &&
+            id === renderedPublisherId &&
+            renderedLetters?.complete === true &&
+            Array.isArray(renderedLetters.letters)
+        ) {
+            const available = new Set(renderedLetters.letters);
+
+            letterContainer.find('.letter-btn').each(function () {
+                const letter = $(this).attr('data-letter');
+
+                $(this).toggle(
+                    letter === 'all' || available.has(letter)
+                );
+            });
+
+            // PHP supplied the completed index; no AJAX check is needed.
+            return;
+        }
+    
+        const buttons = $('#letter-buttons .letter-btn');
+
+        if (id === null) {
+            // Publisher browsing keeps the full alphabet.
+            buttons.show();
+            return;
+        }
+        
+        // Series browsing shows only All until availability is known.
+        buttons.each(function () {
+            $(this).toggle(
+                $(this).attr('data-letter') === 'all'
+            );
+        });
+
+        function checkLetters(attempt = 0) {
+            if (requestId !== seriesLettersRequestId) {
+                return;
+            }
+
+            $.ajax({
+                url: comicbooks_fetchers_data.ajax_url,
+                method: 'POST',
+                dataType: 'json',
+                data: {
+                    action: 'load_series_letters',
+                    nonce: comicbooks_fetchers_data.nonce,
+                    publisher_id: id
+                }
+            }).done(function (response) {
+                // Ignore responses for a previously selected publisher.
+                if (requestId !== seriesLettersRequestId) {
+                    return;
+                }
+
+                if (!response.success || !response.data) {
+                    return;
+                }
+
+                if (response.data.complete !== true) {
+                    // Give the existing background index time to finish.
+                    if (attempt < 11) {
+                        seriesLettersTimer = setTimeout(function () {
+                            checkLetters(attempt + 1);
+                        }, 5000);
+                    }
+
+                    return;
+                }
+
+                if (!Array.isArray(response.data.letters)) {
+                    return;
+                }
+
+                const available = new Set(response.data.letters);
+
+                $('#letter-buttons .letter-btn').each(function () {
+                    const letter = $(this).attr('data-letter');
+
+                    $(this).toggle(
+                        letter === 'all' || available.has(letter)
+                    );
+                });
+            });
+        }
+
+        checkLetters();
+}
 
     /*
     * Update the selected letter in the interface.
@@ -1057,6 +1182,8 @@ jQuery(document).ready(function($){
         retries = 3,
         polls = 0
     ) {
+        refreshSeriesLetters(null);
+
         const requestId = ++publishersRequestId;
     
         // Invalidate any older series request.
@@ -1239,6 +1366,7 @@ jQuery(document).ready(function($){
 
     // Fetch books
     function fetchBooks(publisherId, page = 1, name = '', letter = 'all', retries = 3) {
+        refreshSeriesLetters(publisherId);
 
         ++publishersRequestId;
 
@@ -2474,6 +2602,8 @@ jQuery(document).ready(function($){
     currentPage = urlPage;
     currentSearch = urlSearch;
     currentPublisherId = urlPubId;
+
+    refreshSeriesLetters(currentPublisherId);
 
     if (
         !window.location.pathname.includes('/issues/') &&
