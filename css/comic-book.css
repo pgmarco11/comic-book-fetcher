@@ -19,7 +19,6 @@
   }  
   .page-title span {
     font-family: var(--wp--preset--font-family--bangers);
-    text-shadow: 2px 2px var(--wp--preset--color--deep-red);
     letter-spacing: 1px;
   }
     
