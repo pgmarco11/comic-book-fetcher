@@ -361,15 +361,9 @@ jQuery(document).ready(function($){
             return;
         }
     
-        // Only reset visibility when changing publishers.
-        // Retrying the same publisher must not reveal every letter.
-        if (!samePublisher) {
-            buttons.each(function () {
-                $(this).toggle(
-                    $(this).attr('data-letter') === 'all'
-                );
-            });
-        }
+        // Keep every filter available until the complete index
+        // confirms which letters have matching series.
+        buttons.show();
     
         function retryOrRelease(attempt) {
             if (!isCurrent()) {
