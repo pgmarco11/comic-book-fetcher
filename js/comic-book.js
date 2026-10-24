@@ -2670,7 +2670,8 @@ jQuery(document).ready(function($){
             comicbooks_fetchers_data.total || 0,
             urlSearch,
             urlLetter,
-            comicbooks_fetchers_data.per_page || 10
+            comicbooks_fetchers_data.per_page || 10,
+            comicbooks_fetchers_data.is_total_exact !== false
         );
         if (urlLetter) updateActiveLetter(urlLetter);
     }

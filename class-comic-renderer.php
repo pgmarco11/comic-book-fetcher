@@ -96,6 +96,7 @@ class ComicRenderer {
                     'letter'          => $letter,
                     'publisher_id'    => $selected_publisher,
                     'search'          => $search,
+                    'is_total_exact' => $initial_data['is_total_exact'] ?? true,
                     'preload_enabled' => false,
                 ]) . ');',
             'before'
