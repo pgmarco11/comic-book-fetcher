@@ -681,6 +681,29 @@ class ComicDataService {
             
                 if (is_wp_error($cv_data) || !is_array($cv_data)) {
                     $cache_publisher = false;
+                
+                    $temporary = is_wp_error($cv_data) && in_array(
+                        $cv_data->get_error_code(),
+                        [
+                            'comicvine_temporary',
+                            'comicvine_publisher_temporary',
+                        ],
+                        true
+                    );
+                
+                    if ($temporary) {
+                        $error_data = $cv_data->get_error_data();
+                
+                        $info['temporary_error'] = true;
+                        $info['retry_after'] = max(
+                            1,
+                            (int) (
+                                is_array($error_data)
+                                    ? ($error_data['retry_after'] ?? 5)
+                                    : 5
+                            )
+                        );
+                    }
                 } else {
                     foreach (['image', 'desc', 'founded'] as $field) {
                         if (

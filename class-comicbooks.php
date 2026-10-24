@@ -25,22 +25,6 @@ class Comicbooks {
         // 2. Register AJAX actions
         // -----------------------------------------------------------------
 
-       /* add_action('wp_ajax_load_publishers', [$this, 'ajax_load_publishers']);
-        add_action('wp_ajax_nopriv_load_publishers', [$this, 'ajax_load_publishers']);     
-
-        add_action('wp_ajax_load_book', [$this, 'ajax_load_book']);
-        add_action('wp_ajax_nopriv_load_book', [$this, 'ajax_load_book']);
-
-        add_action( 'wp_ajax_load_issues',             [ $this, 'ajax_load_issues' ] );
-        add_action( 'wp_ajax_nopriv_load_issues',      [ $this, 'ajax_load_issues' ] );
-
-       add_action( 'wp_ajax_load_series_images_batch',   [ $this, 'ajax_load_series_images_batch' ] );
-       add_action( 'wp_ajax_nopriv_load_series_images_batch',[ $this, 'ajax_load_series_images_batch' ] );
-
-        add_action( 'wp_ajax_load_publisher_images_batch',[ $this, 'ajax_load_publisher_images_batch' ] );
-        add_action( 'wp_ajax_nopriv_load_publisher_images_batch',[ $this, 'ajax_load_publisher_images_batch' ] );
-        */
-
         $ajax_actions = [
             'load_publishers' => 'ajax_load_publishers',
             'load_book' => 'ajax_load_book',
@@ -508,20 +492,35 @@ class Comicbooks {
         $publishers = [];
     
         foreach ($publisher_ids as $publisher_id) {
-            $info = $this->data_service->get_publisher_info(
-                $publisher_id
-            );
-
+            try {
+                $info = $this->data_service->get_publisher_info(
+                    $publisher_id
+                );
+            } catch (ComicApiTemporaryException $error) {
+                // Keep one publisher's failure from failing the whole batch.
+                $info = [
+                    'temporary_error' => true,
+                    'retry_after' => $error->retry_after,
+                ];
+            }
+        
+            // An empty lookup is also eligible for bounded retries.
+            $temporary = empty($info)
+                || !empty($info['temporary_error']);
+        
             $description =
                 $this->data_service->normalize_publisher_description(
                     $info['desc'] ?? ''
-                );       
-
-
+                );
+        
             $publishers[$publisher_id] = [
-                'image'   => $info['image'] ?? '',
+                'image' => $info['image'] ?? '',
                 'founded' => $info['founded'] ?? '',
-                'desc'    => $description ?: 'No description available.',
+                'desc' => $description ?: 'No description available.',
+                'temporary_error' => $temporary,
+                'retry_after' => $temporary
+                    ? max(1, (int) ($info['retry_after'] ?? 5))
+                    : 0,
             ];
         }
     

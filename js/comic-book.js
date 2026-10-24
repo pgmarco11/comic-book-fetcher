@@ -867,6 +867,34 @@ jQuery(document).ready(function($){
                         }
     
                         delete card.dataset.publisherLoading;
+
+                        const temporary =
+                            response?.success !== true ||
+                            !publishers[publisherId] ||
+                            info.temporary_error === true;
+                        
+                        if (temporary) {
+                            delete card.dataset.publisherLoaded;
+                        
+                            const seconds = Number(info.retry_after);
+                        
+                            const delay = Number.isFinite(seconds) && seconds > 0
+                                ? Math.min(
+                                    2147483647,
+                                    Math.max(1000, seconds * 1000)
+                                )
+                                : 2500;
+                        
+                            requeueEnrichment(
+                                card,
+                                'publisherRetryCount',
+                                queuePublisher,
+                                delay
+                            );
+                        
+                            return;
+                        }
+                        
                         delete card.dataset.publisherRetryCount;
                         card.dataset.publisherLoaded = 'true';
                     });
