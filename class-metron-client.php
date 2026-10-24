@@ -230,12 +230,342 @@
              ? max(1, $timestamp - time())
              : max(1, (int) $fallback);
      }
+
+     /**
+     * Route Comic Vine requests through shared coordination.
+     * Other HTTP requests retain their existing behavior.
+     */
+    public function http_get(
+        $url,
+        array $args = [],
+        bool $report_failure = true
+    ) {
+        $host = strtolower(
+            (string) wp_parse_url($url, PHP_URL_HOST)
+        );
+
+        $path = (string) wp_parse_url($url, PHP_URL_PATH);
+
+        if (
+            $host !== 'comicvine.gamespot.com' ||
+            strpos($path, '/api/') !== 0
+        ) {
+            return $this->http_get_raw(
+                $url,
+                $args,
+                $report_failure
+            );
+        }
+
+        return $this->cv_http_get(
+            $url,
+            $args,
+            $report_failure
+        );
+    }
+
+    /**
+     * Refresh the request-local option cache before a locked recheck.
+     */
+    private static function cv_cached_response(
+        string $key,
+        bool $fresh = false
+    ) {
+        if ($fresh && !wp_using_ext_object_cache()) {
+            wp_cache_delete(
+                '_transient_' . $key,
+                'options'
+            );
+
+            wp_cache_delete(
+                '_transient_timeout_' . $key,
+                'options'
+            );
+
+            wp_cache_delete('notoptions', 'options');
+        }
+
+        return get_transient($key);
+    }
+
+    /**
+     * Read the shared cooldown directly from the database.
+     */
+    private static function cv_read_cooldown(
+        string $option
+    ): ?int {
+        global $wpdb;
+
+        $value = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT option_value
+                FROM {$wpdb->options}
+                WHERE option_name = %s",
+                $option
+            )
+        );
+
+        return $wpdb->last_error
+            ? null
+            : (int) $value;
+    }
+
+    /**
+     * Called while the shared Comic Vine lock is held.
+     * Never shorten an existing cooldown.
+     */
+    private static function cv_write_cooldown(
+        string $option,
+        int $until
+    ): bool {
+        global $wpdb;
+
+        return false !== $wpdb->query(
+            $wpdb->prepare(
+                "INSERT INTO {$wpdb->options}
+                    (option_name, option_value, autoload)
+                VALUES (%s, %s, 'no')
+                ON DUPLICATE KEY UPDATE
+                    option_value = GREATEST(
+                        CAST(option_value AS UNSIGNED),
+                        %d
+                    )",
+                $option,
+                (string) $until,
+                $until
+            )
+        );
+    }
+
+    /**
+     * Preserve the existing AJAX exception behavior.
+     * Other callers receive a WP_Error.
+     */
+    private static function cv_request_failure(
+        string $message,
+        int $retry_after,
+        bool $report_failure
+    ) {
+        $retry_after = max(1, $retry_after);
+
+        if ($report_failure) {
+            self::temporary_failure(
+                $message,
+                $retry_after
+            );
+        }
+
+        return new WP_Error(
+            'comicvine_temporary',
+            $message,
+            ['retry_after' => $retry_after]
+        );
+    }
+
+    /**
+     * Shared response cache, request lock, and API cooldown.
+     */
+    private function cv_http_get(
+        $url,
+        array $args,
+        bool $report_failure
+    ) {
+        $query = [];
+
+        wp_parse_str(
+            (string) wp_parse_url($url, PHP_URL_QUERY),
+            $query
+        );
+
+        /*
+        * Equivalent query parameter and batch-ID orders should
+        * produce the same cache key.
+        */
+        foreach (['field_list', 'filter'] as $name) {
+            if (!isset($query[$name]) || !is_string($query[$name])) {
+                continue;
+            }
+
+            $parts = explode(',', $query[$name]);
+
+            if ($name === 'filter') {
+                foreach ($parts as &$part) {
+                    $pair = explode(':', $part, 2);
+
+                    if (count($pair) === 2) {
+                        $values = explode('|', $pair[1]);
+                        sort($values, SORT_NATURAL);
+
+                        $part = $pair[0] . ':' . implode('|', $values);
+                    }
+                }
+
+                unset($part);
+            }
+
+            sort($parts, SORT_STRING);
+            $query[$name] = implode(',', $parts);
+        }
+
+        ksort($query);
+
+        $request_id = hash(
+            'sha256',
+            (string) wp_parse_url($url, PHP_URL_PATH) .
+            '?' .
+            http_build_query($query, '', '&', PHP_QUERY_RFC3986)
+        );
+
+        $cache_key = 'tcs_cv_http_v1_' . $request_id;
+
+        $cached = self::cv_cached_response($cache_key);
+
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        /*
+        * Scope coordination to this site's Comic Vine API key.
+        * Only the hash is used in coordination names.
+        */
+        $key_hash = hash(
+            'sha256',
+            (string) ($query['api_key'] ?? '')
+        );
+
+        $scope = 'cv-http-v1:' . $key_hash;
+        $cooldown_option = 'tcs_cv_cooldown_v1_' . $key_hash;
+
+        if (!self::acquire_lock($scope, 1.0)) {
+            return self::cv_request_failure(
+                'Comic Vine is processing another request. Please retry.',
+                2,
+                $report_failure
+            );
+        }
+
+        try {
+            /*
+            * Another visitor may have populated this cache
+            * while we were waiting for the lock.
+            */
+            $cached = self::cv_cached_response(
+                $cache_key,
+                true
+            );
+
+            if (is_array($cached)) {
+                return $cached;
+            }
+
+            $until = self::cv_read_cooldown($cooldown_option);
+
+            if ($until === null) {
+                return self::cv_request_failure(
+                    'Comic Vine coordination is unavailable. Please retry.',
+                    2,
+                    $report_failure
+                );
+            }
+
+            if ($until > time()) {
+                return self::cv_request_failure(
+                    'Comic Vine requests are temporarily paused.',
+                    $until - time(),
+                    $report_failure
+                );
+            }
+
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log('TCS CV outbound: ' . $request_id);
+            }
+
+            /*
+            * Inspect the original response before the normal
+            * HTTP error handler can throw an exception.
+            */
+            $response = $this->http_get_raw(
+                $url,
+                $args,
+                false
+            );
+
+            $http = is_wp_error($response)
+                ? 0
+                : (int) wp_remote_retrieve_response_code($response);
+
+            $body = is_wp_error($response)
+                ? null
+                : json_decode(
+                    wp_remote_retrieve_body($response),
+                    true
+                );
+
+            $api_code = (
+                is_array($body) &&
+                is_scalar($body['status_code'] ?? null)
+            )
+                ? (string) $body['status_code']
+                : '';
+
+            $limited = $http === 429 || $api_code === '107';
+
+            /*
+            * Only a successful HTTP response with a successful
+            * API envelope and a results array is reusable.
+            */
+            $valid = (
+                $http === 200 &&
+                $api_code === '1' &&
+                is_array($body['results'] ?? null)
+            );
+
+            if (!$valid) {
+                $retry = is_wp_error($response)
+                    ? 2
+                    : self::retry_after(
+                        $response,
+                        $limited ? 60 : 2
+                    );
+
+                $saved = self::cv_write_cooldown(
+                    $cooldown_option,
+                    time() + $retry
+                );
+
+                return self::cv_request_failure(
+                    $saved
+                        ? 'Comic Vine is unavailable or rejected the request.'
+                        : 'Comic Vine cooldown could not be saved.',
+                    $retry,
+                    $report_failure
+                );
+            }
+
+            /*
+            * The HTTP transport object is unnecessary for callers
+            * and should not be stored in the shared cache.
+            */
+            $reusable = $response;
+            unset($reusable['http_response']);
+
+            set_transient(
+                $cache_key,
+                $reusable,
+                5 * MINUTE_IN_SECONDS
+            );
+
+            return $response;
+        } finally {
+            self::release_lock($scope);
+        }
+    }
  
-     public function http_get(
-         $url,
-         array $args = [],
-         bool $report_failure = true
-     ) {
+     private function http_get_raw(
+        $url,
+        array $args = [],
+        bool $report_failure = true
+    ) {
          $remaining = self::remaining_seconds();
  
          if ($remaining < 1.0) {
