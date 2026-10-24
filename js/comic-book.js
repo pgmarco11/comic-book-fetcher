@@ -1380,8 +1380,22 @@ jQuery(document).ready(function($){
         });
     }
 
+    $(document)
+    .off('click.tcsRetryBooks', '.retry-books')
+    .on('click.tcsRetryBooks', '.retry-books', function (event) {
+        event.preventDefault();
+        window.location.reload();
+    });
+
     // Fetch books
-    function fetchBooks(publisherId, page = 1, name = '', letter = 'all', retries = 3) {
+    function fetchBooks(
+        publisherId,
+        page = 1,
+        name = '',
+        letter = 'all',
+        retries = 3,
+        scanPolls = 0
+    ) {
         refreshSeriesLetters(publisherId);
 
         ++publishersRequestId;
@@ -1489,8 +1503,27 @@ jQuery(document).ready(function($){
                         response.data.scan_complete !== false;
     
                         if (!scanComplete) {
+                            if (scanPolls >= 24) {
+                                $('#book-container')
+                                    .attr('aria-busy', 'false')
+                                    .css('visibility', 'visible')
+                                    .html(`
+                                        <div class="error-message">
+                                            <p>
+                                                The series index is still being prepared.
+                                                Please try again shortly.
+                                            </p>
+                                            <button type="button" class="retry-books">
+                                                Retry
+                                            </button>
+                                        </div>
+                                    `);
+                        
+                                hideSpinner();
+                                return;
+                            }
+                        
                             setTimeout(() => {
-                                // Stop if the user changed publisher, search, or page.
                                 if (requestId !== booksRequestId) {
                                     return;
                                 }
@@ -1500,9 +1533,10 @@ jQuery(document).ready(function($){
                                     page,
                                     name,
                                     letter,
-                                    retries
+                                    retries,
+                                    scanPolls + 1
                                 );
-                            }, 1000);
+                            }, 5000);
                         
                             return;
                         }
@@ -1519,12 +1553,14 @@ jQuery(document).ready(function($){
                     const isTotalExact =
                         response.data.is_total_exact !== false;
     
-                    setCachedData(cacheKey, {
-                        series: allSeries,
-                        total,
-                        perPage,
-                        isTotalExact
-                    });
+                    if (isTotalExact) {
+                        setCachedData(cacheKey, {
+                                series: allSeries,
+                                total,
+                                perPage,
+                                isTotalExact
+                        });
+                    }
     
                     renderItems(
                         allSeries,
@@ -1585,7 +1621,8 @@ jQuery(document).ready(function($){
                             page,
                             name,
                             letter,
-                            retries - 1
+                            retries - 1,
+                            scanPolls
                         );
                     }, apiRetryDelay(xhr));
             

@@ -1058,3 +1058,20 @@ img.lazy-placeholder,
   color: #c82333;
   text-decoration: underline;
 }
+#book-container .error-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  text-align: center;
+}
+
+#book-container .error-message p {
+  margin: 0;
+}
+
+#book-container .retry-books {
+  display: block;
+  margin: 0;
+}
