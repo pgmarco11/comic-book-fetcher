@@ -170,7 +170,8 @@ function comicbooks_issue_needs_cv_enrichment(
  */
 function comicbooks_queue_cv_issue_enrichment(
     array $issues,
-    int $attempt = 0
+    int $attempt = 0,
+    bool $requested = false
 ): void {
     $normalized = [];
 
@@ -185,9 +186,17 @@ function comicbooks_queue_cv_issue_enrichment(
         $metron_id = absint($issue['id'] ?? 0);
 
         $normalized[$metron_id] = [
-            'id'    => $metron_id,
+            'id' => $metron_id,
             'cv_id' => absint($issue['cv_id'] ?? 0),
             'image' => '',
+        
+            'queue_priority' => $requested
+                ? 1
+                : min(1, absint($issue['queue_priority'] ?? 0)),
+        
+            'queue_requested_at' => $requested
+                ? time()
+                : absint($issue['queue_requested_at'] ?? 0),
         ];
     }
 
@@ -245,6 +254,26 @@ function comicbooks_queue_cv_issue_enrichment(
         }
 
         foreach ($normalized as $metron_id => $issue) {
+            $existing = $merged[$metron_id] ?? [];
+        
+            $issue['queue_priority'] = max(
+                absint($existing['queue_priority'] ?? 0),
+                absint($issue['queue_priority'] ?? 0)
+            );
+        
+            $issue['queue_requested_at'] = max(
+                absint($existing['queue_requested_at'] ?? 0),
+                absint($issue['queue_requested_at'] ?? 0)
+            );
+        
+            // Preserve a known mapping if the new entry lacks one.
+            if (
+                empty($issue['cv_id']) &&
+                !empty($existing['cv_id'])
+            ) {
+                $issue['cv_id'] = absint($existing['cv_id']);
+            }
+        
             $merged[$metron_id] = $issue;
         }
 
@@ -384,7 +413,39 @@ function comicbooks_process_cv_issue_enrichment_queue(): void
          * Claim one issue while holding the lock. API work happens
          * after releasing it so browser requests can still enqueue.
          */
-        $issue = array_shift($queue);
+        $selected_index = null;
+        $best_priority = -1;
+        $latest_request = -1;
+        
+        foreach ($queue as $index => $candidate) {
+            $priority = absint(
+                $candidate['queue_priority'] ?? 0
+            );
+        
+            // Background jobs retain their existing queue order.
+            $requested_at = $priority > 0
+                ? absint($candidate['queue_requested_at'] ?? 0)
+                : 0;
+        
+            if (
+                $selected_index === null ||
+                $priority > $best_priority ||
+                (
+                    $priority === $best_priority &&
+                    $requested_at > $latest_request
+                )
+            ) {
+                $selected_index = $index;
+                $best_priority = $priority;
+                $latest_request = $requested_at;
+            }
+        }
+        
+        $issue = $queue[$selected_index];
+        
+        unset($queue[$selected_index]);
+        
+        $queue = array_values($queue);
         $queue_has_more = !empty($queue);
 
         if (!comicbooks_save_cv_issue_queue($queue)) {

@@ -360,7 +360,9 @@ class Comicbooks {
         */
         if (!empty($issues_needing_cv)) {
             comicbooks_queue_cv_issue_enrichment(
-                $issues_needing_cv
+                $issues_needing_cv,
+                0,
+                true
             );
         }
     
