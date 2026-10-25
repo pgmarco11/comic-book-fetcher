@@ -51,6 +51,14 @@ const COMICBOOKS_CV_ISSUE_QUEUE =
 const COMICBOOKS_CV_ISSUE_QUEUE_LOCK =
     'cv-issue-enrichment-queue';
 
+const COMICBOOKS_CV_MAPPING_WORKER_LOCK =
+    'cv-issue-mapping-worker';
+
+const COMICBOOKS_CV_MAPPING_NEXT_AT =
+    'comicbooks_cv_mapping_next_at_v1';
+
+const COMICBOOKS_CV_MAPPING_INTERVAL = 30;
+
 /**
  * Force WordPress to re-read a non-autoloaded option.
  */
@@ -355,6 +363,38 @@ function comicbooks_known_cv_issue_id(array $issue): int
         : absint($mapping);
 }
 
+/**
+ * Read the shared earliest time for another mapping lookup.
+ */
+function comicbooks_next_cv_mapping_time(): int
+{
+    $key = COMICBOOKS_CV_MAPPING_NEXT_AT;
+
+    // Refresh option-backed transients in long-running requests.
+    wp_cache_delete('_transient_' . $key, 'options');
+    wp_cache_delete('_transient_timeout_' . $key, 'options');
+    wp_cache_delete('notoptions', 'options');
+
+    return max(0, (int) get_transient($key));
+}
+
+/**
+ * Known-ID work can continue while mapping jobs wait.
+ */
+function comicbooks_cv_issue_worker_delay(array $queue): int
+{
+    foreach ($queue as $issue) {
+        if (comicbooks_known_cv_issue_id($issue)) {
+            return 5;
+        }
+    }
+
+    return max(
+        5,
+        comicbooks_next_cv_mapping_time() - time()
+    );
+}
+
 
 /**
  * Determine whether background enrichment produced a confirmed result.
@@ -413,6 +453,7 @@ function comicbooks_process_cv_issue_enrichment_queue(): void
     $batch_limit = 10;
     $known_batch = false;
     $queue_has_more = false;
+    $mapping_lock_held = false;
 
     try {
         $queue = comicbooks_read_cv_issue_queue();
@@ -442,7 +483,65 @@ function comicbooks_process_cv_issue_enrichment_queue(): void
                 <=> absint($a['queue_requested_at'] ?? 0);
         });
 
-        $first = array_shift($queue);
+        $first_index = null;
+        $next_mapping_at = comicbooks_next_cv_mapping_time();
+        
+        foreach ($queue as $index => $candidate) {
+            // Known IDs do not need a Metron mapping lookup.
+            if (comicbooks_known_cv_issue_id($candidate)) {
+                $first_index = $index;
+                break;
+            }
+        
+            // Leave unresolved jobs queued until their lane is eligible.
+            if ($next_mapping_at > time()) {
+                continue;
+            }
+        
+            // Only one mapping worker may be active at a time.
+            if (
+                !MetronClient::acquire_lock(
+                    COMICBOOKS_CV_MAPPING_WORKER_LOCK,
+                    0
+                )
+            ) {
+                continue;
+            }
+        
+            $mapping_lock_held = true;
+        
+            // Reserve the next lookup time before releasing the queue lock.
+            if (
+                !set_transient(
+                    COMICBOOKS_CV_MAPPING_NEXT_AT,
+                    time() + COMICBOOKS_CV_MAPPING_INTERVAL,
+                    HOUR_IN_SECONDS
+                )
+            ) {
+                throw new RuntimeException(
+                    'Could not reserve the next Metron mapping lookup.'
+                );
+            }
+        
+            $first_index = $index;
+            break;
+        }
+        
+        if ($first_index === null) {
+            // No eligible job was removed from the queue.
+            comicbooks_schedule_cv_issue_worker(
+                comicbooks_cv_issue_worker_delay($queue)
+            );
+        
+            return;
+        }
+        
+        $first = $queue[$first_index];
+        
+        unset($queue[$first_index]);
+        
+        $queue = array_values($queue);
+
         $first_priority = absint(
             $first['queue_priority'] ?? 0
         );
@@ -502,6 +601,14 @@ function comicbooks_process_cv_issue_enrichment_queue(): void
             $error->getMessage()
         );
 
+        if ($mapping_lock_held) {
+            MetronClient::release_lock(
+                COMICBOOKS_CV_MAPPING_WORKER_LOCK
+            );
+        
+            $mapping_lock_held = false;
+        }
+
         comicbooks_schedule_cv_issue_worker(10);
         return;
     } finally {
@@ -531,6 +638,14 @@ function comicbooks_process_cv_issue_enrichment_queue(): void
             'Comic Vine issue enrichment: ' .
             $error->getMessage()
         );
+    } finally {
+        if ($mapping_lock_held) {
+            MetronClient::release_lock(
+                COMICBOOKS_CV_MAPPING_WORKER_LOCK
+            );
+    
+            $mapping_lock_held = false;
+        }
     }
 
     /*
@@ -566,7 +681,9 @@ function comicbooks_process_cv_issue_enrichment_queue(): void
     }
 
     if ($queue_has_more) {
-        comicbooks_schedule_cv_issue_worker(5);
+        comicbooks_schedule_cv_issue_worker(
+            comicbooks_cv_issue_worker_delay($queue)
+        );
     }
 }
 
