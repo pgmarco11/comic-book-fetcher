@@ -330,6 +330,33 @@ add_action(
 );
 
 /**
+ * Resolve an already-known Comic Vine ID without API requests.
+ */
+function comicbooks_known_cv_issue_id(array $issue): int
+{
+    $cv_id = absint($issue['cv_id'] ?? 0);
+
+    if ($cv_id) {
+        return $cv_id;
+    }
+
+    $metron_id = absint($issue['id'] ?? 0);
+
+    if (!$metron_id) {
+        return 0;
+    }
+
+    $mapping = get_transient(
+        "metron:issue_cv_id:{$metron_id}"
+    );
+
+    return is_array($mapping)
+        ? absint($mapping['cv_id'] ?? 0)
+        : absint($mapping);
+}
+
+
+/**
  * Determine whether background enrichment produced a confirmed result.
  *
  * A confirmed result is either:
@@ -347,42 +374,28 @@ function comicbooks_issue_cv_enrichment_complete(
         return true;
     }
 
+    $cv_id = comicbooks_known_cv_issue_id($issue);
+
+    if ($cv_id) {
+        // An empty string is a confirmed missing image.
+        // False means no confirmed result is cached.
+        return get_transient(
+            "cv_issue_image_{$cv_id}"
+        ) !== false;
+    }
+
     $mapping = get_transient(
         "metron:issue_cv_id:{$metron_id}"
     );
 
-    /*
-     * No mapping cache means the Metron lookup failed temporarily
-     * or was never completed.
-     */
-    if ($mapping === false) {
-        return false;
-    }
-
-    $cv_id = is_array($mapping)
-        ? absint($mapping['cv_id'] ?? 0)
-        : absint($mapping);
-
-    /*
-     * A cached null mapping is a confirmed "no Comic Vine ID"
-     * result and therefore counts as complete.
-     */
-    if (!$cv_id) {
-        return true;
-    }
-
-    /*
-     * An empty-string transient is a confirmed missing image.
-     * A false result means Comic Vine failed temporarily or has
-     * not been contacted successfully.
-     */
-    return get_transient(
-        "cv_issue_image_{$cv_id}"
-    ) !== false;
+    // A cached mapping with no CV ID is a confirmed miss.
+    // An absent mapping still needs resolution.
+    return $mapping !== false;
 }
 
 /**
- * Process one queued issue per WP-Cron request.
+ * Batch known Comic Vine IDs.
+ * Resolve unknown mappings one issue at a time.
  */
 function comicbooks_process_cv_issue_enrichment_queue(): void
 {
@@ -393,11 +406,12 @@ function comicbooks_process_cv_issue_enrichment_queue(): void
         )
     ) {
         comicbooks_schedule_cv_issue_worker(5);
-
         return;
     }
 
-    $issue = null;
+    $batch = [];
+    $batch_limit = 10;
+    $known_batch = false;
     $queue_has_more = false;
 
     try {
@@ -405,46 +419,75 @@ function comicbooks_process_cv_issue_enrichment_queue(): void
 
         if (empty($queue)) {
             delete_option(COMICBOOKS_CV_ISSUE_QUEUE);
-
             return;
         }
 
         /*
-         * Claim one issue while holding the lock. API work happens
-         * after releasing it so browser requests can still enqueue.
+         * Requested issues first, newest request first.
+         * Equal-ranked jobs retain their existing order on PHP 8.3.
          */
-        $selected_index = null;
-        $best_priority = -1;
-        $latest_request = -1;
-        
-        foreach ($queue as $index => $candidate) {
-            $priority = absint(
-                $candidate['queue_priority'] ?? 0
-            );
-        
-            // Background jobs retain their existing queue order.
-            $requested_at = $priority > 0
-                ? absint($candidate['queue_requested_at'] ?? 0)
-                : 0;
-        
-            if (
-                $selected_index === null ||
-                $priority > $best_priority ||
-                (
-                    $priority === $best_priority &&
-                    $requested_at > $latest_request
-                )
-            ) {
-                $selected_index = $index;
-                $best_priority = $priority;
-                $latest_request = $requested_at;
+        usort($queue, static function ($a, $b) {
+            $priority_a = absint($a['queue_priority'] ?? 0);
+            $priority_b = absint($b['queue_priority'] ?? 0);
+
+            if ($priority_a !== $priority_b) {
+                return $priority_b <=> $priority_a;
+            }
+
+            if ($priority_a === 0) {
+                return 0;
+            }
+
+            return absint($b['queue_requested_at'] ?? 0)
+                <=> absint($a['queue_requested_at'] ?? 0);
+        });
+
+        $first = array_shift($queue);
+        $first_priority = absint(
+            $first['queue_priority'] ?? 0
+        );
+
+        $first_cv_id = comicbooks_known_cv_issue_id($first);
+        $known_batch = $first_cv_id > 0;
+
+        if ($known_batch) {
+            $first['cv_id'] = $first_cv_id;
+        }
+
+        $batch[] = $first;
+
+        /*
+         * Expand only a known-ID batch.
+         * Do not pull background jobs into a visitor-priority batch.
+         */
+        if ($known_batch) {
+            foreach ($queue as $index => $candidate) {
+                if (count($batch) >= $batch_limit) {
+                    break;
+                }
+
+                if (
+                    absint($candidate['queue_priority'] ?? 0)
+                    !== $first_priority
+                ) {
+                    continue;
+                }
+
+                $cv_id = comicbooks_known_cv_issue_id(
+                    $candidate
+                );
+
+                if (!$cv_id) {
+                    continue;
+                }
+
+                $candidate['cv_id'] = $cv_id;
+                $batch[] = $candidate;
+
+                unset($queue[$index]);
             }
         }
-        
-        $issue = $queue[$selected_index];
-        
-        unset($queue[$selected_index]);
-        
+
         $queue = array_values($queue);
         $queue_has_more = !empty($queue);
 
@@ -460,7 +503,6 @@ function comicbooks_process_cv_issue_enrichment_queue(): void
         );
 
         comicbooks_schedule_cv_issue_worker(10);
-
         return;
     } finally {
         MetronClient::release_lock(
@@ -468,50 +510,47 @@ function comicbooks_process_cv_issue_enrichment_queue(): void
         );
     }
 
-    if (!is_array($issue) || empty($issue['id'])) {
-        if ($queue_has_more) {
-            comicbooks_schedule_cv_issue_worker();
-        }
-
-        return;
-    }
-
-    $enrichment_complete = false;
-
+    /*
+     * API work happens after releasing the queue lock.
+     */
     try {
         $service = new ComicDataService(
             new MetronClient()
         );
-    
-        $service->get_cv_info_batch([$issue]);
-    
-        /*
-         * get_cv_info_batch() may return normally after a temporary
-         * upstream failure, so verify the resulting caches.
-         */
-        $enrichment_complete =
-            comicbooks_issue_cv_enrichment_complete($issue);
-    
+
+        if ($known_batch) {
+            $service->get_comicvine_issue_images_batch(
+                array_column($batch, 'cv_id')
+            );
+        } else {
+            // The batch contains one unresolved issue.
+            $service->get_cv_info_batch($batch);
+        }
     } catch (Throwable $error) {
         error_log(
             'Comic Vine issue enrichment: ' .
             $error->getMessage()
         );
     }
-    
+
     /*
-     * Requeue temporary failures after a delay.
-     *
-     * Do not immediately call the queue function because that would
-     * schedule another worker within approximately two seconds and
-     * could repeatedly hit an unavailable API.
+     * Verify each issue independently.
+     * A normal method return does not prove every lookup succeeded.
      */
-    if (!$enrichment_complete) {
+    $incomplete = [];
+
+    foreach ($batch as $issue) {
+        if (!comicbooks_issue_cv_enrichment_complete($issue)) {
+            $incomplete[] = $issue;
+        }
+    }
+
+    if (!empty($incomplete)) {
         $retry_args = [
-            [$issue],
+            $incomplete,
             1,
         ];
-    
+
         if (
             !wp_next_scheduled(
                 'comicbooks_retry_cv_issue_enrichment_queue',
@@ -524,12 +563,6 @@ function comicbooks_process_cv_issue_enrichment_queue(): void
                 $retry_args
             );
         }
-    
-        error_log(
-            'Comic Vine issue enrichment incomplete; ' .
-            'scheduled retry for Metron issue ' .
-            absint($issue['id'] ?? 0)
-        );
     }
 
     if ($queue_has_more) {
