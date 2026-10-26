@@ -1008,93 +1008,163 @@ class ComicDataService {
     {
         $cv_ids = array_values(
             array_unique(
-                array_filter(
-                    array_map('absint', $cv_ids)
-                )
+                array_filter(array_map('absint', $cv_ids))
             )
         );
-
+    
         if (empty($cv_ids)) {
             return [];
         }
-
-        $images    = [];
-        $uncached  = [];
-
+    
+        $images = [];
+        $uncached = [];
+    
         foreach ($cv_ids as $cv_id) {
-            $cache_key = "cv_issue_image_{$cv_id}";
-            $cached    = get_transient($cache_key);
-
+            $cached = get_transient("cv_issue_image_{$cv_id}");
+    
             if ($cached !== false) {
                 $images[$cv_id] = is_string($cached) ? $cached : '';
             } else {
                 $uncached[] = $cv_id;
             }
         }
-
+    
         if (empty($uncached)) {
             return $images;
         }
-
-        /*
-        * Comic Vine supports a maximum of 100 results per request.
-        * Chunking keeps this safe if the page size increases later.
-        */
+    
         foreach (array_chunk($uncached, 100) as $chunk) {
             $body = $this->cv_api_get(
                 'https://comicvine.gamespot.com/api/issues/',
                 [
-                    'filter'     => 'id:' . implode('|', $chunk),
+                    'filter' => 'id:' . implode('|', $chunk),
                     'field_list' => 'id,image',
-                    'limit'      => count($chunk),
+                    'limit' => count($chunk),
                 ]
             );
-
+    
             $found = [];
-
-            if ($body === null) {
+    
+            if (
+                !is_array($body) ||
+                !in_array($body['status_code'] ?? null, [1, '1'], true) ||
+                !is_array($body['results'] ?? null)
+            ) {
                 foreach ($chunk as $cv_id) {
                     $images[$cv_id] = '';
                 }
-            
+    
                 continue;
             }
-
-            if (!empty($body['results']) && is_array($body['results'])) {
-                foreach ($body['results'] as $result) {
-                    $cv_id = (int) ($result['id'] ?? 0);
-
-                    if (!$cv_id) {
+    
+            $rows = $body['results'];
+    
+            $is_count = static function ($value): bool {
+                return (is_int($value) && $value >= 0) ||
+                    (is_string($value) && ctype_digit($value));
+            };
+    
+            $total = $body['number_of_total_results'] ?? null;
+            $page_count = $body['number_of_page_results'] ?? null;
+            $offset = $body['offset'] ?? null;
+    
+            $complete =
+                array_is_list($rows) &&
+                $is_count($total) &&
+                $is_count($page_count) &&
+                $is_count($offset) &&
+                (int) $offset === 0 &&
+                (int) $page_count === count($rows) &&
+                (int) $total === count($rows) &&
+                (int) $total <= count($chunk);
+    
+            $requested = array_fill_keys($chunk, true);
+            $seen = [];
+    
+            foreach ($rows as $result) {
+                if (
+                    !is_array($result) ||
+                    !$is_count($result['id'] ?? null)
+                ) {
+                    $complete = false;
+                    continue;
+                }
+    
+                $cv_id = (int) $result['id'];
+    
+                if (
+                    !isset($requested[$cv_id]) ||
+                    isset($seen[$cv_id])
+                ) {
+                    $complete = false;
+                    continue;
+                }
+    
+                $seen[$cv_id] = true;
+    
+                if (
+                    !array_key_exists('image', $result) ||
+                    (
+                        $result['image'] !== null &&
+                        !is_array($result['image'])
+                    )
+                ) {
+                    $complete = false;
+                    continue;
+                }
+    
+                $image = $result['image'] ?? [];
+                $image_url = '';
+                $valid_image = true;
+    
+                foreach (
+                    ['small_url', 'medium_url', 'original_url']
+                    as $field
+                ) {
+                    $candidate = $image[$field] ?? '';
+    
+                    if ($candidate === '') {
                         continue;
                     }
-
-                    $image = $result['image'] ?? [];
-
-                    $image_url =
-                        $image['small_url']
-                        ?? $image['medium_url']
-                        ?? $image['original_url']
-                        ?? '';
-
-                    $found[$cv_id]  = $image_url;
-                    $images[$cv_id] = $image_url;
-
+    
+                    if (!is_string($candidate)) {
+                        $valid_image = false;
+                        break;
+                    }
+    
+                    $image_url = trim($candidate);
+    
+                    if ($image_url !== '') {
+                        break;
+                    }
+                }
+    
+                if (!$valid_image) {
+                    $complete = false;
+                    continue;
+                }
+    
+                $found[$cv_id] = $image_url;
+                $images[$cv_id] = $image_url;
+    
+                // Keep valid images even when the batch is incomplete.
+                if ($image_url !== '') {
                     set_transient(
                         "cv_issue_image_{$cv_id}",
                         $image_url,
-                        $image_url ? 30 * DAY_IN_SECONDS : 6 * HOUR_IN_SECONDS
+                        30 * DAY_IN_SECONDS
                     );
                 }
             }
-
+    
             /*
-            * Briefly cache confirmed misses. Don't cache an empty result for
-            * 30 days because a temporary Comic Vine problem could cause it.
-            */
+             * Cache missing images only after a complete response.
+             * Otherwise, leave unresolved IDs uncached for retry.
+             */
             foreach ($chunk as $cv_id) {
-                if (!array_key_exists($cv_id, $found)) {
-                    $images[$cv_id] = '';
-
+                $images[$cv_id] = $found[$cv_id] ?? '';
+    
+                if ($complete && $images[$cv_id] === '') {
                     set_transient(
                         "cv_issue_image_{$cv_id}",
                         '',
@@ -1103,7 +1173,7 @@ class ComicDataService {
                 }
             }
         }
-
+    
         return $images;
     }
 

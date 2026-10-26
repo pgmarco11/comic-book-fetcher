@@ -113,15 +113,55 @@ function comicbooks_save_cv_issue_queue(
 function comicbooks_schedule_cv_issue_worker(
     int $delay = 2
 ): void {
-    if (
-        !wp_next_scheduled(
-            'comicbooks_process_cv_issue_enrichment_queue'
-        )
-    ) {
-        wp_schedule_single_event(
-            time() + max(1, $delay),
-            'comicbooks_process_cv_issue_enrichment_queue'
-        );
+    $scope = 'cv-issue-enrichment-schedule';
+
+    if (!MetronClient::acquire_lock($scope, 0.5)) {
+        error_log('Comic Vine worker scheduling is busy.');
+        return;
+    }
+
+    try {
+        $hook = 'comicbooks_process_cv_issue_enrichment_queue';
+        $requested_at = time() + max(1, $delay);
+
+        // Re-read cron state after taking the scheduling lock.
+        wp_cache_delete('cron', 'options');
+        wp_cache_delete('alloptions', 'options');
+        wp_cache_delete('notoptions', 'options');
+
+        $existing_at = wp_next_scheduled($hook);
+
+        // Keep an existing run that is already early enough.
+        if (
+            $existing_at !== false &&
+            $existing_at <= $requested_at
+        ) {
+            return;
+        }
+
+        // Remove the later run before scheduling its replacement.
+        if (
+            $existing_at !== false &&
+            !wp_unschedule_event($existing_at, $hook)
+        ) {
+            error_log(
+                'Could not move the Comic Vine worker earlier.'
+            );
+            return;
+        }
+
+        if (!wp_schedule_single_event($requested_at, $hook)) {
+            // Try to restore the original run on failure.
+            if ($existing_at !== false) {
+                wp_schedule_single_event($existing_at, $hook);
+            }
+
+            error_log(
+                'Could not schedule the Comic Vine worker.'
+            );
+        }
+    } finally {
+        MetronClient::release_lock($scope);
     }
 }
 
