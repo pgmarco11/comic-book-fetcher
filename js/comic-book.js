@@ -288,60 +288,19 @@ jQuery(document).ready(function($){
         }
     );
         
-    let seriesLettersTimer = null;
-    let seriesLettersRequestId = 0;
-    let seriesLettersPublisherId = null;
-    let seriesLettersState = 'idle';
-    
+   
     function refreshSeriesLetters(publisherId) {
-        const parsedId = Number(publisherId);
-    
-        const id = Number.isInteger(parsedId) && parsedId > 0
-            ? parsedId
-            : null;
-    
-        const samePublisher = id === seriesLettersPublisherId;
-    
-        // Do not restart a running or successfully completed check.
-        if (samePublisher && seriesLettersState !== 'idle') {
-            return;
-        }
-    
-        clearTimeout(seriesLettersTimer);
-    
-        const requestId = ++seriesLettersRequestId;
-        seriesLettersPublisherId = id;
-        seriesLettersState = 'loading';
-    
         const container = $('#letter-buttons');
         const buttons = container.find('.letter-btn');
+        const id = Number(publisherId);
     
-        function isCurrent() {
-            return requestId === seriesLettersRequestId;
-        }
+        // Default to every letter for this visit.
+        buttons.show();
     
-        function applyLetters(letters) {
-            const available = new Set(letters);
-    
-            buttons.each(function () {
-                const letter = $(this).attr('data-letter');
-    
-                $(this).toggle(
-                    letter === 'all' || available.has(letter)
-                );
-            });
-    
-            seriesLettersState = 'complete';
-        }
-    
-        // Publisher browsing displays every letter.
-        if (id === null) {
-            buttons.show();
-            seriesLettersState = 'complete';
+        if (!Number.isInteger(id) || id <= 0) {
             return;
         }
     
-        // Use the completed index already rendered by PHP.
         let renderedLetters = null;
     
         try {
@@ -349,85 +308,27 @@ jQuery(document).ready(function($){
                 container.attr('data-series-letters') || 'null'
             );
         } catch (error) {
-            renderedLetters = null;
-        }
-    
-        if (
-            id === Number(container.attr('data-publisher-id')) &&
-            renderedLetters?.complete === true &&
-            Array.isArray(renderedLetters.letters)
-        ) {
-            applyLetters(renderedLetters.letters);
             return;
         }
     
-        // Keep every filter available until the complete index
-        // confirms which letters have matching series.
-        buttons.show();
-    
-        function retryOrRelease(attempt) {
-            if (!isCurrent()) {
-                return;
-            }
-    
-            if (attempt < 11) {
-                seriesLettersTimer = setTimeout(function () {
-                    checkLetters(attempt + 1);
-                }, 5000);
-            } else {
-                // A later navigation or click on All can try again.
-                seriesLettersState = 'idle';
-            }
+        // Only use the completed index included in this page's HTML.
+        if (
+            id !== Number(container.attr('data-publisher-id')) ||
+            renderedLetters?.complete !== true ||
+            !Array.isArray(renderedLetters.letters)
+        ) {
+            return;
         }
     
-        function checkLetters(attempt = 0) {
-            if (!isCurrent()) {
-                return;
-            }
+        const available = new Set(renderedLetters.letters);
     
-            $.ajax({
-                url: comicbooks_fetchers_data.ajax_url,
-                method: 'POST',
-                dataType: 'json',
-                timeout: 10000,
-                data: {
-                    action: 'load_series_letters',
-                    nonce: comicbooks_fetchers_data.nonce,
-                    publisher_id: id
-                }
-            })
-                .done(function (response) {
-                    if (!isCurrent()) {
-                        return;
-                    }
+        buttons.each(function () {
+            const letter = $(this).attr('data-letter');
     
-                    if (
-                        response?.success === true &&
-                        response.data?.complete === true &&
-                        Array.isArray(response.data.letters)
-                    ) {
-                        applyLetters(response.data.letters);
-                        return;
-                    }
-    
-                    retryOrRelease(attempt);
-                })
-                .fail(function (xhr) {
-                    if (!isCurrent()) {
-                        return;
-                    }
-    
-                    // Retrying cannot repair an expired nonce.
-                    if (xhr.status === 400 || xhr.status === 403) {
-                        seriesLettersState = 'idle';
-                        return;
-                    }
-    
-                    retryOrRelease(attempt);
-                });
-        }
-    
-        checkLetters();
+            $(this).toggle(
+                letter === 'all' || available.has(letter)
+            );
+        });
     }
 
     /*
