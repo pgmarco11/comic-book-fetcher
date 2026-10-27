@@ -2279,12 +2279,44 @@ class ComicDataService {
             !isset($progress['raw_items']) ||
             !is_array($progress['raw_items'])
         ) {
-            return [
-                'complete' => false,
-                'letters'  => [],
+            // Read the complete cached API page, not the visible 10-item slice.
+            $first_page = get_transient(
+                $this->series_page_cache_key($publisher_id, 1, 100)
+            );
+        
+            $items = is_array($first_page)
+                ? ($first_page['items'] ?? null)
+                : null;
+        
+            $total = is_array($first_page)
+                ? ($first_page['total'] ?? null)
+                : null;
+        
+            $complete_first_page = (
+                is_array($items) &&
+                array_is_list($items) &&
+                is_int($total) &&
+                $total >= 0 &&
+                $total === count($items) &&
+                count($items) <= 100 &&
+                ($first_page['has_next'] ?? null) === false &&
+                empty($first_page['temporary_error'])
+            );
+        
+            if (!$complete_first_page) {
+                return [
+                    'complete' => false,
+                    'letters'  => [],
+                ];
+            }
+        
+            // This cached page contains every series for the publisher.
+            $progress = [
+                'exhausted' => true,
+                'raw_items' => $items,
             ];
         }
-
+        
         $letters = [];
 
         foreach ($progress['raw_items'] as $item) {
