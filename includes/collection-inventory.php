@@ -2,6 +2,25 @@
 /** Owner-scoped collection inventory. No Metron or Comic Vine requests. */
 defined('ABSPATH') || exit;
 
+function tcs_inventory_condition_options(): array {
+    return [
+        '' => 'Not set',
+        'Ungraded - Normal wear' => 'Ungraded - Normal wear',
+        '10.0 (GEM MINT)' => '10.0 (GEM MINT)',
+        '9.8 (NEAR MINT / MINT)' => '9.8 (NEAR MINT / MINT)',
+        '9.4 (NEAR MINT)' => '9.4 (NEAR MINT)',
+        '9.0 (VERY FINE / NEAR MINT)' => '9.0 (VERY FINE / NEAR MINT)',
+        '8.5 (VERY FINE+)' => '8.5 (VERY FINE+)',
+        '8.0 (VERY FINE)' => '8.0 (VERY FINE)',
+        '7.5 (VERY FINE-)' => '7.5 (VERY FINE-)',
+        '7.0 (FINE / VERY FINE)' => '7.0 (FINE / VERY FINE)',
+        '6.0 (FINE)' => '6.0 (FINE)',
+        '5.0 (VERY GOOD / FINE)' => '5.0 (VERY GOOD / FINE)',
+        '4.0 (VERY GOOD)' => '4.0 (VERY GOOD)',
+        '2.0 (GOOD)' => '2.0 (GOOD)',
+    ];
+}
+
 // Keep existing frontend URLs; remove collection records from public discovery.
 add_filter('register_post_type_args', function ($args, $post_type) {
     if ($post_type === 'collection') {
@@ -962,6 +981,18 @@ add_action('wp_ajax_tcs_inventory_save', function () {
     $location = tcs_inventory_text($input['storage_location'] ?? '');
     $notes = isset($input['notes']) && is_scalar($input['notes']) ? sanitize_textarea_field((string) $input['notes']) : '';
     if (strlen($condition) > 120 || strlen($location) > 120 || strlen($notes) > 10000) wp_send_json_error('One of the fields is too long.', 422);
+    $condition_options = tcs_inventory_condition_options();
+
+    if (
+        !array_key_exists($condition, $condition_options) &&
+        $condition !== (string) ($current['condition'] ?? '')
+    ) {
+        wp_send_json_error(
+            'Choose a condition or grade from the dropdown.',
+            422
+        );
+    }
+
     $fields = ['qty' => (string) (int) $qty, 'price' => $price, 'condition' => $condition, 'notes' => $notes, 'storage_location' => $location];
     foreach ($fields as $key => $value) update_post_meta($id, $key, wp_slash($value));
     foreach ($fields as $key => $value) {

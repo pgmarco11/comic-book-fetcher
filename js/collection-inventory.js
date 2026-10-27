@@ -301,9 +301,45 @@
     results.addEventListener('click', event => {
         const button = event.target.closest('.tci-edit');
         if (!button) return;
-        editingRecord = JSON.parse(button.closest('[data-record]').dataset.record);
-        editorForm.reset();
-        ['qty', 'condition', 'price', 'notes', 'storage_location', 'version'].forEach(key => { editorForm.elements[key].value = editingRecord[key] ?? ''; });
+            editingRecord = JSON.parse(button.closest('[data-record]').dataset.record);
+
+            const conditionSelect = editorForm.elements.condition;
+
+            // Remove any custom option left by the previously edited comic.
+            conditionSelect
+                .querySelectorAll('[data-saved-condition]')
+                .forEach(option => option.remove());
+
+            editorForm.reset();
+
+            const savedCondition = String(editingRecord.condition ?? '');
+
+            const hasSavedOption = Array.from(conditionSelect.options)
+                .some(option => option.value === savedCondition);
+
+            // Preserve older saved values that are not in the standard list.
+            if (!hasSavedOption && savedCondition !== '') {
+                const option = document.createElement('option');
+
+                option.value = savedCondition;
+                option.textContent = `${savedCondition} (saved value)`;
+                option.dataset.savedCondition = 'true';
+
+                conditionSelect.appendChild(option);
+            }
+
+            conditionSelect.value = savedCondition;
+
+            [
+                'qty',
+                'price',
+                'notes',
+                'storage_location',
+                'version'
+            ].forEach(key => {
+                editorForm.elements[key].value = editingRecord[key] ?? '';
+            });
+
         editorForm.elements.post_id.value = editingRecord.id;
         $('#tci-editor-title').textContent = `${editingRecord.title} #${editingRecord.issue || '—'}`;
         $('#tci-editor-error').textContent = '';

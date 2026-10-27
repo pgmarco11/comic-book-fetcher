@@ -1,5 +1,6 @@
 <?php
 defined('ABSPATH') || exit;
+
 $summary = $overview['summary'];
 $value = static function ($key, $fallback = '') use ($input) { return tcs_inventory_text($input[$key] ?? $fallback); };
 $requested_view = $value(
@@ -320,19 +321,20 @@ $inventory_url = tcs_inventory_url();
                 <div><label for="tci-price">Price</label><input id="tci-price" name="price" type="text"
                         inputmode="decimal" pattern="[0-9]{1,7}(\.[0-9]{1,2})?" aria-describedby="tci-price-help"><small
                         id="tci-price-help">Your recorded price; no market estimate.</small></div>
-                <div class="tci-wide"><label for="tci-condition">Condition / grade</label><input id="tci-condition"
-                        name="condition" maxlength="120" list="tci-grades" placeholder="e.g. 9.4 (NEAR MINT)"><datalist
-                        id="tci-grades">
-                        <option value="10.0 (GEM MINT)">
-                        <option value="9.8 (NEAR MINT / MINT)">
-                        <option value="9.4 (NEAR MINT)">
-                        <option value="9.0 (VERY FINE / NEAR MINT)">
-                        <option value="8.0 (VERY FINE)">
-                        <option value="6.0 (FINE)">
-                        <option value="4.0 (VERY GOOD)">
-                        <option value="2.0 (GOOD)">
-                        <option value="Ungraded">
-                    </datalist></div>
+                        <div class="tci-wide">
+                            <label for="tci-condition">Condition / grade</label>
+
+                            <select id="tci-condition" name="condition">
+                                <?php foreach (
+                                    tcs_inventory_condition_options() as $value => $label
+                                ) : ?>
+                                    <option value="<?php echo esc_attr($value); ?>">
+                                        <?php echo esc_html($label); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
                 <div class="tci-wide"><label for="tci-location">Storage location</label><input id="tci-location"
                         name="storage_location" maxlength="120" placeholder="e.g. Short box 02 · DC"></div>
                 <div class="tci-wide"><label for="tci-notes">Notes</label><textarea id="tci-notes" name="notes"
