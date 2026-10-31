@@ -4,13 +4,21 @@ defined('ABSPATH') || exit;
 class TCS_Collection_Record_Restorer {
     private $validator;
     private $planner;
+    private $metadata_restorer;
 
     public function __construct(
         TCS_Collection_Backup_Validator $validator,
-        TCS_Collection_Import_Planner $planner
+        TCS_Collection_Import_Planner $planner,
+        ?TCS_Collection_Metadata_Restorer $metadata_restorer = null
     ) {
         $this->validator = $validator;
         $this->planner = $planner;
+    
+        $this->metadata_restorer = $metadata_restorer
+            ?? new TCS_Collection_Metadata_Restorer(
+                $validator,
+                new TCS_Collection_Backup_Exporter()
+            );
     }
 
     public function create_draft(
@@ -250,6 +258,58 @@ class TCS_Collection_Record_Restorer {
         return [
             'status' => 'created_draft',
             'post_id' => $post_id,
+        ];
+    }
+    public function restore_metadata(
+        array $job,
+        int $source_post_id,
+        array $post_map = []
+    ): array {
+        $backup = $job['backup'];
+    
+        $index = array_search(
+            $source_post_id,
+            array_column(
+                $backup['records'],
+                'source_post_id'
+            ),
+            true
+        );
+    
+        if ($index === false) {
+            throw new RuntimeException(
+                'The source comic was not found.'
+            );
+        }
+    
+        $record = $backup['records'][$index];
+    
+        // Check metadata before creating any draft.
+        $this->metadata_restorer->prepare($record);
+    
+        $draft = $this->create_draft(
+            $job,
+            $source_post_id,
+            $post_map
+        );
+    
+        if ($draft['status'] === 'skipped') {
+            return $draft + ['metadata_rows' => 0];
+        }
+    
+        $count = $this->metadata_restorer->restore(
+            $draft['post_id'],
+            $record,
+            $this->planner->record_origin(
+                $backup,
+                $record
+            )
+        );
+    
+        return [
+            'status' => 'metadata_restored',
+            'post_id' => $draft['post_id'],
+            'metadata_rows' => $count,
         ];
     }
 }

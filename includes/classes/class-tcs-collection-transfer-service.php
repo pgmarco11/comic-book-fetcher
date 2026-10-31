@@ -7,6 +7,7 @@ require_once __DIR__ . '/class-tcs-collection-transfer-store.php';
 require_once __DIR__ . '/class-tcs-collection-import-planner.php';
 require_once __DIR__ . '/class-tcs-collection-taxonomy-restorer.php';
 require_once __DIR__ . '/class-tcs-collection-record-restorer.php';
+require_once __DIR__ . '/class-tcs-collection-metadata-restorer.php';
 
 /** Stable transfer API composed from focused backup components. */
 class TCS_Collection_Transfer_Service {
@@ -41,10 +42,15 @@ class TCS_Collection_Transfer_Service {
             ?? new TCS_Collection_Taxonomy_Restorer(
                 $this->exporter
             );
+
         $this->record_restorer = $record_restorer
             ?? new TCS_Collection_Record_Restorer(
                 $this->validator,
-                $this->planner
+                $this->planner,
+                new TCS_Collection_Metadata_Restorer(
+                    $this->validator,
+                    $this->exporter
+                )
             );
     }
 
@@ -154,15 +160,29 @@ class TCS_Collection_Transfer_Service {
     public function restore_taxonomies(array $backup): array {
         return $this->taxonomy_restorer->restore($backup);
     }
+    
     public function validate_post_fields(array $backup): int {
         return $this->validator->validate_post_fields($backup);
     }
+
     public function create_record_draft(
         array $job,
         int $source_post_id,
         array $post_map = []
     ): array {
         return $this->record_restorer->create_draft(
+            $job,
+            $source_post_id,
+            $post_map
+        );
+    }
+
+    public function restore_record_metadata(
+        array $job,
+        int $source_post_id,
+        array $post_map = []
+    ): array {
+        return $this->record_restorer->restore_metadata(
             $job,
             $source_post_id,
             $post_map
