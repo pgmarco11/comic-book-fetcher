@@ -14,8 +14,8 @@ if (!defined('ABSPATH')) {
     exit; // Exit if accessed directly
 }
 
-require_once __DIR__ . '/includes/class-tcs-cv-issue-worker.php';
-require_once __DIR__ . '/includes/class-tcs-catalog-background-worker.php';
+require_once __DIR__ . '/includes/classes/class-tcs-cv-issue-worker.php';
+require_once __DIR__ . '/includes/classes/class-tcs-catalog-background-worker.php';
 
 function comicbooks_cv_worker(): TCS_CV_Issue_Worker {
     static $instance;

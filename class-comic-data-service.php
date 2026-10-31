@@ -1,5 +1,4 @@
 <?php
-require_once __DIR__ . '/includes/class-tcs-comic-description-formatter.php';
 /**
  * ComicDataService – central data layer for Metron & Comic Vine.
  *
@@ -9,6 +8,9 @@ require_once __DIR__ . '/includes/class-tcs-comic-description-formatter.php';
  * @package ComicBooksFetcher
  * @since   1.0.0
  */
+
+require_once __DIR__ . '/includes/classes/class-tcs-comic-description-formatter.php';
+
 class ComicDataService {
 
     private $description_formatter;
