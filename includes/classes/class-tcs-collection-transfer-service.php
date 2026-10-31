@@ -5,6 +5,7 @@ require_once __DIR__ . '/class-tcs-collection-backup-exporter.php';
 require_once __DIR__ . '/class-tcs-collection-backup-validator.php';
 require_once __DIR__ . '/class-tcs-collection-transfer-store.php';
 require_once __DIR__ . '/class-tcs-collection-import-planner.php';
+require_once __DIR__ . '/class-tcs-collection-taxonomy-restorer.php';
 
 /** Stable transfer API composed from focused backup components. */
 class TCS_Collection_Transfer_Service {
@@ -12,17 +13,31 @@ class TCS_Collection_Transfer_Service {
     private $validator;
     private $store;
     private $planner;
+    private $taxonomy_restorer;
 
     public function __construct(
         ?TCS_Collection_Backup_Exporter $exporter = null,
         ?TCS_Collection_Backup_Validator $validator = null,
         ?TCS_Collection_Transfer_Store $store = null,
-        ?TCS_Collection_Import_Planner $planner = null
+        ?TCS_Collection_Import_Planner $planner = null,
+        ?TCS_Collection_Taxonomy_Restorer $taxonomy_restorer = null
     ) {
-        $this->exporter = $exporter ?? new TCS_Collection_Backup_Exporter();
-        $this->validator = $validator ?? new TCS_Collection_Backup_Validator();
-        $this->store = $store ?? new TCS_Collection_Transfer_Store();
-        $this->planner = $planner ?? new TCS_Collection_Import_Planner();
+        $this->exporter = $exporter
+            ?? new TCS_Collection_Backup_Exporter();
+    
+        $this->validator = $validator
+            ?? new TCS_Collection_Backup_Validator();
+    
+        $this->store = $store
+            ?? new TCS_Collection_Transfer_Store();
+    
+        $this->planner = $planner
+            ?? new TCS_Collection_Import_Planner();
+    
+        $this->taxonomy_restorer = $taxonomy_restorer
+            ?? new TCS_Collection_Taxonomy_Restorer(
+                $this->exporter
+            );
     }
 
     public function read_meta(
@@ -126,5 +141,9 @@ class TCS_Collection_Transfer_Service {
         array $job
     ): array {
         return $this->planner->build_import_plan($job);
+    }
+
+    public function restore_taxonomies(array $backup): array {
+        return $this->taxonomy_restorer->restore($backup);
     }
 }

@@ -30,7 +30,6 @@ function tcs_inventory_controller(): TCS_Collection_Inventory_Controller {
     return $instance;
 }
 
-
 function tcs_inventory_condition_options(): array {
     return [
         '' => 'Not set',
@@ -58,6 +57,7 @@ add_filter('register_post_type_args', function ($args, $post_type) {
     }
     return $args;
 }, 10, 2);
+
 add_filter('wp_sitemaps_post_types', function ($types) {
     unset($types['collection']);
     return $types;
@@ -71,9 +71,11 @@ add_filter('wp_sitemaps_taxonomies', function ($taxonomies) {
     );
     return $taxonomies;
 });
+
 add_filter('oembed_response_data', function ($data, $post) {
     return $post->post_type === 'collection' ? false : $data;
 }, 10, 2);
+
 add_action('pre_get_posts', function ($query) {
     if (is_admin()) return;
     $types = (array) $query->get('post_type');
@@ -96,6 +98,7 @@ add_action('pre_get_posts', function ($query) {
             }
         }
 });
+
 add_action('template_redirect', function () {
     if (is_singular('collection') || is_post_type_archive('collection') || is_tax([
         'publisher',
@@ -134,7 +137,6 @@ add_action(
     'tcs_inventory_asset_setup',
     30
 );
-
 
 function tcs_inventory_record(int $id): array {
     return tcs_inventory_repository()->record($id);
@@ -202,7 +204,6 @@ function tcs_inventory_owned_post(int $id, array $statuses = ['publish']): WP_Po
 }
 
 add_action('wp_ajax_tcs_inventory_list', [tcs_inventory_controller(), 'list_items']);
-
 add_action('wp_ajax_tcs_inventory_save', [tcs_inventory_controller(), 'save_item']);
 
 function tcs_inventory_cleanup_orphaned_terms(
@@ -223,6 +224,7 @@ function tcs_inventory_taxonomy_tree(
 ): array {
     return tcs_inventory_repository()->taxonomy_tree($user_id, $publisher_id, $series_term_id);
 }
+
 function tcs_inventory_taxonomy_html(
     array $publishers
 ): string {
