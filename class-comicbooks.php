@@ -14,12 +14,11 @@ class Comicbooks {
     /** @var ComicDataService */
     private $data_service;
 
-    public function __construct() {
+    public function __construct(?ComicDataService $data_service = null) {
         // -----------------------------------------------------------------
         // 1. Initialise the data service (MetronClient → ComicDataService)
         // -----------------------------------------------------------------
-        $client               = new MetronClient();
-        $this->data_service   = new ComicDataService( $client );
+        $this->data_service = $data_service ?? new ComicDataService(new MetronClient());
 
         // -----------------------------------------------------------------
         // 2. Register AJAX actions

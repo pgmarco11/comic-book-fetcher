@@ -7,9 +7,8 @@ class ComicRenderer {
     /** @var ComicDataService */
     private $data_service;
  
-    public function __construct() {
-        $client             = new MetronClient();
-        $this->data_service = new ComicDataService( $client ); 
+    public function __construct(?ComicDataService $data_service = null) {
+        $this->data_service = $data_service ?? new ComicDataService(new MetronClient());
     }
 
 
