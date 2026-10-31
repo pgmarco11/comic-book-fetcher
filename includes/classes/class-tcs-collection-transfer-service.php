@@ -9,6 +9,7 @@ require_once __DIR__ . '/class-tcs-collection-taxonomy-restorer.php';
 require_once __DIR__ . '/class-tcs-collection-record-restorer.php';
 require_once __DIR__ . '/class-tcs-collection-metadata-restorer.php';
 require_once __DIR__ . '/class-tcs-collection-record-finalizer.php';
+require_once __DIR__ . '/class-tcs-collection-import-lock.php';
 
 /** Stable transfer API composed from focused backup components. */
 class TCS_Collection_Transfer_Service {
@@ -212,5 +213,10 @@ class TCS_Collection_Transfer_Service {
             $term_map,
             $post_map
         );
+    }
+    public function with_import_lock(callable $work) {
+        $lock = new TCS_Collection_Import_Lock();
+    
+        return $lock->run($work);
     }
 }
