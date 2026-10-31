@@ -6,6 +6,7 @@ require_once __DIR__ . '/class-tcs-collection-backup-validator.php';
 require_once __DIR__ . '/class-tcs-collection-transfer-store.php';
 require_once __DIR__ . '/class-tcs-collection-import-planner.php';
 require_once __DIR__ . '/class-tcs-collection-taxonomy-restorer.php';
+require_once __DIR__ . '/class-tcs-collection-record-restorer.php';
 
 /** Stable transfer API composed from focused backup components. */
 class TCS_Collection_Transfer_Service {
@@ -14,13 +15,15 @@ class TCS_Collection_Transfer_Service {
     private $store;
     private $planner;
     private $taxonomy_restorer;
+    private $record_restorer;
 
     public function __construct(
         ?TCS_Collection_Backup_Exporter $exporter = null,
         ?TCS_Collection_Backup_Validator $validator = null,
         ?TCS_Collection_Transfer_Store $store = null,
         ?TCS_Collection_Import_Planner $planner = null,
-        ?TCS_Collection_Taxonomy_Restorer $taxonomy_restorer = null
+        ?TCS_Collection_Taxonomy_Restorer $taxonomy_restorer = null,
+        ?TCS_Collection_Record_Restorer $record_restorer = null
     ) {
         $this->exporter = $exporter
             ?? new TCS_Collection_Backup_Exporter();
@@ -37,6 +40,11 @@ class TCS_Collection_Transfer_Service {
         $this->taxonomy_restorer = $taxonomy_restorer
             ?? new TCS_Collection_Taxonomy_Restorer(
                 $this->exporter
+            );
+        $this->record_restorer = $record_restorer
+            ?? new TCS_Collection_Record_Restorer(
+                $this->validator,
+                $this->planner
             );
     }
 
@@ -148,5 +156,16 @@ class TCS_Collection_Transfer_Service {
     }
     public function validate_post_fields(array $backup): int {
         return $this->validator->validate_post_fields($backup);
+    }
+    public function create_record_draft(
+        array $job,
+        int $source_post_id,
+        array $post_map = []
+    ): array {
+        return $this->record_restorer->create_draft(
+            $job,
+            $source_post_id,
+            $post_map
+        );
     }
 }
