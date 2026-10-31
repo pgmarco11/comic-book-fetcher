@@ -1,10 +1,10 @@
 <?php
 defined('ABSPATH') || exit;
 
-require_once __DIR__ . '/class-tcs-collection-backup-exporter.php';
-require_once __DIR__ . '/class-tcs-collection-backup-validator.php';
-require_once __DIR__ . '/class-tcs-collection-transfer-store.php';
-require_once __DIR__ . '/class-tcs-collection-import-planner.php';
+require_once __DIR__ . 'classes/class-tcs-collection-backup-exporter.php';
+require_once __DIR__ . 'classes/class-tcs-collection-backup-validator.php';
+require_once __DIR__ . 'classes/class-tcs-collection-transfer-store.php';
+require_once __DIR__ . 'classes/class-tcs-collection-import-planner.php';
 
 /** Stable transfer API composed from focused backup components. */
 class TCS_Collection_Transfer_Service {

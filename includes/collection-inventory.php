@@ -2,9 +2,9 @@
 /** Owner-scoped collection inventory. No Metron or Comic Vine requests. */
 defined('ABSPATH') || exit;
 
-require_once __DIR__ . '/class-tcs-collection-inventory-repository.php';
-require_once __DIR__ . '/class-tcs-collection-inventory-view.php';
-require_once __DIR__ . '/class-tcs-collection-inventory-controller.php';
+require_once __DIR__ . 'classes/class-tcs-collection-inventory-repository.php';
+require_once __DIR__ . 'classes/class-tcs-collection-inventory-view.php';
+require_once __DIR__ . 'classes/class-tcs-collection-inventory-controller.php';
 
 function tcs_inventory_repository(): TCS_Collection_Inventory_Repository {
     static $instance;
