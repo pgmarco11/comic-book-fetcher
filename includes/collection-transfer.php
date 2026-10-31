@@ -1,8 +1,8 @@
 <?php
 defined('ABSPATH') || exit;
 
-require_once __DIR__ . 'classes/class-tcs-collection-transfer.php';
-require_once __DIR__ . 'classes/class-tcs-collection-transfer-service.php';
+require_once __DIR__ . '/classes/class-tcs-collection-transfer.php';
+require_once __DIR__ . '/classes/class-tcs-collection-transfer-service.php';
 
 function tcs_collection_transfer_controller(): TCS_Collection_Transfer {
     static $instance;
