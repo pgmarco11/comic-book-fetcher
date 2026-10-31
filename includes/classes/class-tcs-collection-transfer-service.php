@@ -8,6 +8,7 @@ require_once __DIR__ . '/class-tcs-collection-import-planner.php';
 require_once __DIR__ . '/class-tcs-collection-taxonomy-restorer.php';
 require_once __DIR__ . '/class-tcs-collection-record-restorer.php';
 require_once __DIR__ . '/class-tcs-collection-metadata-restorer.php';
+require_once __DIR__ . '/class-tcs-collection-record-finalizer.php';
 
 /** Stable transfer API composed from focused backup components. */
 class TCS_Collection_Transfer_Service {
@@ -17,6 +18,7 @@ class TCS_Collection_Transfer_Service {
     private $planner;
     private $taxonomy_restorer;
     private $record_restorer;
+    private $record_finalizer;
 
     public function __construct(
         ?TCS_Collection_Backup_Exporter $exporter = null,
@@ -24,7 +26,8 @@ class TCS_Collection_Transfer_Service {
         ?TCS_Collection_Transfer_Store $store = null,
         ?TCS_Collection_Import_Planner $planner = null,
         ?TCS_Collection_Taxonomy_Restorer $taxonomy_restorer = null,
-        ?TCS_Collection_Record_Restorer $record_restorer = null
+        ?TCS_Collection_Record_Restorer $record_restorer = null,
+        ?TCS_Collection_Record_Finalizer $record_finalizer = null
     ) {
         $this->exporter = $exporter
             ?? new TCS_Collection_Backup_Exporter();
@@ -51,6 +54,14 @@ class TCS_Collection_Transfer_Service {
                     $this->validator,
                     $this->exporter
                 )
+            );
+
+        $this->record_finalizer = $record_finalizer
+            ?? new TCS_Collection_Record_Finalizer(
+                $this->validator,
+                $this->planner,
+                $this->record_restorer,
+                $this->exporter
             );
     }
 
@@ -160,7 +171,7 @@ class TCS_Collection_Transfer_Service {
     public function restore_taxonomies(array $backup): array {
         return $this->taxonomy_restorer->restore($backup);
     }
-    
+
     public function validate_post_fields(array $backup): int {
         return $this->validator->validate_post_fields($backup);
     }
@@ -185,6 +196,20 @@ class TCS_Collection_Transfer_Service {
         return $this->record_restorer->restore_metadata(
             $job,
             $source_post_id,
+            $post_map
+        );
+    }
+
+    public function restore_record(
+        array $job,
+        int $source_post_id,
+        array $term_map,
+        array $post_map = []
+    ): array {
+        return $this->record_finalizer->restore(
+            $job,
+            $source_post_id,
+            $term_map,
             $post_map
         );
     }
