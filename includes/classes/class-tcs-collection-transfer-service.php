@@ -146,4 +146,7 @@ class TCS_Collection_Transfer_Service {
     public function restore_taxonomies(array $backup): array {
         return $this->taxonomy_restorer->restore($backup);
     }
+    public function validate_post_fields(array $backup): int {
+        return $this->validator->validate_post_fields($backup);
+    }
 }

@@ -392,6 +392,10 @@ class TCS_Collection_Transfer {
                 $backup
             );
 
+            $post_field_count = $this->service->validate_post_fields(
+                $backup
+            );
+
             $job_token = $this->service->stage_backup(
                 $backup,
                 $validated_owners
@@ -421,6 +425,11 @@ class TCS_Collection_Transfer {
             $message .= sprintf(
                 ' Owner checks passed for %d owner references; source record IDs are unique.',
                 count($validated_owners)
+            );
+
+            $message .= sprintf(
+                ' Post-field checks passed for %d comic records.',
+                $post_field_count
             );
 
             $message .=

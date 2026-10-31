@@ -284,4 +284,131 @@ class TCS_Collection_Backup_Validator {
 
         return $owners;
     }
+    
+    public function validate_post_fields(array $backup): int {
+        $string_fields = [
+            'post_title', 'post_content', 'post_excerpt',
+            'post_status', 'post_name', 'post_date',
+            'post_date_gmt', 'post_modified', 'post_modified_gmt',
+            'post_password', 'comment_status', 'ping_status',
+        ];
+    
+        $allowed_fields = array_merge(
+            $string_fields,
+            ['post_parent', 'menu_order']
+        );
+    
+        $parents = [];
+    
+        foreach ($backup['records'] as $index => $record) {
+            $context = 'Comic ' . ($index + 1);
+            $post = $record['post'] ?? null;
+    
+            if (
+                !is_array($post) ||
+                array_diff(array_keys($post), $allowed_fields)
+            ) {
+                throw new RuntimeException(
+                    $context . ': invalid or unexpected post fields.'
+                );
+            }
+    
+            foreach ($string_fields as $field) {
+                if (
+                    !is_string($post[$field] ?? null) ||
+                    strpos($post[$field], "\0") !== false
+                ) {
+                    throw new RuntimeException(
+                        $context . ': invalid ' . $field . '.'
+                    );
+                }
+            }
+    
+            if (
+                !is_int($post['post_parent'] ?? null) ||
+                $post['post_parent'] < 0 ||
+                !is_int($post['menu_order'] ?? null) ||
+                $post['menu_order'] < -2147483648 ||
+                $post['menu_order'] > 2147483647
+            ) {
+                throw new RuntimeException(
+                    $context . ': invalid parent or menu order.'
+                );
+            }
+    
+            if (
+                !in_array(
+                    $post['post_status'],
+                    array_values(get_post_stati()),
+                    true
+                ) ||
+                !in_array(
+                    $post['comment_status'],
+                    ['open', 'closed'],
+                    true
+                ) ||
+                !in_array(
+                    $post['ping_status'],
+                    ['open', 'closed'],
+                    true
+                )
+            ) {
+                throw new RuntimeException(
+                    $context . ': invalid post status or discussion settings.'
+                );
+            }
+    
+            foreach ([
+                'post_date',
+                'post_date_gmt',
+                'post_modified',
+                'post_modified_gmt',
+            ] as $field) {
+                $value = $post[$field];
+    
+                if ($value === '0000-00-00 00:00:00') {
+                    continue;
+                }
+    
+                $date = DateTimeImmutable::createFromFormat(
+                    '!Y-m-d H:i:s',
+                    $value,
+                    new DateTimeZone('UTC')
+                );
+    
+                if (
+                    !$date ||
+                    $date->format('Y-m-d H:i:s') !== $value
+                ) {
+                    throw new RuntimeException(
+                        $context . ': invalid ' . $field . '.'
+                    );
+                }
+            }
+    
+            $parents[$record['source_post_id']] =
+                $post['post_parent'];
+        }
+    
+        foreach ($parents as $source_id => $parent_id) {
+            $seen = [$source_id => true];
+    
+            while ($parent_id !== 0) {
+                if (
+                    !array_key_exists($parent_id, $parents) ||
+                    isset($seen[$parent_id])
+                ) {
+                    throw new RuntimeException(
+                        'Missing parent or parent cycle at comic '
+                        . $source_id . '.'
+                    );
+                }
+    
+                $seen[$parent_id] = true;
+                $parent_id = $parents[$parent_id];
+            }
+        }
+    
+        return count($parents);
+    }
 }
