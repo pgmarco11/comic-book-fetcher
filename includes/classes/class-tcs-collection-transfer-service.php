@@ -126,7 +126,14 @@ class TCS_Collection_Transfer_Service {
         array $backup,
         array $owners
     ): string {
-        return $this->store->stage_backup($backup, $owners);
+        return $this->with_import_lock(
+            function () use ($backup, $owners) {
+                return $this->store->stage_backup(
+                    $backup,
+                    $owners
+                );
+            }
+        );
     }
 
     public function read_pending(
@@ -139,7 +146,27 @@ class TCS_Collection_Transfer_Service {
         int $user_id,
         string $token
     ): void {
-        $this->store->cleanup_pending($user_id, $token);
+        try {
+            $this->with_import_lock(
+                function () use ($user_id, $token) {
+                    $this->store->cleanup_pending(
+                        $user_id,
+                        $token
+                    );
+                }
+            );
+        } catch (Throwable $error) {
+            error_log(
+                'Collection backup cleanup deferred: '
+                . $error->getMessage()
+            );
+    
+            wp_schedule_single_event(
+                time() + 60,
+                'tcs_collection_transfer_cleanup_pending',
+                [$user_id, $token]
+            );
+        }
     }
 
     public function resolve_owner_map(
@@ -218,5 +245,87 @@ class TCS_Collection_Transfer_Service {
         $lock = new TCS_Collection_Import_Lock();
     
         return $lock->run($work);
+    }
+
+    public function save_owner_mapping(
+        string $token,
+        array $submitted
+    ): void {
+        $this->with_import_lock(
+            function (
+                TCS_Collection_Import_Lock $lock
+            ) use ($token, $submitted) {
+                $this->store->assert_can_change_pending();
+    
+                $job = $this->store->read_pending($token);
+    
+                if (
+                    !in_array(
+                        $job['state'] ?? 'staged',
+                        ['staged', 'mapped'],
+                        true
+                    )
+                ) {
+                    throw new RuntimeException(
+                        'This job can no longer change its owner mapping.'
+                    );
+                }
+    
+                $job['owner_map'] =
+                    $this->planner->resolve_owner_map(
+                        $job['owners'],
+                        $submitted
+                    );
+    
+                $plan = $this->planner->build_import_plan($job);
+    
+                $job['owner_map'] = $plan['owner_map'];
+                $job['import_plan'] = $plan;
+                $job['state'] = 'mapped';
+    
+                $this->store->save_pending($job, $lock);
+            }
+        );
+    }
+    
+    public function begin_import_job(string $token): array {
+        return $this->with_import_lock(
+            function (
+                TCS_Collection_Import_Lock $lock
+            ) use ($token): array {
+                $job = $this->store->read_pending($token);
+    
+                if (
+                    !is_array($job['owner_map'] ?? null) ||
+                    !in_array(
+                        $job['state'] ?? '',
+                        ['mapped', 'running'],
+                        true
+                    )
+                ) {
+                    throw new RuntimeException(
+                        'Save the destination mapping before starting an import.'
+                    );
+                }
+    
+                $plan = $this->planner->build_import_plan($job);
+    
+                if ($plan['owner_map'] !== $job['owner_map']) {
+                    throw new RuntimeException(
+                        'Destination permissions changed. Review this import before continuing.'
+                    );
+                }
+    
+                return $this->store->begin_import(
+                    $token,
+                    $plan,
+                    $lock
+                );
+            }
+        );
+    }
+    
+    public function read_import_progress(string $token): array {
+        return $this->store->read_progress($token);
     }
 }

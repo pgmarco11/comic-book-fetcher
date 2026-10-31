@@ -457,137 +457,150 @@ class TCS_Collection_Transfer {
     }
 
     public function render_owner_mapping(): void {
-        $pending = get_option(
-            'tcs_collection_transfer_pending_'
-            . get_current_user_id(),
-            false
-        );
 
-        if (
-            !is_array($pending) ||
-            !is_string($pending['token'] ?? null)
-        ) {
-            return;
-        }
-
-        try {
-            $job = $this->service->read_pending(
-                $pending['token']
+            $pending = get_option(
+                'tcs_collection_transfer_pending_'
+                . get_current_user_id(),
+                false
             );
-        } catch (Throwable $error) {
-            echo '<p>' . esc_html($error->getMessage()) . '</p>';
-            return;
-        }
 
-        $is_admin = current_user_can('manage_options');
+            if (
+                !is_array($pending) ||
+                !is_string($pending['token'] ?? null)
+            ) {
+                return;
+            }
+
+            try {
+                $job = $this->service->read_pending(
+                    $pending['token']
+                );
+            } catch (Throwable $error) {
+                echo '<p>' . esc_html($error->getMessage()) . '</p>';
+                return;
+            }
+
+            if (
+                !in_array(
+                    $job['state'] ?? 'staged',
+                    ['staged', 'mapped'],
+                    true
+                )
+            ) {
+                return;
+            }
+
+            $is_admin = current_user_can('manage_options');
+        
         ?>
-    <hr>
 
-    <h2>Choose destination owners</h2>
+        <hr>
 
-    <p>
-        These choices determine which accounts receive the comics.
-        Saving this form does not import any entries.
-    </p>
-
-    <?php if (($job['state'] ?? '') === 'mapped') : ?>
-        <p><strong>Destination mapping saved.</strong></p>
-    <?php endif; ?>
-
-    <?php if (isset($job['import_plan'])) : ?>
-        <h3>Import preview</h3>
+        <h2>Choose destination owners</h2>
 
         <p>
-            Would create:
-            <strong>
-                <?php
-                echo esc_html(
-                        (string) $job['import_plan']['create_count']
-                    );
-                    ?>
-            </strong>
-
-            <br>
-
-            Would skip:
-            <strong>
-                <?php
-                echo esc_html(
-                        (string) $job['import_plan']['skip_count']
-                    );
-                    ?>
-            </strong>
+            These choices determine which accounts receive the comics.
+            Saving this form does not import any entries.
         </p>
 
-        <p>No collection entries have been changed.</p>
-    <?php endif; ?>
+        <?php if (($job['state'] ?? '') === 'mapped') : ?>
+            <p><strong>Destination mapping saved.</strong></p>
+        <?php endif; ?>
 
-    <form
-        method="post"
-        action="<?php echo esc_url(admin_url('admin-post.php')); ?>"
-    >
-        <input
-            type="hidden"
-            name="action"
-            value="tcs_collection_transfer_save_mapping"
-        >
+        <?php if (isset($job['import_plan'])) : ?>
+            <h3>Import preview</h3>
 
-        <input
-            type="hidden"
-            name="job_token"
-            value="<?php echo esc_attr($job['token']); ?>"
-        >
-
-        <?php
-        wp_nonce_field(
-                'tcs_collection_transfer_save_mapping_'
-                . $job['token']
-            );
-            ?>
-
-        <?php foreach ($job['owners'] as $source_id => $owner) : ?>
             <p>
+                Would create:
                 <strong>
                     <?php
-                    echo esc_html(sprintf(
-                            '%s — source ID %d — %d entries',
-                            $owner['user_login'] ?? 'Unknown source account',
-                            $source_id,
-                            $owner['record_count']
-                        ));
+                    echo esc_html(
+                            (string) $job['import_plan']['create_count']
+                        );
+                        ?>
+                </strong>
+
+                <br>
+
+                Would skip:
+                <strong>
+                    <?php
+                    echo esc_html(
+                            (string) $job['import_plan']['skip_count']
+                        );
                         ?>
                 </strong>
             </p>
 
-            <?php if ($is_admin) : ?>
+            <p>No collection entries have been changed.</p>
+        <?php endif; ?>
+
+        <form
+            method="post"
+            action="<?php echo esc_url(admin_url('admin-post.php')); ?>"
+        >
+            <input
+                type="hidden"
+                name="action"
+                value="tcs_collection_transfer_save_mapping"
+            >
+
+            <input
+                type="hidden"
+                name="job_token"
+                value="<?php echo esc_attr($job['token']); ?>"
+            >
+
+            <?php
+            wp_nonce_field(
+                    'tcs_collection_transfer_save_mapping_'
+                    . $job['token']
+                );
+                ?>
+
+            <?php foreach ($job['owners'] as $source_id => $owner) : ?>
                 <p>
-                    <label for="<?php
-                        echo esc_attr('tcs-destination-' . $source_id);
-                        ?>">
-                        Destination account
-                    </label>
+                    <strong>
+                        <?php
+                        echo esc_html(sprintf(
+                                '%s — source ID %d — %d entries',
+                                $owner['user_login'] ?? 'Unknown source account',
+                                $source_id,
+                                $owner['record_count']
+                            ));
+                            ?>
+                    </strong>
                 </p>
 
-                <?php
-                wp_dropdown_users([
-                        'name' => 'destination_owners[' . $source_id . ']',
-                        'id' => 'tcs-destination-' . $source_id,
-                        'show_option_none' => 'Choose destination account',
-                        'option_none_value' => '0',
-                        'selected' => $job['owner_map'][$source_id] ?? 0,
-                    ]);
-                    ?>
-            <?php else : ?>
-                <p>These entries will go into your signed-in account.</p>
-            <?php endif; ?>
-        <?php endforeach; ?>
+                <?php if ($is_admin) : ?>
+                    <p>
+                        <label for="<?php
+                            echo esc_attr('tcs-destination-' . $source_id);
+                            ?>">
+                            Destination account
+                        </label>
+                    </p>
 
-        <?php submit_button('Save mapping and preview import'); ?>
-    </form>
+                    <?php
+                    wp_dropdown_users([
+                            'name' => 'destination_owners[' . $source_id . ']',
+                            'id' => 'tcs-destination-' . $source_id,
+                            'show_option_none' => 'Choose destination account',
+                            'option_none_value' => '0',
+                            'selected' => $job['owner_map'][$source_id] ?? 0,
+                        ]);
+                        ?>
+                <?php else : ?>
+                    <p>These entries will go into your signed-in account.</p>
+                <?php endif; ?>
+            <?php endforeach; ?>
 
-    <hr>
-    <?php
-}
+            <?php submit_button('Save mapping and preview import'); ?>
+        </form>
+
+        <hr>
+        <?php
+    }
 
     public function handle_save_mapping() {
         try {
@@ -600,20 +613,6 @@ class TCS_Collection_Transfer {
                 'tcs_collection_transfer_save_mapping_' . $token
             );
 
-            $job = $this->service->read_pending($token);
-
-            if (
-                !in_array(
-                    $job['state'] ?? 'staged',
-                    ['staged', 'mapped'],
-                    true
-                )
-            ) {
-                throw new RuntimeException(
-                    'This job can no longer change its owner mapping.'
-                );
-            }
-
             $submitted = $_POST['destination_owners'] ?? [];
 
             if (!is_array($submitted)) {
@@ -622,40 +621,25 @@ class TCS_Collection_Transfer {
                 );
             }
 
-            $mapping = $this->service->resolve_owner_map(
-                $job['owners'],
+            $this->service->save_owner_mapping(
+                $token,
                 wp_unslash($submitted)
             );
 
-            $job['owner_map'] = $mapping;
-
-            $plan = $this->service->build_import_plan($job);
-
-            $job['owner_map'] = $plan['owner_map'];
-            $job['import_plan'] = $plan;
-            $job['state'] = 'mapped';
-
-            $option_name =
-                'tcs_collection_transfer_pending_'
-                . get_current_user_id();
-
-            $saved = update_option($option_name, $job, false);
-
-            if (!$saved && get_option($option_name) !== $job) {
-                throw new RuntimeException(
-                    'The destination mapping could not be saved.'
-                );
-            }
-
             wp_safe_redirect(
-                admin_url('tools.php?page=tcs-collection-backup')
+                admin_url(
+                    'tools.php?page=tcs-collection-backup'
+                )
             );
             exit;
         } catch (Throwable $error) {
             wp_die(
                 esc_html($error->getMessage()),
                 'Destination mapping',
-                ['response' => 400, 'back_link' => true]
+                [
+                    'response' => 400,
+                    'back_link' => true,
+                ]
             );
         }
     }
