@@ -178,7 +178,7 @@ class TCS_Collection_Transfer {
                 No collection entries will be changed.
             </p>
 
-            <?php submit_button('Preview backup', 'secondary'); ?>
+            <?php submit_button('Preview import', 'secondary'); ?>
         </form>
 
     </div>
@@ -253,6 +253,7 @@ class TCS_Collection_Transfer {
     }
 
     public function handle_import_preview() {
+
         if (!is_user_logged_in() || !current_user_can('read')) {
             wp_die(
                 'You must sign in to preview a collection backup.',
@@ -406,6 +407,13 @@ class TCS_Collection_Transfer {
             // Confirm that this request can read the saved job.
             $this->service->read_pending($job_token);
 
+            if (!current_user_can('manage_options')) {
+                $this->service->save_owner_mapping(
+                    $job_token,
+                    []
+                );
+            }
+
             $message = sprintf(
                 'Backup opened successfully. It contains %d collection entries, %d taxonomy term definitions, and %d owner references. Nothing has been imported.',
                 $record_count,
@@ -436,6 +444,11 @@ class TCS_Collection_Transfer {
 
             $message .=
                 ' The checked backup is staged for 30 minutes.';
+
+            wp_safe_redirect(
+                    admin_url('tools.php?page=tcs-collection-backup')
+            );
+            exit;
 
         } catch (JsonException $error) {
             wp_die(
@@ -493,6 +506,48 @@ class TCS_Collection_Transfer {
             }
 
             $is_admin = current_user_can('manage_options');
+
+            if (!$is_admin) {
+                $plan = $job['import_plan'] ?? null;
+            
+                if (!is_array($plan)) {
+                    echo '<p>Upload your backup again to prepare the import preview.</p>';
+                    return;
+                }
+                ?>
+                <section id="tcs-collection-owner-mapping">
+                    <h2>Import preview</h2>
+            
+                    <p>
+                        This backup will be restored into your collection.
+                        Existing matching comics will be skipped.
+                    </p>
+            
+                    <p>
+                        Would create:
+                        <strong><?php
+                            echo esc_html(
+                                (string) $plan['create_count']
+                            );
+                        ?></strong>
+                        <br>
+                        Would skip:
+                        <strong><?php
+                            echo esc_html(
+                                (string) $plan['skip_count']
+                            );
+                        ?></strong>
+                    </p>
+            
+                    <p>
+                        Nothing has been imported.
+                        Choose Start import below to continue.
+                    </p>
+                </section>
+                <?php
+                return;
+            }
+
         ?>
         <div id="tcs-collection-owner-mapping">
             <hr>
