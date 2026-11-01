@@ -170,4 +170,67 @@ class TCS_Collection_Taxonomy_Restorer {
         sort($values, SORT_STRING);
         return $values;
     }
+
+    public function restore_one(
+        array $backup,
+        string $reference,
+        array $term_map
+    ): array {
+        if (!is_user_logged_in() || !current_user_can('read')) {
+            throw new RuntimeException(
+                'Sign in to restore taxonomy terms.'
+            );
+        }
+    
+        $validator = new TCS_Collection_Backup_Validator();
+        $validator->validate_taxonomies($backup);
+    
+        $this->definitions = array_column(
+            $backup['term_definitions'],
+            null,
+            'ref'
+        );
+    
+        if (!isset($this->definitions[$reference])) {
+            throw new RuntimeException(
+                'The requested taxonomy reference is missing.'
+            );
+        }
+    
+        $definition = $this->definitions[$reference];
+    
+        $validator->validate_meta_rows(
+            $definition['meta'],
+            'Term'
+        );
+    
+        $parent = $definition['parent_ref'];
+    
+        if (
+            $parent !== null &&
+            (
+                !is_int($term_map[$parent] ?? null) ||
+                $term_map[$parent] < 1
+            )
+        ) {
+            throw new RuntimeException(
+                'Restore the parent term before this term.'
+            );
+        }
+    
+        $this->map = $term_map;
+    
+        unset($this->map[$reference]);
+    
+        $this->created = 0;
+        $this->reused = 0;
+    
+        $this->resolve($reference);
+    
+        return [
+            'term_map' => $this->map,
+            'created' => $this->created,
+            'reused' => $this->reused,
+        ];
+    }
 }

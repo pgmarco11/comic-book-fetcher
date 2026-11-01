@@ -10,6 +10,7 @@ require_once __DIR__ . '/class-tcs-collection-record-restorer.php';
 require_once __DIR__ . '/class-tcs-collection-metadata-restorer.php';
 require_once __DIR__ . '/class-tcs-collection-record-finalizer.php';
 require_once __DIR__ . '/class-tcs-collection-import-lock.php';
+require_once __DIR__ . '/class-tcs-collection-import-runner.php';
 
 /** Stable transfer API composed from focused backup components. */
 class TCS_Collection_Transfer_Service {
@@ -327,5 +328,61 @@ class TCS_Collection_Transfer_Service {
     
     public function read_import_progress(string $token): array {
         return $this->store->read_progress($token);
+    }
+
+    public function process_import_batch(
+        string $token,
+        int $limit = 3
+    ): array {
+        return $this->with_import_lock(
+            function (
+                TCS_Collection_Import_Lock $lock
+            ) use ($token, $limit): array {
+                $runner = new TCS_Collection_Import_Runner(
+                    $this->store,
+                    $this->planner,
+                    $this->taxonomy_restorer,
+                    $this->record_finalizer
+                );
+    
+                return $runner->run(
+                    $token,
+                    $limit,
+                    $lock
+                );
+            }
+        );
+    }
+    
+    public function resume_import_job(string $token): array {
+        return $this->with_import_lock(
+            function (
+                TCS_Collection_Import_Lock $lock
+            ) use ($token): array {
+                $progress = $this->store->read_progress($token);
+    
+                if ($progress['state'] !== 'paused') {
+                    return $progress;
+                }
+    
+                $job = $this->store->read_pending($token);
+                $plan = $this->planner->build_import_plan($job);
+    
+                if ($plan['owner_map'] !== $job['owner_map']) {
+                    throw new RuntimeException(
+                        'Destination permissions changed. Review this import before continuing.'
+                    );
+                }
+    
+                $progress['state'] = 'ready';
+                $progress['last_error'] = '';
+    
+                return $this->store->save_progress(
+                    $token,
+                    $progress,
+                    $lock
+                );
+            }
+        );
     }
 }

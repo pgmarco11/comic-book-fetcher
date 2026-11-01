@@ -25,6 +25,19 @@ class TCS_Collection_Record_Finalizer {
         array $term_map,
         array $post_map = []
     ): array {
+
+        if (
+            array_key_exists('token', $job) &&
+            (
+                !is_string($job['token']) ||
+                !preg_match('/^[a-f0-9]{32}$/D', $job['token'])
+            )
+        ) {
+            throw new RuntimeException(
+                'The import job token is invalid.'
+            );
+        }
+
         $backup = $job['backup'];
 
         $owners = $this->validator->validate_owners($backup);
@@ -229,6 +242,26 @@ class TCS_Collection_Record_Finalizer {
             throw new RuntimeException(
                 'The finalization marker could not be saved.'
             );
+        }
+
+        if (isset($job['token'])) {
+            update_post_meta(
+                $post_id,
+                '_tcs_collection_transfer_job',
+                $job['token']
+            );
+        
+            if (
+                get_post_meta(
+                    $post_id,
+                    '_tcs_collection_transfer_job',
+                    true
+                ) !== $job['token']
+            ) {
+                throw new RuntimeException(
+                    'The import job identity could not be saved.'
+                );
+            }
         }
 
         $needs_update =

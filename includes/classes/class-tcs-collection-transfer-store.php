@@ -366,11 +366,18 @@ class TCS_Collection_Transfer_Store {
                 'A finished import cannot be changed.'
             );
         }
+
+        $progress['total_terms'] =
+            count($job['backup']['term_definitions']);
+
+        $progress['total_records'] =
+            count($job['backup']['records']);
     
         $allowed_fields = [
             'token', 'actor_id', 'revision', 'state', 'phase',
             'term_cursor', 'record_cursor', 'term_map', 'post_map',
             'results', 'last_error', 'updated_at',
+            'total_terms', 'total_records',
         ];
     
         if (array_diff(array_keys($progress), $allowed_fields)) {
