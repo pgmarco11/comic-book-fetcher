@@ -461,4 +461,37 @@ class TCS_Collection_Transfer_Service {
             }
         );
     }
+
+    public function dismiss_import_job(string $token): array {
+        return $this->with_import_lock(
+            function (
+                TCS_Collection_Import_Lock $lock
+            ) use ($token): array {
+                $lock->assert_owned();
+    
+                $progress = $this->store->read_progress($token);
+    
+                if ($progress['state'] !== 'complete') {
+                    throw new RuntimeException(
+                        'Only completed imports can be dismissed.'
+                    );
+                }
+    
+                $user_id = get_current_user_id();
+                $key = '_tcs_collection_import_dismissed';
+    
+                update_user_meta($user_id, $key, $token);
+    
+                if (
+                    get_user_meta($user_id, $key, true) !== $token
+                ) {
+                    throw new RuntimeException(
+                        'The completed summary could not be dismissed.'
+                    );
+                }
+    
+                return $progress;
+            }
+        );
+    }
 }

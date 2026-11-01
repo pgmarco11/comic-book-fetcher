@@ -12,6 +12,7 @@
 
     const start = node('start');
     const cancel = node('cancel');
+    const done = node('done');
 
     const mapping = document.getElementById(
         'tcs-collection-owner-mapping'
@@ -122,6 +123,15 @@
                     ? 'Retry import'
                     : 'Continue import';
 
+        done.hidden = progress.state !== 'complete';
+        done.disabled = busy || fatal;
+
+        root.querySelectorAll(
+            '[data-import-instructions]'
+        ).forEach((element) => {
+            element.hidden = progress.state === 'complete';
+        });
+
         cancel.hidden = !cancellable();
         cancel.disabled = cancelRequested || fatal;
 
@@ -223,7 +233,10 @@
                     progress = next;
                 }
 
-                if (progress.state === 'cancelled') {
+                if (
+                    command === 'done' ||
+                    progress.state === 'cancelled'
+                ) {
                     window.location.reload();
                     return;
                 }
@@ -283,6 +296,16 @@
             draw();
         } else {
             drive('cancel');
+        }
+    });
+
+    done.addEventListener('click', () => {
+        if (
+            !busy &&
+            !fatal &&
+            progress.state === 'complete'
+        ) {
+            drive('done');
         }
     });
 

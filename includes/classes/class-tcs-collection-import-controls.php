@@ -98,7 +98,24 @@ class TCS_Collection_Import_Controls {
         ) {
             return;
         }
+
+        if (
+            $summary['state'] === 'complete' &&
+            get_user_meta(
+                $user_id,
+                '_tcs_collection_import_dismissed',
+                true
+            ) === $token
+        ) {
+            return;
+        }
         ?>
+        <style>
+            #tcs-import-controls [hidden],
+            #tcs-collection-owner-mapping[hidden] {
+                display: none !important;
+            }
+        </style>
         <section
             id="tcs-import-controls"
             data-url="<?php
@@ -116,17 +133,17 @@ class TCS_Collection_Import_Controls {
         >
             <h2>Restore collection backup</h2>
 
-            <p>
+            <p data-import-instructions>
                 Start will import into the saved destination
                 accounts. Existing matching comics are skipped.
             </p>
 
-            <p>
+            <p data-import-instructions>
                 Keep this page open while importing.
                 If you close it, return here and choose Continue.
             </p>
 
-            <p>
+            <p data-import-instructions>
                 Cancel stops further work and keeps records
                 already created.
             </p>
@@ -147,7 +164,7 @@ class TCS_Collection_Import_Controls {
                 style="width:100%;max-width:600px"
             ></progress>
 
-            <p>
+            <p data-import-instructions>
                 Preparation: <span data-terms>0</span>
             </p>
 
@@ -180,6 +197,14 @@ class TCS_Collection_Import_Controls {
                     hidden
                     disabled
                 >Cancel import</button>
+
+                <button
+                    type="button"
+                    class="button button-primary"
+                    data-done
+                    hidden
+                    disabled
+                >Done</button>
             </p>
 
             <noscript>
@@ -269,6 +294,12 @@ class TCS_Collection_Import_Controls {
                 case 'status':
                     $data = $this->status($token);
                     break;
+                
+                case 'done':
+                    $result = $this->service->dismiss_import_job(
+                        $token
+                );
+                break;
 
                 default:
                     throw new RuntimeException(
