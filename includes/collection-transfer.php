@@ -3,6 +3,7 @@ defined('ABSPATH') || exit;
 
 require_once __DIR__ . '/classes/class-tcs-collection-transfer.php';
 require_once __DIR__ . '/classes/class-tcs-collection-transfer-service.php';
+require_once __DIR__ . '/classes/class-tcs-collection-import-controls.php';
 
 function tcs_collection_transfer_controller(): TCS_Collection_Transfer {
     static $instance;
@@ -176,3 +177,31 @@ function tcs_collection_transfer_build_import_plan(
 ): array {
     return tcs_collection_transfer_service()->build_import_plan($job);
 }
+
+function tcs_collection_import_controls():
+    TCS_Collection_Import_Controls
+{
+    static $instance;
+
+    if (!$instance) {
+        $instance = new TCS_Collection_Import_Controls(
+            tcs_collection_transfer_service()
+        );
+    }
+
+    return $instance;
+}
+
+add_action(
+    'admin_enqueue_scripts',
+    static function ($hook) {
+        tcs_collection_import_controls()->enqueue($hook);
+    }
+);
+
+add_action(
+    'wp_ajax_tcs_collection_import_request',
+    static function () {
+        tcs_collection_import_controls()->handle_request();
+    }
+);

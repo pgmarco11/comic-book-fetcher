@@ -127,6 +127,8 @@ class TCS_Collection_Transfer {
 
         <?php $this->render_owner_mapping(); ?>
 
+        <?php tcs_collection_import_controls()->render(); ?>
+
         <h2>Import collection</h2>
 
         <p>
@@ -491,115 +493,115 @@ class TCS_Collection_Transfer {
             }
 
             $is_admin = current_user_can('manage_options');
-        
         ?>
+        <div id="tcs-collection-owner-mapping">
+            <hr>
 
-        <hr>
-
-        <h2>Choose destination owners</h2>
-
-        <p>
-            These choices determine which accounts receive the comics.
-            Saving this form does not import any entries.
-        </p>
-
-        <?php if (($job['state'] ?? '') === 'mapped') : ?>
-            <p><strong>Destination mapping saved.</strong></p>
-        <?php endif; ?>
-
-        <?php if (isset($job['import_plan'])) : ?>
-            <h3>Import preview</h3>
+            <h2>Choose destination owners</h2>
 
             <p>
-                Would create:
-                <strong>
-                    <?php
-                    echo esc_html(
-                            (string) $job['import_plan']['create_count']
-                        );
-                        ?>
-                </strong>
-
-                <br>
-
-                Would skip:
-                <strong>
-                    <?php
-                    echo esc_html(
-                            (string) $job['import_plan']['skip_count']
-                        );
-                        ?>
-                </strong>
+                These choices determine which accounts receive the comics.
+                Saving this form does not import any entries.
             </p>
 
-            <p>No collection entries have been changed.</p>
-        <?php endif; ?>
+            <?php if (($job['state'] ?? '') === 'mapped') : ?>
+                <p><strong>Destination mapping saved.</strong></p>
+            <?php endif; ?>
 
-        <form
-            method="post"
-            action="<?php echo esc_url(admin_url('admin-post.php')); ?>"
-        >
-            <input
-                type="hidden"
-                name="action"
-                value="tcs_collection_transfer_save_mapping"
-            >
+            <?php if (isset($job['import_plan'])) : ?>
+                <h3>Import preview</h3>
 
-            <input
-                type="hidden"
-                name="job_token"
-                value="<?php echo esc_attr($job['token']); ?>"
-            >
-
-            <?php
-            wp_nonce_field(
-                    'tcs_collection_transfer_save_mapping_'
-                    . $job['token']
-                );
-                ?>
-
-            <?php foreach ($job['owners'] as $source_id => $owner) : ?>
                 <p>
+                    Would create:
                     <strong>
                         <?php
-                        echo esc_html(sprintf(
-                                '%s — source ID %d — %d entries',
-                                $owner['user_login'] ?? 'Unknown source account',
-                                $source_id,
-                                $owner['record_count']
-                            ));
+                        echo esc_html(
+                                (string) $job['import_plan']['create_count']
+                            );
+                            ?>
+                    </strong>
+
+                    <br>
+
+                    Would skip:
+                    <strong>
+                        <?php
+                        echo esc_html(
+                                (string) $job['import_plan']['skip_count']
+                            );
                             ?>
                     </strong>
                 </p>
 
-                <?php if ($is_admin) : ?>
-                    <p>
-                        <label for="<?php
-                            echo esc_attr('tcs-destination-' . $source_id);
-                            ?>">
-                            Destination account
-                        </label>
-                    </p>
+                <p>No collection entries have been changed.</p>
+            <?php endif; ?>
+
+                <form
+                    method="post"
+                    action="<?php echo esc_url(admin_url('admin-post.php')); ?>"
+                >
+                    <input
+                        type="hidden"
+                        name="action"
+                        value="tcs_collection_transfer_save_mapping"
+                    >
+
+                    <input
+                        type="hidden"
+                        name="job_token"
+                        value="<?php echo esc_attr($job['token']); ?>"
+                    >
 
                     <?php
-                    wp_dropdown_users([
-                            'name' => 'destination_owners[' . $source_id . ']',
-                            'id' => 'tcs-destination-' . $source_id,
-                            'show_option_none' => 'Choose destination account',
-                            'option_none_value' => '0',
-                            'selected' => $job['owner_map'][$source_id] ?? 0,
-                        ]);
+                    wp_nonce_field(
+                            'tcs_collection_transfer_save_mapping_'
+                            . $job['token']
+                        );
                         ?>
-                <?php else : ?>
-                    <p>These entries will go into your signed-in account.</p>
-                <?php endif; ?>
-            <?php endforeach; ?>
 
-            <?php submit_button('Save mapping and preview import'); ?>
-        </form>
+                    <?php foreach ($job['owners'] as $source_id => $owner) : ?>
+                        <p>
+                            <strong>
+                                <?php
+                                echo esc_html(sprintf(
+                                        '%s — source ID %d — %d entries',
+                                        $owner['user_login'] ?? 'Unknown source account',
+                                        $source_id,
+                                        $owner['record_count']
+                                    ));
+                                    ?>
+                            </strong>
+                        </p>
 
-        <hr>
-        <?php
+                        <?php if ($is_admin) : ?>
+                            <p>
+                                <label for="<?php
+                                    echo esc_attr('tcs-destination-' . $source_id);
+                                    ?>">
+                                    Destination account
+                                </label>
+                            </p>
+
+                            <?php
+                            wp_dropdown_users([
+                                    'name' => 'destination_owners[' . $source_id . ']',
+                                    'id' => 'tcs-destination-' . $source_id,
+                                    'show_option_none' => 'Choose destination account',
+                                    'option_none_value' => '0',
+                                    'selected' => $job['owner_map'][$source_id] ?? 0,
+                                ]);
+                                ?>
+                        <?php else : ?>
+                            <p>These entries will go into your signed-in account.</p>
+                        <?php endif; ?>
+                    <?php endforeach; ?>
+
+                    <?php submit_button('Save mapping and preview import'); ?>
+                </form>
+        
+            <hr>
+        </div>
+    <?php
     }
 
     public function handle_save_mapping() {

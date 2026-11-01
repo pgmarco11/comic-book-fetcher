@@ -385,4 +385,73 @@ class TCS_Collection_Transfer_Service {
             }
         );
     }
+
+    public function cancel_import_job(string $token): array {
+        return $this->with_import_lock(
+            function (
+                TCS_Collection_Import_Lock $lock
+            ) use ($token): array {
+                $progress = $this->store->read_progress($token);
+    
+                if (
+                    in_array(
+                        $progress['state'],
+                        ['complete', 'cancelled'],
+                        true
+                    )
+                ) {
+                    return $progress;
+                }
+    
+                // Recover counts if a completed comic lost its checkpoint.
+                try {
+                    $job = $this->store->read_pending($token);
+                    $plan = $this->planner->build_import_plan($job);
+    
+                    if ($plan['owner_map'] === $job['owner_map']) {
+                        foreach ($plan['records'] as $item) {
+                            $source_id = $item['source_post_id'];
+    
+                            if (
+                                $item['action'] === 'skip' &&
+                                in_array(
+                                    $progress['results'][$source_id]['status']
+                                        ?? '',
+                                    ['processing', 'failed'],
+                                    true
+                                ) &&
+                                get_post_meta(
+                                    $item['existing_post_id'],
+                                    '_tcs_collection_transfer_job',
+                                    true
+                                ) === $token
+                            ) {
+                                $progress['results'][$source_id] = [
+                                    'status' => 'created',
+                                    'post_id' => $item['existing_post_id'],
+                                ];
+    
+                                $progress['post_map'][$source_id] =
+                                    $item['existing_post_id'];
+                            }
+                        }
+                    }
+                } catch (Throwable $error) {
+                    error_log(
+                        'Import cancellation kept the last saved counts: '
+                        . $error->getMessage()
+                    );
+                }
+    
+                $progress['state'] = 'cancelled';
+                $progress['last_error'] = '';
+    
+                return $this->store->save_progress(
+                    $token,
+                    $progress,
+                    $lock
+                );
+            }
+        );
+    }
 }
