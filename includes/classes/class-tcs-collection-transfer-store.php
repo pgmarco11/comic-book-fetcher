@@ -532,4 +532,62 @@ class TCS_Collection_Transfer_Store {
     
         return $progress;
     }
+
+    public function cancel_before_start(
+        string $token,
+        TCS_Collection_Import_Lock $lock
+    ): array {
+        $lock->assert_owned();
+    
+        $job = $this->read_pending($token);
+        $this->assert_can_change_pending();
+    
+        if (
+            !in_array(
+                $job['state'] ?? 'staged',
+                ['staged', 'mapped'],
+                true
+            )
+        ) {
+            throw new RuntimeException(
+                'This import has already started.'
+            );
+        }
+    
+        // Prevent the mapping from appearing if deletion fails.
+        $job['state'] = 'cancelled';
+        $this->save_pending($job, $lock);
+    
+        $name = 'tcs_collection_transfer_pending_'
+            . get_current_user_id();
+    
+        delete_option($name);
+        wp_cache_delete($name, 'options');
+    
+        if (get_option($name, false) !== false) {
+            throw new RuntimeException(
+                'The cancelled backup could not be removed.'
+            );
+        }
+    
+        wp_clear_scheduled_hook(
+            'tcs_collection_transfer_cleanup_pending',
+            [get_current_user_id(), $token]
+        );
+    
+        return [
+            'state' => 'cancelled',
+            'phase' => 'terms',
+            'revision' => 0,
+            'term_cursor' => 0,
+            'results' => [],
+            'last_error' => '',
+            'total_terms' => count(
+                $job['backup']['term_definitions']
+            ),
+            'total_records' => count(
+                $job['backup']['records']
+            ),
+        ];
+    }
 }

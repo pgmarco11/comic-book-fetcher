@@ -32,6 +32,9 @@
         ['ready', 'running', 'paused'].includes(
             progress.state
         );
+    
+    const cancellable = () =>
+        progress.state === 'mapped' || active();
 
     const sleep = (ms) =>
         new Promise((resolve) => setTimeout(resolve, ms));
@@ -119,7 +122,7 @@
                     ? 'Retry import'
                     : 'Continue import';
 
-        cancel.hidden = !active();
+        cancel.hidden = !cancellable();
         cancel.disabled = cancelRequested || fatal;
 
         if (mapping) {
@@ -220,6 +223,11 @@
                     progress = next;
                 }
 
+                if (progress.state === 'cancelled') {
+                    window.location.reload();
+                    return;
+                }
+
                 draw();
 
                 if (
@@ -268,7 +276,7 @@
     });
 
     cancel.addEventListener('click', () => {
-        if (fatal || !active()) return;
+        if (fatal || !cancellable()) return;
 
         if (busy) {
             cancelRequested = true;

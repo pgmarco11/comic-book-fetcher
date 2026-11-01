@@ -92,7 +92,10 @@ class TCS_Collection_Import_Controls {
             $summary = $this->summary($saved);
         }
 
-        if ($summary === null) {
+        if (
+            $summary === null ||
+            $summary['state'] === 'cancelled'
+        ) {
             return;
         }
         ?>

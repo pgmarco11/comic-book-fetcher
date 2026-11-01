@@ -391,7 +391,14 @@ class TCS_Collection_Transfer_Service {
             function (
                 TCS_Collection_Import_Lock $lock
             ) use ($token): array {
-                $progress = $this->store->read_progress($token);
+                try {
+                    $progress = $this->store->read_progress($token);
+                } catch (RuntimeException $error) {
+                    return $this->store->cancel_before_start(
+                        $token,
+                        $lock
+                    );
+                }
     
                 if (
                     in_array(
