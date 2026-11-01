@@ -2,6 +2,7 @@
 defined('ABSPATH') || exit;
 
 class TCS_Collection_Record_Finalizer {
+
     private $validator;
     private $planner;
     private $records;
@@ -303,6 +304,36 @@ class TCS_Collection_Record_Finalizer {
                 return $data;
             };
 
+            // Preserve the backup's slug history during finalization.
+            $preserve_slug_history = static function (
+                $check,
+                $object_id,
+                $meta_key
+            ) use ($post_id) {
+                if (
+                    (int) $object_id === $post_id &&
+                    $meta_key === '_wp_old_slug'
+                ) {
+                    return false;
+                }
+
+                return $check;
+            };
+
+            add_filter(
+                'add_post_metadata',
+                $preserve_slug_history,
+                PHP_INT_MAX,
+                3
+            );
+
+            add_filter(
+                'delete_post_metadata',
+                $preserve_slug_history,
+                PHP_INT_MAX,
+                3
+            );
+
             add_filter(
                 'wp_insert_post_data',
                 $preserve,
@@ -330,6 +361,18 @@ class TCS_Collection_Record_Finalizer {
                 remove_filter(
                     'wp_insert_post_data',
                     $preserve,
+                    PHP_INT_MAX
+                );
+            
+                remove_filter(
+                    'add_post_metadata',
+                    $preserve_slug_history,
+                    PHP_INT_MAX
+                );
+            
+                remove_filter(
+                    'delete_post_metadata',
+                    $preserve_slug_history,
                     PHP_INT_MAX
                 );
             }
