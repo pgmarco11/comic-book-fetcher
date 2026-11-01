@@ -37,6 +37,7 @@ class TCS_Collection_Record_Finalizer {
                 'The import job token is invalid.'
             );
         }
+        
 
         $backup = $job['backup'];
 
