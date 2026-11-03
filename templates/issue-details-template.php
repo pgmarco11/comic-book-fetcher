@@ -672,34 +672,25 @@
                                                         Condition / grade
                                                     </label>
 
-                                                    <input
-                                                        id="issue-collection-condition"
-                                                        name="condition"
-                                                        type="text"
-                                                        maxlength="120"
-                                                        list="issue-condition-options"
-                                                        value="<?php
-                                                            echo esc_attr(
-                                                                $collection_record[
-                                                                    'condition'
-                                                                ]
-                                                            );
-                                                        ?>"
-                                                    >
+                                                    <?php
+                                                    $saved_condition = (string) $collection_record['condition'];
+                                                    $condition_options = tcs_inventory_condition_options();
 
-                                                    <datalist id="issue-condition-options">
-                                                        <option value="10.0 (GEM MINT)">
-                                                        <option value="9.8 (NEAR MINT/MINT)">
-                                                        <option value="9.6 (NEAR MINT+)">
-                                                        <option value="9.4 (NEAR MINT)">
-                                                        <option value="9.2 (NEAR MINT-)">
-                                                        <option value="9.0 (VERY FINE/NEAR MINT)">
-                                                        <option value="8.0 (VERY FINE)">
-                                                        <option value="6.0 (FINE)">
-                                                        <option value="4.0 (VERY GOOD)">
-                                                        <option value="2.0 (GOOD)">
-                                                        <option value="Ungraded">
-                                                    </datalist>
+                                                    if (!array_key_exists($saved_condition, $condition_options)) {
+                                                        $condition_options[$saved_condition] = $saved_condition;
+                                                    }
+                                                    ?>
+
+                                                    <select id="issue-collection-condition" name="condition">
+                                                        <?php foreach ($condition_options as $value => $label) : ?>
+                                                            <option
+                                                                value="<?php echo esc_attr($value); ?>"
+                                                                <?php selected($saved_condition, $value); ?>
+                                                            >
+                                                                <?php echo esc_html($label); ?>
+                                                            </option>
+                                                        <?php endforeach; ?>
+                                                    </select>
                                                 </div>
 
                                                 <div

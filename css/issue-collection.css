@@ -163,6 +163,7 @@
     font-weight: 700;
 }
 
+.issue-collection-field select,
 .issue-collection-field input,
 .issue-collection-field textarea {
     width: 100%;
@@ -183,11 +184,13 @@
     resize: vertical;
 }
 
+.issue-collection-field select:hover,
 .issue-collection-field input:hover,
 .issue-collection-field textarea:hover {
     border-color: var(--muted);
 }
 
+.issue-collection-field select:focus-visible,
 .issue-collection-field input:focus-visible,
 .issue-collection-field textarea:focus-visible {
     border-color: var(--blue);
