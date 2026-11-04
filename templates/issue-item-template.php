@@ -225,6 +225,12 @@ $collection_post_id = $in_collection
                     data-cv-issue-id="<?php echo esc_attr($metron_cv_id); ?>"
                     data-title-id="<?php echo esc_attr($title_id); ?>"
                     data-title="<?php echo esc_attr($issue_title); ?>"
+                    data-publisher="<?php echo esc_attr($publisher['name'] ?? ''); ?>"
+                    data-publication-year="<?php echo esc_attr(
+                        preg_match('/^(\d{4})(?:-|$)/', (string) ($item_issue['cover_date'] ?? ''), $year_match)
+                            ? $year_match[1]
+                            : ''
+                    ); ?>"
                     data-volume="<?php echo esc_attr($item_series['volume'] ?? ''); ?>"
                     data-item-url="<?php echo esc_url(add_query_arg(['issue_id' => $metron_id, 'title_id' => $title_id], home_url('/comic-catalog/issue/'))); ?>"
                     data-image-url="<?php echo esc_url($image_url); ?>">

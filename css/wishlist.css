@@ -364,28 +364,122 @@
   pointer-events: none;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .tcs-wishlist[data-view="cards"] ul.user-wishlist > li:hover {
-    z-index: 2;
-    transform: translateY(-6px) rotate(-1deg) scale(1.015);
-    box-shadow: 9px 11px 0 #ffad24;
-  }
-
-  /* Alternate the tilt direction for neighboring cards. */
-  .tcs-wishlist[data-view="cards"] ul.user-wishlist > li:nth-child(even):hover {
-    transform: translateY(-6px) rotate(1deg) scale(1.015);
-  }
-
+.tcs-wishlist .wishlist-toolbar-controls,
+.tcs-wishlist .wishlist-sort {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-width: 0;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .tcs-wishlist ul.user-wishlist > li {
-    transition: none;
+.tcs-wishlist .wishlist-toolbar-controls {
+  gap: 0.75rem 1.25rem;
+  margin-inline-start: auto;
+}
+
+.tcs-wishlist .wishlist-sort {
+  margin: 0;
+}
+
+.tcs-wishlist .wishlist-sort label {
+  margin: 0;
+  color: #fff;
+  font-weight: 600;
+}
+
+.tcs-wishlist .wishlist-sort select,
+.tcs-wishlist .wishlist-sort-submit {
+  min-height: 44px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.tcs-wishlist .wishlist-sort select {
+  min-width: 0;
+  max-width: 100%;
+  background: #fff;
+  color: #17212f;
+}
+
+.tcs-wishlist .wishlist-sort-submit {
+  background: transparent;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.tcs-wishlist .wishlist-sort-submit:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.tcs-wishlist .wishlist-sort select:focus-visible,
+.tcs-wishlist .wishlist-sort-submit:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+
+.tcs-wishlist .wishlist-selection-bar:not([hidden]) {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  color: #fff;
+}
+
+.tcs-wishlist ul.user-wishlist > li > .wishlist-item-selection:not([hidden]) {
+  position: absolute;
+  top: 0;
+  left: -2px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Make room beside the cover in List view. */
+.tcs-wishlist[data-view="list"] ul.user-wishlist > li:has(> .wishlist-item-selection:not([hidden])) {
+  padding-left: 3.25rem;
+}
+
+.tcs-wishlist .wishlist-select-item {
+  width: 1.24rem;
+  height: 1.24rem;
+}
+
+.tcs-wishlist .wishlist-selection-start[hidden],
+.tcs-wishlist .wishlist-item-selection[hidden],
+.tcs-wishlist .wishlist-selection-bar[hidden],
+.tcs-wishlist .wishlist-actions > .remove-from-wishlist[hidden] {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .tcs-wishlist .wishlist-toolbar-controls {
+    width: 100%;
+    margin-inline-start: 0;
   }
 
-  .tcs-wishlist[data-view] ul.user-wishlist > li:hover,
-  .tcs-wishlist[data-view="cards"] ul.user-wishlist > li:nth-child(even):hover {
-    transform: none;
+  .tcs-wishlist .wishlist-sort {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+  }
+
+  .tcs-wishlist .wishlist-sort label {
+    grid-column: 1 / -1;
+  }
+
+  .tcs-wishlist .wishlist-sort select {
+    width: 100%;
   }
 }
 
@@ -422,5 +516,30 @@
 
   .tcs-wishlist[data-view="list"] .wishlist-actions > button {
     width: auto;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .tcs-wishlist[data-view="cards"] ul.user-wishlist > li:hover {
+    z-index: 2;
+    transform: translateY(-6px) rotate(-1deg) scale(1.015);
+    box-shadow: 9px 11px 0 #ffad24;
+  }
+
+  /* Alternate the tilt direction for neighboring cards. */
+  .tcs-wishlist[data-view="cards"] ul.user-wishlist > li:nth-child(even):hover {
+    transform: translateY(-6px) rotate(1deg) scale(1.015);
+  }
+
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tcs-wishlist ul.user-wishlist > li {
+    transition: none;
+  }
+
+  .tcs-wishlist[data-view] ul.user-wishlist > li:hover,
+  .tcs-wishlist[data-view="cards"] ul.user-wishlist > li:nth-child(even):hover {
+    transform: none;
   }
 }

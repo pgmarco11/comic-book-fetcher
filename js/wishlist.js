@@ -176,6 +176,8 @@ jQuery(document).ready(function($) {
             data.image_url = button.data('image-url');
             data.ebay_id = button.data('ebay-id');
             data.volume = button.data('volume');
+            data.publisher = button.attr('data-publisher') || '';
+            data.publication_year = button.attr('data-publication-year') || '';
         } else {
             const confirmed = await toastConfirm('Are you sure you want to remove this item from your wishlist?');
             if (!confirmed) { button.prop('disabled', false); return; }
@@ -217,6 +219,127 @@ jQuery(document).ready(function($) {
                 toast(message, "#f00");
             }
         });
+    });
+
+    const wishlistSelectionLimit = 100;
+
+    function updateWishlistSelection(wishlist) {
+        const count = wishlist.find('.wishlist-select-item:checked').length;
+        const overLimit = count > wishlistSelectionLimit;
+
+        wishlist.find('.wishlist-selection-count').text(
+            overLimit
+                ? `${count} selected. Select up to ${wishlistSelectionLimit} at a time.`
+                : `${count} selected`
+        );
+
+        wishlist.find('.wishlist-selection-remove').prop(
+            'disabled',
+            count === 0 || overLimit || Boolean(wishlist.data('bulkRemoving'))
+        );
+    }
+
+    $('.tcs-wishlist .wishlist-selection-start').prop('hidden', false);
+
+    $(document).on('click', '.wishlist-selection-start', function () {
+        const start = $(this);
+        const wishlist = start.closest('.tcs-wishlist');
+
+        start.attr('aria-expanded', 'true');
+        wishlist.find('.wishlist-selection-bar, .wishlist-item-selection')
+            .prop('hidden', false);
+        wishlist.find('.remove-from-wishlist').prop('hidden', true);
+
+        updateWishlistSelection(wishlist);
+        wishlist.find('.wishlist-select-item').first().trigger('focus');
+    });
+
+    $(document).on('click', '.wishlist-selection-cancel', function () {
+        const wishlist = $(this).closest('.tcs-wishlist');
+
+        wishlist.find('.wishlist-select-item').prop('checked', false);
+        wishlist.find('.wishlist-selection-bar, .wishlist-item-selection')
+            .prop('hidden', true);
+        wishlist.find('.remove-from-wishlist').prop('hidden', false);
+        wishlist.find('.wishlist-selection-start')
+            .attr('aria-expanded', 'false')
+            .trigger('focus');
+
+        updateWishlistSelection(wishlist);
+    });
+
+    $(document).on('change', '.wishlist-select-item', function () {
+        updateWishlistSelection($(this).closest('.tcs-wishlist'));
+    });
+
+    $(document).on('click', '.wishlist-selection-remove', async function () {
+        const button = $(this);
+        const wishlist = button.closest('.tcs-wishlist');
+
+        if (button.prop('disabled') || wishlist.data('bulkRemoving')) return;
+
+        const checkboxes = wishlist.find('.wishlist-select-item');
+        const items = checkboxes.filter(':checked').map(function () {
+            return {
+                item_id: this.dataset.itemId,
+                type: this.dataset.type,
+                ebay_id: this.dataset.ebayId,
+                item_url: this.dataset.itemUrl
+            };
+        }).get();
+
+        const cancel = wishlist.find('.wishlist-selection-cancel');
+        wishlist.data('bulkRemoving', true);
+        checkboxes.add(cancel).prop('disabled', true);
+        updateWishlistSelection(wishlist);
+
+        let reloading = false;
+
+        try {
+            const noun = items.length === 1 ? 'item' : 'items';
+            const message = `Remove ${items.length} ${noun} from your wishlist?`;
+            const confirmed = typeof Toastify === 'function'
+                ? await toastConfirm(message)
+                : window.confirm(message);
+
+            if (!confirmed) return;
+
+            button.text('Removing…');
+
+            const response = await $.ajax({
+                url: wishlist_ajax_obj.ajax_url,
+                method: 'POST',
+                dataType: 'json',
+                traditional: false,
+                data: {
+                    action: 'remove_wishlist_items',
+                    nonce: wishlist_ajax_obj.nonce,
+                    items
+                }
+            });
+
+            if (!response?.success) {
+                throw new Error('Could not remove the selected items.');
+            }
+
+            reloading = true;
+            window.location.reload();
+        } catch (error) {
+            const message = error.responseJSON?.data;
+            window.alert(
+                typeof message === 'string'
+                    ? message
+                    : 'Removal failed. Please try again.'
+            );
+        } finally {
+            if (!reloading) {
+                wishlist.removeData('bulkRemoving');
+                checkboxes.add(cancel).prop('disabled', false);
+                button.text('Remove selected');
+                updateWishlistSelection(wishlist);
+                button.trigger('focus');
+            }
+        }
     });
 
     // Remove an item from the [user_wishlist] list.

@@ -173,6 +173,14 @@ function add_to_wishlist_ajax() {
         'type'      => sanitize_text_field($request['type'] ?? ''),
         'item_id'   => sanitize_text_field($request['item_id'] ?? ''),
         'title'     => sanitize_text_field($request['title'] ?? ''),
+        'publisher' => isset($request['publisher']) && is_string($request['publisher'])
+            ? sanitize_text_field($request['publisher'])
+            : '',
+        'publication_year' => isset($request['publication_year'])
+            && is_string($request['publication_year'])
+            && preg_match('/^\d{4}$/D', $request['publication_year'])
+                ? $request['publication_year']
+                : '',
         'item_url'  => esc_url_raw($request['item_url'] ?? ''),
         'image_url' => esc_url_raw($request['image_url'] ?? ''),
         'volume'    => sanitize_text_field($request['volume'] ?? ''),
@@ -265,6 +273,82 @@ function remove_from_wishlist_ajax() {
 
     wp_send_json_success();
 }
+
+add_action('wp_ajax_remove_wishlist_items', 'remove_wishlist_items_ajax');
+
+function remove_wishlist_items_ajax() {
+    if (!check_ajax_referer('wishlist_nonce', 'nonce', false)) {
+        wp_send_json_error(
+            'Your session has expired. Refresh the page and try again.',
+            403
+        );
+    }
+
+    if (!is_user_logged_in()) {
+        wp_send_json_error('Please sign in and try again.', 401);
+    }
+
+    $request = wp_unslash($_POST);
+    $items = $request['items'] ?? null;
+
+    if (!is_array($items) || count($items) < 1 || count($items) > 100) {
+        wp_send_json_error('Select between 1 and 100 items.', 400);
+    }
+
+    $candidates = [];
+
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            wp_send_json_error('Invalid wishlist selection.', 400);
+        }
+
+        $candidate = mwp_wishlist_request_item($item);
+
+        if ($candidate['item_id'] === '' || $candidate['type'] === '') {
+            wp_send_json_error('Invalid wishlist selection.', 400);
+        }
+
+        $candidates[] = $candidate;
+    }
+
+    $user_id = get_current_user_id();
+    $previous = get_user_meta($user_id, 'user_wishlist', true);
+    $wishlist = mwp_get_user_wishlist($user_id);
+
+    $remaining = array_values(array_filter(
+        $wishlist,
+        static function ($saved) use ($candidates) {
+            if (!is_array($saved)) {
+                return true;
+            }
+
+            foreach ($candidates as $candidate) {
+                if (mwp_wishlist_items_match($saved, $candidate)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+    ));
+
+    if (count($remaining) !== count($wishlist)) {
+        if (!is_array($previous) || !$previous || !update_user_meta(
+            $user_id,
+            'user_wishlist',
+            $remaining,
+            $previous
+        )) {
+            wp_send_json_error(
+                'Could not save the removal. Refresh your wishlist and try again.',
+                409
+            );
+        }
+    }
+
+    wp_send_json_success(['remaining_count' => count($remaining)]);
+}
+
 
 add_action('wp_ajax_check_wishlist_status', 'check_wishlist_status_ajax');
 
@@ -372,6 +456,23 @@ function mwp_wishlist_tools_url(array $item) {
     }
     $title = trim(wp_strip_all_tags((string) ($item['title'] ?? '')));
     if ($title === '') return '';
+
+    if (strpos((string) ($item['item_id'] ?? ''), 'metron:issue:') === 0) {
+        $title = html_entity_decode(
+            $title,
+            ENT_QUOTES | ENT_HTML5,
+            'UTF-8'
+        );
+    
+        $title = str_replace('—', ' ', $title);
+    
+        $title = trim((string) preg_replace('/\s+/u', ' ', implode(' ', [
+            $title,
+            (string) ($item['publisher'] ?? ''),
+            (string) ($item['publication_year'] ?? ''),
+        ])));
+    }
+    
     $args = ['search_query' => rawurlencode($title)];
     $term = mwp_wishlist_category_term($item);
     if ($term instanceof WP_Term) $args['category_term'] = $term->term_id;
@@ -392,6 +493,59 @@ function mwp_display_user_wishlist() {
         return '<p class="has-white-color">Your wishlist is empty.</p>';
     }
 
+    $sort_options = [
+        'default' => 'Default order',
+        'publisher_asc' => 'Publisher, then title (A–Z)',
+        'publisher_desc' => 'Publisher, then title (Z–A)',
+        'year_asc' => 'Publication year (oldest first)',
+        'year_desc' => 'Publication year (newest first)',
+        'added_desc' => 'Recently added',
+        'added_asc' => 'Oldest added',
+    ];
+    
+    $requested_sort = isset($_GET['wishlist_sort']) && is_string($_GET['wishlist_sort'])
+        ? wp_unslash($_GET['wishlist_sort'])
+        : '';
+    
+    $sort = array_key_exists($requested_sort, $sort_options)
+        ? $requested_sort
+        : 'default';
+    
+    if ($sort !== 'default') {
+        [$field, $direction] = explode('_', $sort, 2);
+        $multiplier = $direction === 'desc' ? -1 : 1;
+    
+        $sort_field = [
+            'publisher' => 'publisher',
+            'year' => 'publication_year',
+            'added' => 'added_at',
+        ][$field];
+    
+        usort($wishlist, static function ($left, $right) use ($sort_field, $multiplier) {
+            $left_value = trim((string) ($left[$sort_field] ?? ''));
+            $right_value = trim((string) ($right[$sort_field] ?? ''));
+    
+            // Keep missing values last in both directions.
+            if (($left_value === '') !== ($right_value === '')) {
+                return $left_value === '' ? 1 : -1;
+            }
+    
+            $comparison = strnatcasecmp($left_value, $right_value);
+            if ($comparison !== 0) {
+                return $multiplier * $comparison;
+            }
+    
+            if ($sort_field === 'added_at') {
+                return 0;
+            }
+    
+            return $multiplier * strnatcasecmp(
+                (string) ($left['title'] ?? ''),
+                (string) ($right['title'] ?? '')
+            );
+        });
+    }
+
     // Remember presentation only, never wishlist contents.
     $saved_view = isset($_COOKIE['tcs_wishlist_view'])
         && is_string($_COOKIE['tcs_wishlist_view'])
@@ -405,6 +559,7 @@ function mwp_display_user_wishlist() {
     ob_start();
     ?>
     <div class="tcs-wishlist" data-view="<?php echo esc_attr($view); ?>">
+
         <div class="wishlist-toolbar">
             <p class="wishlist-summary">
                 <strong class="wishlist-count"><?php
@@ -412,26 +567,68 @@ function mwp_display_user_wishlist() {
                 ?></strong>
                 <span>saved items</span>
             </p>
-            <div
-                class="wishlist-view-controls"
-                role="group"
-                aria-label="Wishlist display"
-                hidden
-            >
-                <span>View:</span>
+            <div class="wishlist-toolbar-controls">                
+                <form method="get" class="wishlist-sort">
+                    <label>
+                        Sort wishlist
+                        <select name="wishlist_sort">
+                            <?php foreach ($sort_options as $value => $label): ?>
+                                <option
+                                    value="<?php echo esc_attr($value); ?>"
+                                    <?php selected($sort, $value); ?>
+                                >
+                                    <?php echo esc_html($label); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </label>
+                    <button type="submit" class="btn btn-secondary wishlist-sort-submit">Apply</button>
+                </form>
 
-                <?php foreach (['list' => 'List', 'cards' => 'Cards'] as $key => $label): ?>
-                    <button
-                        type="button"
-                        class="wishlist-view-button"
-                        data-wishlist-view="<?php echo esc_attr($key); ?>"
-                        aria-pressed="<?php echo $view === $key ? 'true' : 'false'; ?>"
-                    >
-                        <?php echo esc_html($label); ?>
-                    </button>
-                <?php endforeach; ?>
+                <div
+                    class="wishlist-view-controls"
+                    role="group"
+                    aria-label="Wishlist display"
+                    hidden
+                >
+                    <span>View:</span>
+                        <?php foreach (['list' => 'List', 'cards' => 'Cards'] as $key => $label): ?>
+                            <button
+                                type="button"
+                                class="wishlist-view-button"
+                                data-wishlist-view="<?php echo esc_attr($key); ?>"
+                                aria-pressed="<?php echo $view === $key ? 'true' : 'false'; ?>"
+                            >
+                                <?php echo esc_html($label); ?>
+                            </button>
+                        <?php endforeach; ?>                
+                </div>
+
+                <button
+                    type="button"
+                    class="btn btn-secondary wishlist-selection-start"
+                    aria-expanded="false"
+                    hidden
+                >
+                    Select items
+                </button>
+
             </div>
         </div><!-- .wishlist-toolbar -->
+
+        <div class="wishlist-selection-bar" hidden>
+            <span class="wishlist-selection-count" aria-live="polite">
+                0 selected
+            </span>
+
+            <button type="button" class="btn btn-danger wishlist-selection-remove" disabled>
+                Remove selected
+            </button>
+
+            <button type="button" class="btn btn-secondary wishlist-selection-cancel">
+                Cancel
+            </button>
+        </div>
 
         <ul class="user-wishlist">
             <?php foreach ($wishlist as $item):
@@ -463,12 +660,38 @@ function mwp_display_user_wishlist() {
                             <strong><?php echo esc_html($item['title']); ?></strong>
                         </a>
                         
-                        <?php if (!empty($item['volume'])): ?>
-                            <small>Vol <?php echo esc_html($item['volume']); ?></small>
+                        <?php if (!empty($item['publication_year'])): ?>
+                            <small><?= trim((string) ($item['publication_year'] ?? '')); ?> </small>
                         <?php endif; ?>
 
+                        <?php if (strpos((string) ($item['item_id'] ?? ''), 'metron:issue:') === 0): ?>
+                            <?php
+                                $comic_details = array_filter([
+                                    trim((string) ($item['publisher'] ?? '')),
+                                    trim((string) ($item['volume'] ? 'Vol ' . $item['volume'] : '')),
+                                ]);
+                            ?>
+                            <?php if ($comic_details): ?>
+                                    <small class="wishlist-comic-details">
+                                        <?php echo esc_html(implode(' · ', $comic_details)); ?>
+                                    </small>
+                            <?php endif; ?>
+
+                        <?php endif; ?>      
 
                     </div>
+
+                    <label class="wishlist-item-selection" hidden>
+                        <input
+                            type="checkbox"
+                            class="wishlist-select-item"
+                            data-item-id="<?php echo esc_attr($item['item_id'] ?? ''); ?>"
+                            data-type="<?php echo esc_attr($item['type'] ?? ''); ?>"
+                            data-ebay-id="<?php echo esc_attr($item['ebay_id'] ?? ''); ?>"
+                            data-item-url="<?php echo esc_attr($item['item_url'] ?? ''); ?>"
+                            aria-label="<?php echo esc_attr('Select ' . ($item['title'] ?? 'wishlist item')); ?>"
+                        >
+                    </label>
 
                     <div class="wishlist-actions">
                         <?php if ($tools_url !== ''): ?>

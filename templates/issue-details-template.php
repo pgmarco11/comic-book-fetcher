@@ -407,6 +407,12 @@
                                                         data-type="post"
                                                         data-item-id="metron:issue:<?php echo esc_attr($issue_id); ?>"
                                                         data-title="<?php echo esc_attr($issue_title); ?>"
+                                                        data-publisher="<?php echo esc_attr($publisher['name'] ?? ''); ?>"
+                                                        data-publication-year="<?php echo esc_attr(
+                                                            preg_match('/^(\d{4})(?:-|$)/', (string) ($issue['cover_date'] ?? ''), $year_match)
+                                                                ? $year_match[1]
+                                                                : ''
+                                                        ); ?>"
                                                         data-volume="<?php echo esc_attr($series['volume'] ?? ''); ?>"
                                                         data-item-url="<?php echo esc_url($url); ?>"
                                                         data-image-url="<?php echo esc_url($issue['image']); ?>">
