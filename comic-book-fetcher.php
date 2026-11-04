@@ -689,22 +689,7 @@ function render_api_settings_page() {
     if (isset($_POST['submit']) && check_admin_referer('save_api_settings')) {
         update_option('metron_api_username', sanitize_text_field($_POST['metron_api_username']));
         update_option('metron_api_password', sanitize_text_field($_POST['metron_api_password']));
-        update_option('comic_vine_api_key', sanitize_text_field($_POST['comic_vine_api_key']));  
-        
-        if (isset($_POST['remove_pricecharting_api_token'])) {
-            delete_option('tcs_pc_api_token');
-        } elseif (
-            isset($_POST['pricecharting_api_token'])
-            && is_string($_POST['pricecharting_api_token'])
-        ) {
-            $pricecharting_token = sanitize_text_field(
-                wp_unslash($_POST['pricecharting_api_token'])
-            );
-        
-            if ($pricecharting_token !== '') {
-                update_option('tcs_pc_api_token', $pricecharting_token, false);
-            }
-        }
+        update_option('comic_vine_api_key', sanitize_text_field($_POST['comic_vine_api_key']));        
      }
 
 
@@ -793,41 +778,6 @@ function render_api_settings_page() {
                 <tr>
                     <th><label for="comic_vine_api_key">API Key</label></th>
                     <td><input type="text" id="comic_vine_api_key" name="comic_vine_api_key" value="<?php echo esc_attr(get_option('comic_vine_api_key')); ?>" class="regular-text" /></td>
-                </tr>
-            </table>
-
-            <?php $has_pricecharting_token = get_option('tcs_pc_api_token', '') !== ''; ?>
-
-            <h2>PriceCharting API</h2>
-            <table class="form-table">
-                <tr>
-                    <th scope="row">
-                        <label for="pricecharting_api_token">API token</label>
-                    </th>
-                    <td>
-                        <input
-                            type="password"
-                            id="pricecharting_api_token"
-                            name="pricecharting_api_token"
-                            class="regular-text"
-                            autocomplete="new-password"
-                            aria-describedby="pricecharting-api-token-help"
-                        >
-                        <p class="description" id="pricecharting-api-token-help">
-                            <?php if ($has_pricecharting_token): ?>
-                                A token is saved. Leave blank to keep it.
-                            <?php else: ?>
-                                Enter your PriceCharting API token to enable live price refreshes.
-                            <?php endif; ?>
-                        </p>
-
-                        <?php if ($has_pricecharting_token): ?>
-                            <label>
-                                <input type="checkbox" name="remove_pricecharting_api_token" value="1">
-                                Remove saved token
-                            </label>
-                        <?php endif; ?>
-                    </td>
                 </tr>
             </table>
 

@@ -366,7 +366,7 @@ class TCS_Collection_Record_Finalizer {
             
                 remove_filter(
                     'add_post_metadata',
-                    $preserve_slug_history, 
+                    $preserve_slug_history,
                     PHP_INT_MAX
                 );
             
@@ -422,8 +422,6 @@ class TCS_Collection_Record_Finalizer {
                 '_tcs_collection_transfer_' . $suffix
             );
         }
-
-        do_action('tcs_collection_price_candidate_ready', (int) $post_id);
 
         return [
             'status' => 'restored',

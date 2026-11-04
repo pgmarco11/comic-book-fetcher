@@ -748,8 +748,6 @@ function handle_add_comic_to_collection() {
         }
     }
 
-    do_action('tcs_collection_price_candidate_ready', (int) $post_id);
-
     wp_send_json_success([
         'post_id' => $post_id,
         'message' => $created
