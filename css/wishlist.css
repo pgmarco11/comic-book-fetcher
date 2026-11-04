@@ -21,6 +21,11 @@
   margin-bottom: 0.5rem;
   padding-bottom: 1rem;
 }
+.tcs-wishlist .wishlist-toolbar-controls span {
+  margin-right: 0.4rem;
+  color: #fff;
+  font-weight: 400;
+}
 
 .tcs-wishlist .wishlist-summary {
   display: flex;
@@ -46,11 +51,6 @@
   margin: 0;
 }
 
-.tcs-wishlist .wishlist-view-controls > span {
-  margin-right: 0.4rem;
-  color: #fff;
-}
-
 .tcs-wishlist .wishlist-view-button {
   min-height: 44px;
   padding: 0.55rem 1rem;
@@ -65,6 +65,13 @@
 
 .tcs-wishlist .wishlist-view-button:hover {
   background: rgba(255, 255, 255, 0.12);
+}
+
+.tcs-wishlist .wishlist-selection-start {
+  min-height: 44px;
+  padding: 0.55rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 6px;
 }
 
 .tcs-wishlist .wishlist-view-button[aria-pressed="true"] {
@@ -480,6 +487,7 @@
 
   .tcs-wishlist .wishlist-sort select {
     width: 100%;
+    margin-top: 1rem;
   }
 }
 

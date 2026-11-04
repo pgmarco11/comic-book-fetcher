@@ -567,10 +567,11 @@ function mwp_display_user_wishlist() {
                 ?></strong>
                 <span>saved items</span>
             </p>
-            <div class="wishlist-toolbar-controls">                
-                <form method="get" class="wishlist-sort">
-                    <label>
-                        Sort wishlist
+            <div class="wishlist-toolbar-controls"> 
+                           
+                <form method="get" class="wishlist-sort">                
+                    <label>  
+                        <span>Sort by:</span>                          
                         <select name="wishlist_sort">
                             <?php foreach ($sort_options as $value => $label): ?>
                                 <option
