@@ -287,6 +287,121 @@ class TCS_Collection_Inventory_Repository {
         )));
     }
 
+    private function chart_entry_ids(int $user_id): array {
+        if ($user_id <= 0) {
+            return [];
+        }
+    
+        $ids = get_posts([
+            'post_type'      => 'collection',
+            'post_status'    => 'publish',
+            'author'         => $user_id,
+            'posts_per_page' => -1,
+            'fields'         => 'ids',
+            'orderby'        => 'none',
+        ]);
+    
+        update_meta_cache('post', $ids);
+    
+        return $ids;
+    }
+    
+    public function creator_credit_counts(int $user_id): array {
+        $counts = [];
+        $labels = [];
+    
+        foreach ($this->chart_entry_ids($user_id) as $id) {
+            $credits = (string) get_post_meta($id, 'creators', true);
+            $seen = [];
+    
+            foreach (preg_split('/\R/u', $credits) ?: [] as $line) {
+                $name = trim(explode(' – ', $line, 2)[0]);
+    
+                if ($name === '') {
+                    continue;
+                }
+    
+                $key = function_exists('mb_strtolower')
+                    ? mb_strtolower($name, 'UTF-8')
+                    : strtolower($name);
+    
+                if (isset($seen[$key])) {
+                    continue;
+                }
+    
+                $seen[$key] = true;
+                $labels[$key] = $labels[$key] ?? $name;
+                $label = $labels[$key];
+                $counts[$label] = ($counts[$label] ?? 0) + 1;
+            }
+        }
+    
+        ksort($counts, SORT_NATURAL | SORT_FLAG_CASE);
+        arsort($counts, SORT_NUMERIC);
+    
+        return $counts;
+    }
+    
+    public function collection_value(int $user_id): array {
+        $ids = $this->chart_entry_ids($user_id);
+        $total = 0;
+        $priced = 0;
+    
+        foreach ($ids as $id) {
+            $price = trim((string) get_post_meta($id, 'price', true));
+    
+            if (!preg_match('/^\d{1,7}(\.\d{1,2})?$/D', $price)) {
+                continue;
+            }
+    
+            [$whole, $fraction] = array_pad(explode('.', $price, 2), 2, '');
+            $cents = (int) $whole * 100 + (int) str_pad($fraction, 2, '0');
+            $qty = max(1, (int) get_post_meta($id, 'qty', true));
+    
+            $total += $cents * $qty;
+            $priced++;
+        }
+    
+        return [
+            'cents'   => $total,
+            'priced'  => $priced,
+            'entries' => count($ids),
+        ];
+    }
+
+    public function collection_value_history(int $user_id, int $cents): ?array {
+        if ($user_id <= 0) {
+            return null;
+        }
+    
+        $prefix = '_tcs_value_' . get_current_blog_id() . '_';
+        $today = current_time('Y-m-d');
+    
+        update_user_meta($user_id, $prefix . $today, $cents);
+    
+        $history = [];
+    
+        foreach (get_user_meta($user_id) as $key => $values) {
+            if (strpos($key, $prefix) !== 0) {
+                continue;
+            }
+    
+            $date = substr($key, strlen($prefix));
+    
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/D', $date) && $date <= $today) {
+                $history[$date] = (int) $values[0];
+            }
+        }
+    
+        if (($history[$today] ?? null) !== $cents) {
+            return null;
+        }
+    
+        ksort($history);
+    
+        return array_slice($history, -90, null, true);
+    }
+
     public function genre_assignment_counts(int $user_id): array {
         global $wpdb;
     

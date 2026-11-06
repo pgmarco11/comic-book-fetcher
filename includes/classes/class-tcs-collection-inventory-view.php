@@ -283,9 +283,17 @@ class TCS_Collection_Inventory_View {
     }
 
     private function taxonomy_breakdown_html(int $user_id, string $taxonomy): string {
-        $counts = $taxonomy === 'comic_genre'
-            ? $this->repository->genre_assignment_counts($user_id)
-            : $this->repository->taxonomy_entry_counts($user_id, $taxonomy);
+        if ($taxonomy === 'creators') {
+            $counts = $this->repository->creator_credit_counts($user_id);
+        
+            if (!$counts) {
+                return '<p>No creator credits have been saved for your collection entries yet.</p>';
+            }
+        } else {
+            $counts = $taxonomy === 'comic_genre'
+                ? $this->repository->genre_assignment_counts($user_id)
+                : $this->repository->taxonomy_entry_counts($user_id, $taxonomy);
+        }
 
         if ($taxonomy === 'comic_genre' && !$counts) {
             return '<p>No genres have been assigned to your collection entries yet.</p>';
@@ -293,19 +301,26 @@ class TCS_Collection_Inventory_View {
         $total = array_sum($counts);
         $minimum_share = 0.017; // 1.7% of the chart total.
         
-        $visible = in_array($taxonomy, ['comic_series', 'comic_genre'], true)
+        $visible = in_array($taxonomy, ['comic_series', 'comic_genre', 'creators'], true)
             ? array_filter(
                 $counts,
                 static fn ($count) => $total > 0 && $count / $total >= $minimum_share
             )
             : array_slice($counts, 0, 6, true);
         
+        if ($taxonomy === 'creators') {
+                $visible = array_slice($counts, 0, 10, true) + $visible;
+        }
+        
         $remaining = $total - array_sum($visible);
         
         if ($remaining > 0) {
-            $other_label = $taxonomy === 'comic_genre'
-                ? 'Other genre assignments'
-                : 'Other entries';
+            $other_labels = [
+                'comic_genre' => 'Other genre assignments',
+                'creators'   => 'Other creator credits',
+            ];
+            
+            $other_label = $other_labels[$taxonomy] ?? 'Other entries';
         
             $visible[$other_label] = ($visible[$other_label] ?? 0) + $remaining;
         }
@@ -324,6 +339,65 @@ class TCS_Collection_Inventory_View {
         return $this->pie_breakdown_html($visible, $colors);
     }
 
+    private function collection_value_html(int $user_id): string {
+        $value = $this->repository->collection_value($user_id);
+    
+        if (!$value['priced']) {
+            return '';
+        }
+    
+        $html = '<p><strong>'
+            . esc_html(number_format_i18n($value['cents'] / 100, 2))
+            . '</strong> total from '
+            . esc_html(number_format_i18n($value['priced']))
+            . ' of ' . esc_html(number_format_i18n($value['entries']))
+            . ' collection entries.</p>';
+    
+        $history = $this->repository->collection_value_history($user_id, $value['cents']);
+    
+        if ($history === null) {
+            return $html . '<p>Today’s snapshot could not be saved. Reload Charts to retry.</p>';
+        }
+    
+        if (count($history) < 2) {
+            return $html . '<p>First snapshot saved. Open Charts on another day to see the line chart.</p>';
+        }
+    
+        $dates = array_keys($history);
+        $first_date = reset($dates);
+        $last_date = end($dates);
+        $first = strtotime($first_date . ' UTC');
+        $last = strtotime($last_date . ' UTC');
+        $max = max(100, max($history));
+        $points = [];
+        $rows = '';
+    
+        foreach ($history as $date => $cents) {
+            $x = 90 + 530 * (strtotime($date . ' UTC') - $first) / ($last - $first);
+            $y = 180 - 160 * $cents / $max;
+            $points[] = sprintf('%.2F,%.2F', $x, $y);
+    
+            $rows .= '<tr><td>' . esc_html($date) . '</td><td>'
+                . esc_html(number_format_i18n($cents / 100, 2)) . '</td></tr>';
+        }
+    
+        return $html
+            . '<p>Snapshots are saved on days you open Charts.</p>'
+            . '<svg viewBox="0 0 640 210" width="100%" style="max-width: 640px" aria-hidden="true">'
+            . '<path d="M90 20 V180 H620" fill="none" stroke="#555"/>'
+            . '<g fill="currentColor" font-size="12">'
+            . '<text x="82" y="24" text-anchor="end">'
+            . esc_html(number_format_i18n($max / 100, 2)) . '</text>'
+            . '<text x="82" y="184" text-anchor="end">0</text>'
+            . '<text x="90" y="199">' . esc_html($first_date) . '</text>'
+            . '<text x="620" y="199" text-anchor="end">' . esc_html($last_date) . '</text></g>'
+            . '<polyline fill="none" stroke="#0072B2" stroke-width="3" points="'
+            . esc_attr(implode(' ', $points)) . '"/></svg>'
+            . '<details><summary>View dates and values</summary><table>'
+            . '<thead><tr><th scope="col">Date</th><th scope="col">Saved value</th></tr></thead>'
+            . '<tbody>' . $rows . '</tbody></table></details>';
+    }
+
     public function render_app(): void {
         $inventory_url = tcs_inventory_url();
 
@@ -340,8 +414,17 @@ class TCS_Collection_Inventory_View {
                 <a href="<?php echo esc_url($inventory_url); ?>"<?php if (!$show_charts) echo ' aria-current="page"'; ?>>Collection</a>
                 <a href="<?php echo esc_url($charts_url); ?>"<?php if ($show_charts) echo ' aria-current="page"'; ?>>Charts</a>
             </nav>
-            <?php
 
+            <?php $value_html = $this->collection_value_html(get_current_user_id()); ?>
+
+            <?php if ($value_html !== '') : ?>
+                <section class="tci-era-breakdown" aria-labelledby="tci-value-heading">
+                    <h2 id="tci-value-heading">Collection value</h2>
+                    <?php echo $value_html; ?>
+                </section>
+            <?php endif; ?>
+
+            <?php
             if ($show_charts) {
                     ?>
                         <section class="tci-era-breakdown" aria-labelledby="tci-era-heading">
@@ -354,6 +437,7 @@ class TCS_Collection_Inventory_View {
                             'publisher'    => 'Collection by publisher',
                             'comic_series' => 'Most collected series',
                             'comic_genre' => 'Most collected genres',
+                            'creators' => 'Most collected creators',
                         ] as $taxonomy => $heading) : ?>
                             <section class="tci-era-breakdown"
                                     aria-labelledby="tci-chart-<?php echo esc_attr($taxonomy); ?>">
@@ -363,13 +447,15 @@ class TCS_Collection_Inventory_View {
                                 <?php if ($taxonomy === 'comic_genre') : ?>
                                     <p>Percentages show the share of all genre assignments.
                                     A comic can contribute to more than one genre.</p>
-                                <?php else : ?>
-                                    <p>Each collection entry counts once.</p>
+                                    <?php elseif ($taxonomy === 'creators') : ?>
+                                        <p>Percentages show the share of all creator credits.
+                                            Each creator counts once per collection entry.</p>
+                                    <?php else : ?>
+                                        <p>Each collection entry counts once.</p>
                                 <?php endif; ?>
                                 <?php echo $this->taxonomy_breakdown_html(get_current_user_id(), $taxonomy); ?>
                             </section>
                     <?php endforeach; ?>
-
                 <?php
                 return;
             }
