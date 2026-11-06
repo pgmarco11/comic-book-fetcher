@@ -415,18 +415,20 @@ class TCS_Collection_Inventory_View {
                 <a href="<?php echo esc_url($charts_url); ?>"<?php if ($show_charts) echo ' aria-current="page"'; ?>>Charts</a>
             </nav>
 
-            <?php $value_html = $this->collection_value_html(get_current_user_id()); ?>
-
-            <?php if ($value_html !== '') : ?>
-                <section class="tci-era-breakdown" aria-labelledby="tci-value-heading">
-                    <h2 id="tci-value-heading">Collection value</h2>
-                    <?php echo $value_html; ?>
-                </section>
-            <?php endif; ?>
 
             <?php
             if ($show_charts) {
                     ?>
+                    
+                        <?php $value_html = $this->collection_value_html(get_current_user_id()); ?>
+
+                        <?php if ($value_html !== '') : ?>
+                            <section class="tci-era-breakdown" aria-labelledby="tci-value-heading">
+                                <h2 id="tci-value-heading">Collection value</h2>
+                                <?php echo $value_html; ?>
+                            </section>
+                        <?php endif; ?>
+
                         <section class="tci-era-breakdown" aria-labelledby="tci-era-heading">
                             <h2 id="tci-era-heading">Collection by era</h2>
                             <p>Based on publication years across your entire collection. Each entry counts once.</p>
