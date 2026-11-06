@@ -897,6 +897,75 @@
     background: var(--ink);
 }
 
+.tci .tci-section-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+    margin-bottom: 1rem;
+}
+
+.tci .tci-section-nav a {
+    padding: .5rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: .5rem;
+    background: #fff;
+}
+
+.tci .tci-section-nav a[aria-current="page"] {
+    background: var(--ink);
+    color: #fff;
+    font-weight: 700;
+}
+
+.tci .tci-era-breakdown {
+    padding: 1rem;
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    background: var(--paper);
+}
+
+.tci .tci-era-layout {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1.5rem;
+    margin-top: 1rem;
+}
+
+.tci .tci-era-pie {
+    width: min(100%, 14rem);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: conic-gradient(var(--tci-era-fill));
+}
+
+.tci .tci-era-legend {
+    display: grid;
+    gap: .35rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.tci .tci-era-swatch {
+    display: inline-block;
+    width: .8rem;
+    height: .8rem;
+    border-radius: 50%;
+    border: 1px solid #101820;
+}
+
+.tci .tci-era-range {
+    display: block;
+    margin-inline-start: 1.1rem;
+    color: var(--muted);
+    font-size: .85rem;
+}
+
+.tci .tci-era-breakdown + .tci-era-breakdown {
+    margin-block-start: 1rem;
+}
+
 @media (max-width: 640px) {
     .tci .tci-publisher-group > summary {
         padding: 12px;

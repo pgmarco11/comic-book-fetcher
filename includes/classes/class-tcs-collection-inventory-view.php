@@ -204,6 +204,124 @@ class TCS_Collection_Inventory_View {
     return (string) ob_get_clean();
     }
 
+    public function era_breakdown_html(int $user_id): string {
+            
+        $colors = [
+            'Platinum'     => '#56B4E9',
+            'Golden'       => '#E69F00',
+            'Silver'       => '#009E73',
+            'Bronze'       => '#D55E00',
+            'Modern'       => '#0072B2',
+            'Post-Modern'  => '#CC79A7',
+            'Unknown year' => '#8A8A8A',
+        ];
+
+        $era_ranges = [
+            'Platinum'    => 'Before 1938',
+            'Golden'      => '1938–1956',
+            'Silver'      => '1957–1970',
+            'Bronze'      => '1971–1985',
+            'Modern'      => '1986–2011',
+            'Post-Modern' => '2012 onward',
+        ];
+
+        return $this->pie_breakdown_html(
+            $this->repository->era_counts($user_id),
+            $colors,
+            $era_ranges
+        );
+
+    }
+
+    private function pie_breakdown_html(
+            array $counts,
+            array $colors,
+            array $era_ranges = []
+        ): string {
+
+        $total = array_sum($counts);
+    
+        if ($total === 0) {
+            return '<p>Add comics to see your collection by era.</p>';
+        }
+        
+        $stops = [];
+        $legend = '';
+        $running = 0;
+    
+        foreach ($colors as $era => $color) {
+            $count = $counts[$era] ?? 0;
+    
+            if ($count === 0) {
+                continue;
+            }
+    
+            $start = 100 * $running / $total;
+            $running += $count;
+            $end = 100 * $running / $total;
+            $stops[] = sprintf('%s %.6F%% %.6F%%', $color, $start, $end);
+    
+            $percentage = number_format_i18n(100 * $count / $total, 1);
+
+            $range = $era_ranges[$era] ?? '';
+
+            $legend .= '<li><span class="tci-era-swatch" aria-hidden="true" style="background-color: '
+                . esc_attr($color) . '"></span> ' . esc_html($era)
+                . ' <strong>' . esc_html(number_format_i18n($count)) . '</strong>'
+                . ' <span>(' . esc_html($percentage) . '%)</span>';
+            
+            if ($range !== '') {
+                $legend .= '<small class="tci-era-range">' . esc_html($range) . '</small>';
+            }
+            
+            $legend .= '</li>';
+        }
+    
+        return '<div class="tci-era-layout"><div class="tci-era-pie" aria-hidden="true" style="--tci-era-fill: '
+            . esc_attr(implode(', ', $stops)) . '"></div><ul class="tci-era-legend">'
+            . $legend . '</ul></div>';
+    }
+
+    private function taxonomy_breakdown_html(int $user_id, string $taxonomy): string {
+        $counts = $taxonomy === 'comic_genre'
+            ? $this->repository->genre_assignment_counts($user_id)
+            : $this->repository->taxonomy_entry_counts($user_id, $taxonomy);
+
+        if ($taxonomy === 'comic_genre' && !$counts) {
+            return '<p>No genres have been assigned to your collection entries yet.</p>';
+        }
+        $total = array_sum($counts);
+        $minimum_share = 0.016; // 1.6% of total entries
+        
+        $visible = in_array($taxonomy, ['comic_series', 'comic_genre'], true)
+            ? array_filter(
+                $counts,
+                static fn ($count) => $total > 0 && $count / $total >= $minimum_share
+            )
+            : array_slice($counts, 0, 6, true);
+        
+        if ($remaining > 0) {
+            $other_label = $taxonomy === 'comic_genre'
+                ? 'Other genre assignments'
+                : 'Other entries';
+        
+            $visible[$other_label] = ($visible[$other_label] ?? 0) + $remaining;
+        }
+    
+        $palette = [
+            '#0072B2', '#E69F00', '#009E73', '#D55E00',
+            '#CC79A7', '#56B4E9', '#8A8A8A',
+        ];
+    
+        $colors = [];
+    
+        foreach (array_keys($visible) as $index => $label) {
+            $colors[$label] = $palette[$index % count($palette)];
+        }
+    
+        return $this->pie_breakdown_html($visible, $colors);
+    }
+
     public function render_app(): void {
         $inventory_url = tcs_inventory_url();
 
@@ -212,6 +330,48 @@ class TCS_Collection_Inventory_View {
             return;
         }
         $input = wp_unslash($_GET);
+        $show_charts = ($input['collection_view'] ?? '') === 'charts';
+        $charts_url = add_query_arg('collection_view', 'charts', $inventory_url);
+
+        ?>
+            <nav class="tci-section-nav" aria-label="My Collection sections">
+                <a href="<?php echo esc_url($inventory_url); ?>"<?php if (!$show_charts) echo ' aria-current="page"'; ?>>Collection</a>
+                <a href="<?php echo esc_url($charts_url); ?>"<?php if ($show_charts) echo ' aria-current="page"'; ?>>Charts</a>
+            </nav>
+            <?php
+
+            if ($show_charts) {
+                    ?>
+                        <section class="tci-era-breakdown" aria-labelledby="tci-era-heading">
+                            <h2 id="tci-era-heading">Collection by era</h2>
+                            <p>Based on publication years across your entire collection. Each entry counts once.</p>
+                            <?php echo $this->era_breakdown_html(get_current_user_id()); ?>
+                        </section>
+
+                    <?php foreach ([
+                            'publisher'    => 'Collection by publisher',
+                            'comic_series' => 'Most collected series',
+                            'comic_genre' => 'Most collected genres',
+                        ] as $taxonomy => $heading) : ?>
+                            <section class="tci-era-breakdown"
+                                    aria-labelledby="tci-chart-<?php echo esc_attr($taxonomy); ?>">
+                                <h2 id="tci-chart-<?php echo esc_attr($taxonomy); ?>">
+                                    <?php echo esc_html($heading); ?>
+                                </h2>                                                       
+                                <?php if ($taxonomy === 'comic_genre') : ?>
+                                    <p>Percentages show the share of all genre assignments.
+                                    A comic can contribute to more than one genre.</p>
+                                <?php else : ?>
+                                    <p>Each collection entry counts once.</p>
+                                <?php endif; ?>
+                                <?php echo $this->taxonomy_breakdown_html(get_current_user_id(), $taxonomy); ?>
+                            </section>
+                    <?php endforeach; ?>
+
+                <?php
+                return;
+            }
+
         $results = $this->repository->results($input);
         $publisher_id = absint(
             tcs_inventory_text(

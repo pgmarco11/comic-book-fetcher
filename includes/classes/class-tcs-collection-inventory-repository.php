@@ -287,6 +287,112 @@ class TCS_Collection_Inventory_Repository {
         )));
     }
 
+    public function genre_assignment_counts(int $user_id): array {
+        global $wpdb;
+    
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT t.name, COUNT(DISTINCT p.ID) AS entry_count
+             FROM {$wpdb->posts} p
+             INNER JOIN {$wpdb->term_relationships} tr
+                 ON tr.object_id = p.ID
+             INNER JOIN {$wpdb->term_taxonomy} tt
+                 ON tt.term_taxonomy_id = tr.term_taxonomy_id
+             INNER JOIN {$wpdb->terms} t
+                 ON t.term_id = tt.term_id
+             WHERE p.post_type = 'collection'
+               AND p.post_status = 'publish'
+               AND p.post_author = %d
+               AND tt.taxonomy = 'comic_genre'
+             GROUP BY t.name
+             ORDER BY entry_count DESC, t.name ASC",
+            $user_id
+        ), ARRAY_A);
+    
+        $counts = [];
+    
+        foreach ($rows ?: [] as $row) {
+            $counts[$row['name']] = (int) $row['entry_count'];
+        }
+    
+        return $counts;
+    }
+
+    public function taxonomy_entry_counts(int $user_id, string $taxonomy): array {
+        global $wpdb;
+    
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT t.name, COUNT(*) AS entry_count
+             FROM (
+                 SELECT (
+                     SELECT CASE WHEN COUNT(*) = 1 THEN MIN(tt.term_id) END
+                     FROM {$wpdb->term_relationships} tr
+                     INNER JOIN {$wpdb->term_taxonomy} tt
+                         ON tt.term_taxonomy_id = tr.term_taxonomy_id
+                     WHERE tr.object_id = p.ID AND tt.taxonomy = %s
+                 ) AS term_id
+                 FROM {$wpdb->posts} p
+                 WHERE p.post_type = 'collection'
+                   AND p.post_status = 'publish'
+                   AND p.post_author = %d
+             ) assigned
+             LEFT JOIN {$wpdb->terms} t ON t.term_id = assigned.term_id
+             GROUP BY assigned.term_id, t.name
+             ORDER BY entry_count DESC, t.name ASC",
+            $taxonomy,
+            $user_id
+        ), ARRAY_A);
+    
+        $counts = [];
+    
+        foreach ($rows ?: [] as $row) {
+            $label = $row['name'] ?? 'Unassigned or ambiguous';
+            $counts[$label] = ($counts[$label] ?? 0) + (int) $row['entry_count'];
+        }
+    
+        arsort($counts, SORT_NUMERIC);
+    
+        return $counts;
+    }
+
+    public function era_counts(int $user_id): array {
+        global $wpdb;
+    
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT
+                (SELECT pm.meta_value FROM {$wpdb->postmeta} pm
+                 WHERE pm.post_id = p.ID AND pm.meta_key = 'year'
+                 ORDER BY pm.meta_id LIMIT 1) AS publication_year,
+                (SELECT pm.meta_value FROM {$wpdb->postmeta} pm
+                 WHERE pm.post_id = p.ID AND pm.meta_key = 'date_published'
+                 ORDER BY pm.meta_id LIMIT 1) AS publication_date
+             FROM {$wpdb->posts} p
+             WHERE p.post_type = 'collection'
+               AND p.post_status = 'publish'
+               AND p.post_author = %d",
+            $user_id
+        ), ARRAY_A);
+    
+        $counts = [];
+    
+        foreach ($rows ?: [] as $row) {
+            $year = trim((string) $row['publication_year']);
+    
+            if (!preg_match('/^[1-9]\d{3}$/D', $year)) {
+                preg_match(
+                    '/^([1-9]\d{3})(?:-|$)/',
+                    trim((string) $row['publication_date']),
+                    $match
+                );
+                $year = $match[1] ?? '';
+            }
+    
+            $era = $year === '' ? 'Unknown year' : get_comic_era((int) $year);
+            $counts[$era] = ($counts[$era] ?? 0) + 1;
+        }
+    
+        return $counts;
+    }
+
     public function overview(
         int $user_id,
         int $publisher_id = 0
