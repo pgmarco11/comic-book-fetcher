@@ -291,7 +291,7 @@ class TCS_Collection_Inventory_View {
             return '<p>No genres have been assigned to your collection entries yet.</p>';
         }
         $total = array_sum($counts);
-        $minimum_share = 0.016; // 1.6% of total entries
+        $minimum_share = 0.017; // 1.7% of the chart total.
         
         $visible = in_array($taxonomy, ['comic_series', 'comic_genre'], true)
             ? array_filter(
@@ -299,6 +299,8 @@ class TCS_Collection_Inventory_View {
                 static fn ($count) => $total > 0 && $count / $total >= $minimum_share
             )
             : array_slice($counts, 0, 6, true);
+        
+        $remaining = $total - array_sum($visible);
         
         if ($remaining > 0) {
             $other_label = $taxonomy === 'comic_genre'
