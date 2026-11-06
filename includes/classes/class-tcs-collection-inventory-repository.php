@@ -1,7 +1,6 @@
 <?php
 defined('ABSPATH') || exit;
 
-/** Owns collection inventory repository behavior; legacy function entry points delegate here. */
 class TCS_Collection_Inventory_Repository {
     public function record(int $id): array {
         $meta = get_post_meta($id);
@@ -88,6 +87,74 @@ class TCS_Collection_Inventory_Repository {
                 )
                 : get_permalink($id);
         return $record;
+    }
+
+    public function owned_series_records(int $title_id): array {
+        if ($title_id <= 0) {
+            return [];
+        }
+    
+        return $this->owned_records([
+            'meta_key'   => 'title_id',
+            'meta_value' => (string) $title_id,
+        ]);
+    }
+    
+    public function owned_publisher_records(string $publisher_name): array {
+        $publisher_name = trim($publisher_name);
+    
+        if (!is_user_logged_in() || $publisher_name === '') {
+            return [];
+        }
+    
+        $term = get_term_by('name', $publisher_name, 'publisher');
+    
+        if (!($term instanceof WP_Term)) {
+            return [];
+        }
+    
+        return $this->owned_records([
+            'tax_query' => [
+                [
+                    'taxonomy'         => 'publisher',
+                    'field'            => 'term_id',
+                    'terms'            => [$term->term_id],
+                    'include_children' => false,
+                ],
+            ],
+        ]);
+    }
+    
+    private function owned_records(array $scope): array {
+        $user_id = get_current_user_id();
+    
+        if ($user_id <= 0) {
+            return [];
+        }
+    
+        $post_ids = get_posts([
+            'post_type'      => 'collection',
+            'post_status'    => 'publish',
+            'author'         => $user_id,
+            'posts_per_page' => -1,
+            'fields'         => 'ids',
+        ] + $scope);
+    
+        if (!$post_ids) {
+            return [];
+        }
+    
+        update_meta_cache('post', $post_ids);
+    
+        $records = [];
+    
+        foreach ($post_ids as $post_id) {
+            $records[] = $this->record((int) $post_id);
+        }
+    
+        $this->sort_records($records);
+    
+        return $records;
     }
 
     public function sort_records(

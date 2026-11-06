@@ -8,9 +8,24 @@ window.DEBUG = false;
 jQuery(document).ready(function($){    
 
     // The temporary issues-page response handles its own retry.
-    if (document.getElementById('metron-retry-message')) {
+    if (
+        document.getElementById('metron-retry-message') ||
+        document.getElementById('catalog-owned-issues')
+    ) {
         return;
     }
+    
+    $(document).on('click', 'a[data-owned-view-param]', function (event) {
+        if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+            return;
+        }
+    
+        const url = new URL(window.location.href);
+        url.searchParams.set(this.dataset.ownedViewParam, 'owned');
+    
+        event.preventDefault();
+        window.location.assign(url.toString());
+    });
 
     setTimeout(() => {
 
