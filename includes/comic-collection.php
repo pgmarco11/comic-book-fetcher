@@ -699,6 +699,40 @@ function handle_add_comic_to_collection() {
                 $created = empty($existing_id);
                 $post_id = (int) $existing_id;
 
+                $needs_publish = $created;
+
+                if (!$created) {
+                    $post = get_post($post_id);
+
+                    if (
+                        !$post
+                        || $post->post_type !== 'collection'
+                        || (int) $post->post_author !== $user_id
+                        || !in_array($post->post_status, ['publish', 'draft'], true)
+                    ) {
+                        return new WP_Error(
+                            'tcs_collection_changed',
+                            'This collection entry changed. Refresh and try again.'
+                        );
+                    }
+
+                    if ($post->post_status === 'draft') {
+                        foreach (array_keys(get_post_meta($post_id)) as $key) {
+                            if (
+                                strpos($key, '_tcs_collection_transfer_') === 0
+                                || strpos($key, '_tcs_pc_') === 0
+                            ) {
+                                return new WP_Error(
+                                    'tcs_collection_import_draft',
+                                    'This comic belongs to an import. Continue or resolve that import before adding it here.'
+                                );
+                            }
+                        }
+
+                        $needs_publish = true;
+                    }
+                }
+
                 if ($created) {
                     $lock->assert_owned();
 
@@ -739,38 +773,42 @@ function handle_add_comic_to_collection() {
                         'price'     => '',
                         'condition' => '9.4 (NEAR MINT)',
                     ];
-
+                
                     foreach ($defaults as $field => $value) {
                         $saved = tcs_update_collection_value(
                             $post_id,
                             $field,
                             $value
                         );
-
+                
                         if (!$saved) {
                             wp_delete_post($post_id, true);
-
+                
                             return new WP_Error(
                                 'tcs_collection_fields',
                                 'The collection fields could not be saved. Please retry.'
                             );
                         }
                     }
-
+                }
+                
+                if ($needs_publish) {
                     $lock->assert_owned();
-
+                
                     $published = wp_update_post([
                         'ID'          => $post_id,
                         'post_status' => 'publish',
                     ], true);
-
+                
                     if (
                         is_wp_error($published)
                         || !$published
                         || get_post_status($post_id) !== 'publish'
                     ) {
-                        wp_delete_post($post_id, true);
-
+                        if ($created) {
+                            wp_delete_post($post_id, true);
+                        }
+                
                         return new WP_Error(
                             'tcs_collection_publish',
                             'The collection entry could not be published.'
@@ -780,7 +818,7 @@ function handle_add_comic_to_collection() {
 
                 return [
                     'post_id' => (int) $post_id,
-                    'message' => $created
+                    'message' => $needs_publish
                         ? 'Comic added to your collection.'
                         : 'Collection metadata refreshed.',
                     'warnings' => $catalog['warnings'] ?? [],
@@ -807,10 +845,16 @@ function handle_add_comic_to_collection() {
     }
 
     if (is_wp_error($result)) {
+        $status = in_array(
+            $result->get_error_code(),
+            ['tcs_collection_changed', 'tcs_collection_import_draft'],
+            true
+        ) ? 409 : 500;
+    
         wp_send_json_error([
             'code'    => $result->get_error_code(),
             'message' => $result->get_error_message(),
-        ], 500);
+        ], $status);
         return;
     }
 
