@@ -736,7 +736,7 @@ function handle_add_comic_to_collection() {
                 if ($created) {
                     $defaults = [
                         'qty'       => 1,
-                        'price'     => '0.00',
+                        'price'     => '',
                         'condition' => '9.4 (NEAR MINT)',
                     ];
 
