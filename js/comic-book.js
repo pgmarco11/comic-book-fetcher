@@ -21,6 +21,12 @@ jQuery(document).ready(function($){
         }
     
         const url = new URL(window.location.href);
+        if (
+            this.dataset.ownedViewParam === 'publisher_view' &&
+            url.searchParams.get('letter') === 'all'
+        ) {
+            url.searchParams.delete('letter');
+        }
         url.searchParams.set(this.dataset.ownedViewParam, 'owned');
     
         event.preventDefault();
