@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/collection-catalog-data.php';
+require_once __DIR__ . '/classes/class-tcs-collection-import-lock.php';
 
 /**
  * Compute comic era from year
@@ -657,104 +658,163 @@ function handle_add_comic_to_collection() {
     
     $issue_post_slug = sanitize_title($issue_post_title);
 
-    $existing = get_posts([
-        'post_type'      => 'collection',
-        'post_status'    => ['publish', 'draft'],
-        'author'         => $user_id,
-        'posts_per_page' => 1,
-        'fields'         => 'ids',
-        'meta_query'     => [
-            [
-                'key'     => 'issue_id',
-                'value'   => $issue_id,
-                'compare' => '=',
-                'type'    => 'NUMERIC',
-            ],
-        ],
-    ]);
+    $lock = new TCS_Collection_Import_Lock();
 
-    $created = empty($existing);
+    try {
+        $result = $lock->run(
+            static function (TCS_Collection_Import_Lock $lock) use (
+                $user_id,
+                $issue_id,
+                $issue_post_title,
+                $issue_post_slug,
+                $catalog
+            ) {
+                global $wpdb;
 
-    if ($created) {
-        /*
-         * Start as a draft so an incomplete post is not made
-         * public if metadata storage fails.
-         */
-        $post_id = wp_insert_post([
-            'post_type'   => 'collection',
-            'post_title'  => $issue_post_title,
-            'post_name'   => $issue_post_slug,
-            'post_status' => 'draft',
-            'post_author' => $user_id,
-        ], true);
+                $lock->assert_owned();
 
-        if (is_wp_error($post_id) || !$post_id) {
-            wp_send_json_error(
-                'Post creation failed.',
-                500
+                // Read fresh data after acquiring the lock.
+                $existing_id = $wpdb->get_var($wpdb->prepare(
+                    "SELECT p.ID
+                     FROM {$wpdb->posts} p
+                     INNER JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID
+                     WHERE p.post_type = 'collection'
+                       AND p.post_status IN ('publish', 'draft')
+                       AND p.post_author = %d
+                       AND pm.meta_key = 'issue_id'
+                       AND CAST(pm.meta_value AS SIGNED) = %d
+                     ORDER BY p.post_date DESC, p.ID DESC
+                     LIMIT 1",
+                    $user_id,
+                    $issue_id
+                ));
+
+                if ($wpdb->last_error !== '') {
+                    return new WP_Error(
+                        'tcs_collection_lookup',
+                        'The collection could not be checked. Please retry.'
+                    );
+                }
+
+                $created = empty($existing_id);
+                $post_id = (int) $existing_id;
+
+                if ($created) {
+                    $lock->assert_owned();
+
+                    $post_id = wp_insert_post([
+                        'post_type'   => 'collection',
+                        'post_title'  => $issue_post_title,
+                        'post_name'   => $issue_post_slug,
+                        'post_status' => 'draft',
+                        'post_author' => $user_id,
+                    ], true);
+
+                    if (is_wp_error($post_id) || !$post_id) {
+                        return new WP_Error(
+                            'tcs_collection_create',
+                            'Post creation failed.'
+                        );
+                    }
+                }
+
+                $lock->assert_owned();
+
+                $stored = tcs_store_collection_catalog(
+                    $post_id,
+                    $catalog
+                );
+
+                if (is_wp_error($stored)) {
+                    if ($created) {
+                        wp_delete_post($post_id, true);
+                    }
+
+                    return $stored;
+                }
+
+                if ($created) {
+                    $defaults = [
+                        'qty'       => 1,
+                        'price'     => '0.00',
+                        'condition' => '9.4 (NEAR MINT)',
+                    ];
+
+                    foreach ($defaults as $field => $value) {
+                        $saved = tcs_update_collection_value(
+                            $post_id,
+                            $field,
+                            $value
+                        );
+
+                        if (!$saved) {
+                            wp_delete_post($post_id, true);
+
+                            return new WP_Error(
+                                'tcs_collection_fields',
+                                'The collection fields could not be saved. Please retry.'
+                            );
+                        }
+                    }
+
+                    $lock->assert_owned();
+
+                    $published = wp_update_post([
+                        'ID'          => $post_id,
+                        'post_status' => 'publish',
+                    ], true);
+
+                    if (
+                        is_wp_error($published)
+                        || !$published
+                        || get_post_status($post_id) !== 'publish'
+                    ) {
+                        wp_delete_post($post_id, true);
+
+                        return new WP_Error(
+                            'tcs_collection_publish',
+                            'The collection entry could not be published.'
+                        );
+                    }
+                }
+
+                return [
+                    'post_id' => (int) $post_id,
+                    'message' => $created
+                        ? 'Comic added to your collection.'
+                        : 'Collection metadata refreshed.',
+                    'warnings' => $catalog['warnings'] ?? [],
+                ];
+            }
+        );
+    } catch (Throwable $error) {
+        $busy = $error->getCode() === 409;
+
+        if (!$busy) {
+            error_log(
+                'TCS collection add failed: '
+                . $error->getMessage()
             );
         }
-    } else {
-        $post_id = (int) $existing[0];
+
+        wp_send_json_error(
+            $busy
+                ? 'A collection update is already running. Please try again shortly.'
+                : 'The collection could not be updated. Please retry.',
+            $busy ? 409 : 503
+        );
+        return;
     }
 
-    $stored = tcs_store_collection_catalog(
-        $post_id,
-        $catalog
-    );
-
-    if (is_wp_error($stored)) {
-        if ($created) {
-            wp_delete_post($post_id, true);
-        }
-
+    if (is_wp_error($result)) {
         wp_send_json_error([
-            'code'    => $stored->get_error_code(),
-            'message' => $stored->get_error_message(),
+            'code'    => $result->get_error_code(),
+            'message' => $result->get_error_message(),
         ], 500);
+        return;
     }
 
-    if ($created) {
-        tcs_update_collection_value(
-            $post_id,
-            'qty',
-            1
-        );
-
-        tcs_update_collection_value(
-            $post_id,
-            'price',
-            '0.00'
-        );
-
-        tcs_update_collection_value(
-            $post_id,
-            'condition',
-            '9.4 (NEAR MINT)'
-        );
-
-        $published = wp_update_post([
-            'ID'          => $post_id,
-            'post_status' => 'publish',
-        ], true);
-
-        if (is_wp_error($published) || !$published) {
-            wp_delete_post($post_id, true);
-
-            wp_send_json_error(
-                'The collection entry could not be published.',
-                500
-            );
-        }
-    }
-
-    wp_send_json_success([
-        'post_id' => $post_id,
-        'message' => $created
-            ? 'Comic added to your collection.'
-            : 'Collection metadata refreshed.',
-        'warnings' => $catalog['warnings'] ?? [],
-    ]);
+    wp_send_json_success($result);
 }
 
 

@@ -1024,6 +1024,7 @@
 .tci .tci-chart-value svg {
     display: block;
     margin-block: .75rem;
+    margin-left: -20px;
 }
 
 .tci .tci-charts section details table tr td {

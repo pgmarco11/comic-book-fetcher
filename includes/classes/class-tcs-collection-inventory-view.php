@@ -383,7 +383,7 @@ class TCS_Collection_Inventory_View {
     
         return $html
             . '<p>Snapshots are saved on days you open Charts.</p>'
-            . '<svg viewBox="0 0 640 210" width="100%" style="max-width: 640px" aria-hidden="true">'
+            . '<svg viewBox="0 0 640 210" width="100%" style="max-width: 800px" aria-hidden="true">'
             . '<path d="M90 20 V180 H620" fill="none" stroke="#555"/>'
             . '<g fill="currentColor" font-size="12">'
             . '<text x="82" y="24" text-anchor="end">'
