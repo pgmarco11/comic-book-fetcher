@@ -99,6 +99,77 @@ class TCS_Collection_Inventory_Repository {
             'meta_value' => (string) $title_id,
         ]);
     }
+
+    public function remember_publisher_identity(
+        int $metron_id,
+        string $name
+    ): void {
+        if ($metron_id <= 0 || trim($name) === '') {
+            return;
+        }
+    
+        $term = get_term_by('name', $name, 'publisher');
+    
+        if ($term instanceof WP_Term) {
+            update_term_meta(
+                $term->term_id,
+                '_tcs_metron_publisher_id',
+                (string) $metron_id
+            );
+        }
+    }
+    
+    public function local_publisher_info(int $metron_id): array {
+        if ($metron_id <= 0) {
+            return [];
+        }
+    
+        $terms = get_terms([
+            'taxonomy'   => 'publisher',
+            'hide_empty' => false,
+            'number'     => 1,
+            'meta_key'   => '_tcs_metron_publisher_id',
+            'meta_value' => (string) $metron_id,
+        ]);
+    
+        if (!is_wp_error($terms) && $terms) {
+            return [
+                'id'   => $metron_id,
+                'name' => $terms[0]->name,
+            ];
+        }
+    
+        $cached = get_transient('metron_publisher_v2_' . $metron_id);
+        $snapshot = get_option('comicbooks_publishers_snapshot_v1', []);
+    
+        $items = is_array($snapshot) && is_array($snapshot['items'] ?? null)
+            ? $snapshot['items']
+            : [];
+    
+        foreach (array_merge([$cached], $items) as $publisher) {
+            if (
+                !is_array($publisher)
+                || !empty($publisher['error'])
+                || (int) ($publisher['id'] ?? 0) !== $metron_id
+                || !is_string($publisher['name'] ?? null)
+                || trim($publisher['name']) === ''
+            ) {
+                continue;
+            }
+    
+            $this->remember_publisher_identity(
+                $metron_id,
+                $publisher['name']
+            );
+    
+            return [
+                'id'   => $metron_id,
+                'name' => $publisher['name'],
+            ];
+        }
+    
+        return [];
+    }
     
     public function owned_publisher_records(string $publisher_name): array {
         $publisher_name = trim($publisher_name);
