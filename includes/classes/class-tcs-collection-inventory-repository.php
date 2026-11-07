@@ -820,6 +820,122 @@ class TCS_Collection_Inventory_Repository {
         );
     }
 
+    private function sorting_records(array $posts, string $sort): array {
+        global $wpdb;
+    
+        if (!$posts) {
+            return [];
+        }
+    
+        $ids = array_map(
+            static fn($post): int => (int) $post->ID,
+            $posts
+        );
+    
+        $keys = $sort === 'collection'
+            ? ['volume', 'issue_number']
+            : ['price'];
+    
+        $id_slots = implode(
+            ', ',
+            array_fill(0, count($ids), '%d')
+        );
+    
+        $key_slots = implode(
+            ', ',
+            array_fill(0, count($keys), '%s')
+        );
+    
+        $metadata = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT post_id, meta_key, meta_value
+                 FROM {$wpdb->postmeta}
+                 WHERE post_id IN ({$id_slots})
+                     AND meta_key IN ({$key_slots})
+                 ORDER BY meta_id ASC",
+                ...array_merge($ids, $keys)
+            ),
+            ARRAY_A
+        );
+    
+        $terms = $sort === 'collection'
+            ? wp_get_object_terms(
+                $ids,
+                ['publisher', 'comic_series'],
+                [
+                    'fields'                 => 'all_with_object_id',
+                    'orderby'                => 'name',
+                    'order'                  => 'ASC',
+                    'update_term_meta_cache' => false,
+                ]
+            )
+            : [];
+    
+        // Preserve the existing path if a lightweight lookup fails.
+        if (!is_array($metadata) || is_wp_error($terms)) {
+            return array_map(
+                fn($post): array => $this->record((int) $post->ID),
+                $posts
+            );
+        }
+    
+        $values = [];
+    
+        foreach ($metadata as $row) {
+            // Match get_post_meta(): the earliest value wins.
+            if (!isset($values[$row['post_id']][$row['meta_key']])) {
+                $values[$row['post_id']][$row['meta_key']] =
+                    $row['meta_value'];
+            }
+        }
+    
+        $records = [];
+    
+        foreach ($posts as $post) {
+            $id = (int) $post->ID;
+    
+            $records[$id] = [
+                'id'        => $id,
+                'title'     => get_the_title($post),
+                'publisher' => '',
+                'volume'    => (string) ($values[$id]['volume'] ?? ''),
+                'issue'     => (string) ($values[$id]['issue_number'] ?? ''),
+                'price'     => (string) ($values[$id]['price'] ?? ''),
+            ];
+        }
+    
+        $series_seen = [];
+        $publisher_seen = [];
+    
+        foreach ($terms as $term) {
+            $id = (int) $term->object_id;
+    
+            if (!isset($records[$id])) {
+                continue;
+            }
+    
+            if (
+                $term->taxonomy === 'comic_series'
+                && !isset($series_seen[$id])
+            ) {
+                $records[$id]['title'] = $term->name;
+                $series_seen[$id] = true;
+            }
+    
+            if (
+                $term->taxonomy === 'publisher'
+                && (int) $term->parent === 0
+                && strpos($term->slug, 'all-') !== 0
+                && !isset($publisher_seen[$id])
+            ) {
+                $records[$id]['publisher'] = $term->name;
+                $publisher_seen[$id] = true;
+            }
+        }
+    
+        return array_values($records);
+    }
+
     public function results(array $input): array {
         $page = max(1, absint(tcs_inventory_text($input['collection_page'] ?? 1)));
         $sort = tcs_inventory_text(
@@ -922,46 +1038,28 @@ class TCS_Collection_Inventory_Repository {
             ];
         }
 
-        if (in_array(
-            $sort,
-            ['collection', 'price_asc', 'price_desc'],
-            true
-        )) {
-
-            /*
-             * Retrieve every matching collection entry first.
-             * Sorting has to happen before pagination because
-             * publisher and series are taxonomy-backed fields.
-             */
+        if (in_array($sort, ['collection', 'price_asc', 'price_desc'], true)) {
             $collection_args = $args;
-
+        
             $collection_args['posts_per_page'] = -1;
             $collection_args['paged'] = 1;
             $collection_args['fields'] = 'all';
-            
-            // Pagination totals are calculated below after sorting.
             $collection_args['no_found_rows'] = true;
-            
-            // Load posts, metadata, and taxonomy terms in batches.
-            $collection_args['cache_results'] = true;
-            $collection_args['update_post_meta_cache'] = true;
-            $collection_args['update_post_term_cache'] = true;
-            
+        
+            // Sorting does not need every comic's complete metadata or terms.
+            $collection_args['update_post_meta_cache'] = false;
+            $collection_args['update_post_term_cache'] = false;
+        
             unset($collection_args['orderby']);
-            
-            $collection_query = new WP_Query(
-                $collection_args
+        
+            $collection_query = new WP_Query($collection_args);
+        
+            $records = $this->sorting_records(
+                $collection_query->posts,
+                $sort
             );
-            
-            $records = array_map(
-                function ($post): array {
-                    return $this->record(
-                        (int) $post->ID
-                    );
-                },
-                $collection_query->posts
-            );
-
+        
+            // Sort the complete matching collection before selecting a page.
             if ($sort === 'collection') {
                 $this->sort_records($records);
             } else {
@@ -970,45 +1068,57 @@ class TCS_Collection_Inventory_Repository {
                     $sort === 'price_desc'
                 );
             }
-
+        
             $total = count($records);
-
             $per_page = 24;
-
-            $pages = max(
-                1,
-                (int) ceil(
-                    $total / $per_page
-                )
+            $pages = max(1, (int) ceil($total / $per_page));
+            $page = min($page, $pages);
+        
+            $page_ids = array_column(
+                array_slice(
+                    $records,
+                    ($page - 1) * $per_page,
+                    $per_page
+                ),
+                'id'
             );
-
-            $page = min(
-                $page,
-                $pages
+        
+            /*
+             * Load complete metadata and terms only for this page.
+             *
+             * An empty post__in would match all posts, so skip the query
+             * when there are no matching IDs.
+             */
+            $page_posts = $page_ids ? get_posts([
+                'post_type'              => 'collection',
+                'post_status'            => 'publish',
+                'author'                 => get_current_user_id(),
+                'post__in'               => $page_ids,
+                'orderby'                => 'post__in',
+                'posts_per_page'         => count($page_ids),
+                'fields'                 => 'all',
+                'no_found_rows'          => true,
+                'cache_results'          => true,
+                'update_post_meta_cache' => true,
+                'update_post_term_cache' => true,
+            ]) : [];
+        
+            $page_records = array_map(
+                fn($post): array => $this->record((int) $post->ID),
+                $page_posts
             );
-
-            $offset = (
-                $page - 1
-            ) * $per_page;
-
-            $page_records = array_slice(
-                $records,
-                $offset,
-                $per_page
-            );
-
+        
             return [
                 'records' => $page_records,
-                'total' => $total,
-                'page' => $page,
-                'pages' => $pages,
-                'html' =>
-                    tcs_inventory_view()->items_html(
-                        $page_records
-                    ),
+                'total'   => $total,
+                'page'    => $page,
+                'pages'   => $pages,
+                'html'    => tcs_inventory_view()->items_html(
+                    $page_records
+                ),
             ];
         }
-
+        
         $query = new WP_Query($args);
         // WordPress skips found_rows when an offset returns no posts. Read page one
         // to recover the real last page after deletions or an out-of-range URL.
