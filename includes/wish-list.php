@@ -1,4 +1,86 @@
 <?php
+require_once __DIR__ . '/classes/class-tcs-collection-import-lock.php';
+
+function mwp_update_user_wishlist(callable $change): void {
+    $user_id = get_current_user_id();
+
+    if ($user_id <= 0) {
+        wp_send_json_error('Please sign in and try again.', 401);
+        return;
+    }
+
+    $lock = new TCS_Collection_Import_Lock('wishlist:' . $user_id);
+
+    try {
+        $result = $lock->run(
+            static function (TCS_Collection_Import_Lock $lock) use ($user_id, $change) {
+                wp_cache_delete($user_id, 'user_meta');
+
+                $wishlist = mwp_get_user_wishlist($user_id);
+                $previous = $wishlist;
+                $result = $change($wishlist);
+
+                if (is_wp_error($result)) {
+                    return $result;
+                }
+
+                if ($wishlist !== $previous) {
+                    $lock->assert_owned();
+
+                    update_user_meta(
+                        $user_id,
+                        'user_wishlist',
+                        wp_slash($wishlist)
+                    );
+
+                    wp_cache_delete($user_id, 'user_meta');
+
+                    if (
+                        get_user_meta($user_id, 'user_wishlist', true)
+                        !== $wishlist
+                    ) {
+                        return new WP_Error(
+                            'wishlist_save_failed',
+                            'Your wishlist could not be saved. Refresh and try again.',
+                            ['status' => 500]
+                        );
+                    }
+                }
+
+                return $result;
+            }
+        );
+    } catch (Throwable $error) {
+        $busy = $error->getCode() === 409;
+
+        if (!$busy) {
+            error_log(
+                'TCS wishlist update failed: '
+                . $error->getMessage()
+            );
+        }
+
+        wp_send_json_error(
+            $busy
+                ? 'Another wishlist update is running. Please try again shortly.'
+                : 'Your wishlist could not be updated. Please retry.',
+            $busy ? 409 : 503
+        );
+        return;
+    }
+
+    if (is_wp_error($result)) {
+        $data = $result->get_error_data();
+        $status = is_array($data)
+            ? (int) ($data['status'] ?? 500)
+            : 500;
+
+        wp_send_json_error($result->get_error_message(), $status);
+        return;
+    }
+
+    wp_send_json_success($result);
+}
 
 function mwp_wishlist_ebay_id(array $item) {
     $id = isset($item['ebay_id']) && is_scalar($item['ebay_id']) ? trim((string) $item['ebay_id']) : '';
@@ -164,8 +246,7 @@ function add_to_wishlist_ajax() {
         );
     }
 
-    $user_id = get_current_user_id();
-    $wishlist = mwp_get_user_wishlist($user_id);
+
 
     $request = wp_unslash($_POST);
 
@@ -199,15 +280,26 @@ function add_to_wishlist_ajax() {
         $new['ebay_id'] = $ebay;
         $new['item_url'] = 'https://www.ebay.com/itm/' . $ebay;
     }
-    foreach ($wishlist as $item) {
-        if (is_array($item) && mwp_wishlist_items_match($item, $new)) {
-            wp_send_json_error('Already in wishlist.');
+    mwp_update_user_wishlist(
+        static function (array &$wishlist) use ($new) {
+            foreach ($wishlist as $item) {
+                if (
+                    is_array($item)
+                    && mwp_wishlist_items_match($item, $new)
+                ) {
+                    return new WP_Error(
+                        'wishlist_duplicate',
+                        'Already in wishlist.',
+                        ['status' => 409]
+                    );
+                }
+            }
+    
+            $wishlist[] = $new;
+    
+            return null;
         }
-    }
-
-    $wishlist[] = $new;
-    update_user_meta($user_id, 'user_wishlist', $wishlist);
-    wp_send_json_success();
+    );
 }
 
 add_action('wp_ajax_remove_from_wishlist', 'remove_from_wishlist_ajax');
@@ -239,8 +331,6 @@ function remove_from_wishlist_ajax() {
         );
     }
 
-    $user_id = get_current_user_id();
-
     $request = wp_unslash($_POST);
 
     $item_id = sanitize_text_field(
@@ -253,25 +343,33 @@ function remove_from_wishlist_ajax() {
         ]);
     }
 
-    $wishlist = mwp_get_user_wishlist(
-        get_current_user_id()
-    );
-
-    $candidate = mwp_wishlist_request_item($request);
-    if (mwp_wishlist_ebay_id($candidate) === '') {
-        foreach ($wishlist as $saved) {
-            if (is_array($saved) && (string) ($saved['item_id'] ?? '') === $item_id) {
-                $candidate = $saved;
-                break;
+    mwp_update_user_wishlist(
+        static function (array &$wishlist) use ($request, $item_id) {
+            $candidate = mwp_wishlist_request_item($request);
+    
+            if (mwp_wishlist_ebay_id($candidate) === '') {
+                foreach ($wishlist as $saved) {
+                    if (
+                        is_array($saved)
+                        && (string) ($saved['item_id'] ?? '') === $item_id
+                    ) {
+                        $candidate = $saved;
+                        break;
+                    }
+                }
             }
+    
+            $wishlist = array_values(array_filter(
+                $wishlist,
+                static function ($saved) use ($candidate) {
+                    return !is_array($saved)
+                        || !mwp_wishlist_items_match($saved, $candidate);
+                }
+            ));
+    
+            return null;
         }
-    }
-    $wishlist = array_filter($wishlist, static function ($saved) use ($candidate) {
-        return !is_array($saved) || !mwp_wishlist_items_match($saved, $candidate);
-    });
-    update_user_meta($user_id, 'user_wishlist', array_values($wishlist));
-
-    wp_send_json_success();
+    );
 }
 
 add_action('wp_ajax_remove_wishlist_items', 'remove_wishlist_items_ajax');
@@ -311,42 +409,28 @@ function remove_wishlist_items_ajax() {
         $candidates[] = $candidate;
     }
 
-    $user_id = get_current_user_id();
-    $previous = get_user_meta($user_id, 'user_wishlist', true);
-    $wishlist = mwp_get_user_wishlist($user_id);
-
-    $remaining = array_values(array_filter(
-        $wishlist,
-        static function ($saved) use ($candidates) {
-            if (!is_array($saved)) {
-                return true;
-            }
-
-            foreach ($candidates as $candidate) {
-                if (mwp_wishlist_items_match($saved, $candidate)) {
-                    return false;
+    mwp_update_user_wishlist(
+        static function (array &$wishlist) use ($candidates) {
+            $wishlist = array_values(array_filter(
+                $wishlist,
+                static function ($saved) use ($candidates) {
+                    if (!is_array($saved)) {
+                        return true;
+                    }
+    
+                    foreach ($candidates as $candidate) {
+                        if (mwp_wishlist_items_match($saved, $candidate)) {
+                            return false;
+                        }
+                    }
+    
+                    return true;
                 }
-            }
-
-            return true;
+            ));
+    
+            return ['remaining_count' => count($wishlist)];
         }
-    ));
-
-    if (count($remaining) !== count($wishlist)) {
-        if (!is_array($previous) || !$previous || !update_user_meta(
-            $user_id,
-            'user_wishlist',
-            $remaining,
-            $previous
-        )) {
-            wp_send_json_error(
-                'Could not save the removal. Refresh your wishlist and try again.',
-                409
-            );
-        }
-    }
-
-    wp_send_json_success(['remaining_count' => count($remaining)]);
+    );
 }
 
 

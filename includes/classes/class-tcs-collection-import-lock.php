@@ -5,14 +5,17 @@ class TCS_Collection_Import_Lock {
     private $name;
     private $held = false;
 
-    public function __construct() {
+    public function __construct(string $scope = '') {
         global $wpdb;
-
+    
+        $identity = DB_NAME . ':' . $wpdb->prefix;
+    
+        if ($scope !== '') {
+            $identity .= ':' . $scope;
+        }
+    
         $this->name = 'tcs_import_' . substr(
-            hash(
-                'sha256',
-                DB_NAME . ':' . $wpdb->prefix
-            ),
+            hash('sha256', $identity),
             0,
             40
         );
