@@ -1026,6 +1026,10 @@
     margin-block: .75rem;
 }
 
+.tci .tci-charts section details table tr td {
+    padding-right: 1.5rem;
+}
+
 .tci .tci-chart-value > p:first-of-type strong {
     font-size: 1.5rem;
 }
