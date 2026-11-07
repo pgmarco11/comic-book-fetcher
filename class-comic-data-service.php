@@ -3007,6 +3007,10 @@ class ComicDataService {
 
         }
 
+        if (is_array($series)) {
+            comicbooks_remember_series_header($series);
+        }
+
         /**
          * Search specifically within the currently selected series.
          *

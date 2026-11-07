@@ -3,23 +3,13 @@ defined('ABSPATH') || exit;
 
 /** Owns catalog background worker behavior; legacy function entry points delegate here. */
 class TCS_Catalog_Background_Worker {
-    private function valid_series_metadata($series, int $series_id): bool {
-        if (
-            !is_array($series)
-            || !empty($series['error'])
-            || (int) ($series['id'] ?? 0) !== $series_id
-            || !is_string($series['name'] ?? null)
-            || trim($series['name']) === ''
-            || !array_key_exists('year_began', $series)
-        ) {
-            return false;
-        }
-
-        $year = $series['year_began'];
-
-        return $year === null || (
-            is_scalar($year)
-            && preg_match('/^[1-9]\d{3}$/D', (string) $year) === 1
+    private function valid_series_metadata(
+        $series,
+        int $series_id
+    ): bool {
+        return comicbooks_valid_series_header(
+            $series,
+            $series_id
         );
     }
 
@@ -99,6 +89,8 @@ class TCS_Catalog_Background_Worker {
                 );
 
                 if ($this->valid_series_metadata($result, $series_id)) {
+                    comicbooks_remember_series_header($result);
+                
                     set_transient(
                         $cache_key,
                         $result,
