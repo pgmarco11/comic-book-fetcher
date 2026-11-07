@@ -424,6 +424,27 @@ add_action(
     4
 );
 
+function comicbooks_queue_series_metadata(int $series_id): void {
+    comicbooks_catalog_worker()->queue_series_metadata($series_id);
+}
+
+function comicbooks_refresh_series_metadata(
+    int $series_id,
+    int $attempt = 0
+): void {
+    comicbooks_catalog_worker()->refresh_series_metadata(
+        $series_id,
+        $attempt
+    );
+}
+
+add_action(
+    'comicbooks_refresh_series_metadata',
+    'comicbooks_refresh_series_metadata',
+    10,
+    2
+);
+
 function comicbooks_continue_series_scan(
     $publisher_id,
     $attempt = 0

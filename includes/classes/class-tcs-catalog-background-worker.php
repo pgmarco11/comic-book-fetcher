@@ -3,6 +3,148 @@ defined('ABSPATH') || exit;
 
 /** Owns catalog background worker behavior; legacy function entry points delegate here. */
 class TCS_Catalog_Background_Worker {
+    private function valid_series_metadata($series, int $series_id): bool {
+        if (
+            !is_array($series)
+            || !empty($series['error'])
+            || (int) ($series['id'] ?? 0) !== $series_id
+            || !is_string($series['name'] ?? null)
+            || trim($series['name']) === ''
+            || !array_key_exists('year_began', $series)
+        ) {
+            return false;
+        }
+
+        $year = $series['year_began'];
+
+        return $year === null || (
+            is_scalar($year)
+            && preg_match('/^[1-9]\d{3}$/D', (string) $year) === 1
+        );
+    }
+
+    public function queue_series_metadata(
+        int $series_id,
+        int $attempt = 0,
+        int $delay = 5
+    ): void {
+        if ($series_id <= 0 || $attempt < 0 || $attempt > 4) {
+            return;
+        }
+
+        if (
+            $this->valid_series_metadata(
+                get_transient("metron:series:{$series_id}"),
+                $series_id
+            )
+            || get_transient("tcs:series_metadata_cooldown:{$series_id}")
+        ) {
+            return;
+        }
+
+        for ($queued_attempt = 0; $queued_attempt < 5; $queued_attempt++) {
+            if (wp_next_scheduled(
+                'comicbooks_refresh_series_metadata',
+                [$series_id, $queued_attempt]
+            )) {
+                return;
+            }
+        }
+
+        wp_schedule_single_event(
+            time() + max(1, $delay),
+            'comicbooks_refresh_series_metadata',
+            [$series_id, $attempt]
+        );
+    }
+
+    public function refresh_series_metadata(
+        int $series_id,
+        int $attempt = 0
+    ): void {
+        if ($series_id <= 0 || $attempt < 0 || $attempt > 4) {
+            return;
+        }
+
+        $cache_key = "metron:series:{$series_id}";
+
+        if (
+            $this->valid_series_metadata(
+                get_transient($cache_key),
+                $series_id
+            )
+            || get_transient("tcs:series_metadata_cooldown:{$series_id}")
+        ) {
+            return;
+        }
+
+        $scope = 'series-metadata:' . $series_id;
+        $locked = false;
+        $result = [];
+
+        try {
+            $locked = MetronClient::acquire_lock($scope);
+
+            if ($locked) {
+                $cached = get_transient($cache_key);
+
+                if ($this->valid_series_metadata($cached, $series_id)) {
+                    return;
+                }
+
+                $client = new MetronClient();
+
+                $result = $client->api_get(
+                    $client->api_base . "series/{$series_id}/"
+                );
+
+                if ($this->valid_series_metadata($result, $series_id)) {
+                    set_transient(
+                        $cache_key,
+                        $result,
+                        14 * DAY_IN_SECONDS
+                    );
+
+                    if ($this->valid_series_metadata(
+                        get_transient($cache_key),
+                        $series_id
+                    )) {
+                        return;
+                    }
+                }
+            }
+        } catch (Throwable $error) {
+            $result = [
+                'retry_after' => $error instanceof ComicApiTemporaryException
+                    ? $error->retry_after
+                    : 0,
+            ];
+        } finally {
+            if ($locked) {
+                MetronClient::release_lock($scope);
+            }
+        }
+
+        if ($attempt >= 4) {
+            set_transient(
+                "tcs:series_metadata_cooldown:{$series_id}",
+                true,
+                5 * MINUTE_IN_SECONDS
+            );
+            return;
+        }
+
+        $retry_after = is_array($result)
+            ? absint($result['retry_after'] ?? 0)
+            : 0;
+
+        $this->queue_series_metadata(
+            $series_id,
+            $attempt + 1,
+            comicbooks_background_retry_delay($attempt, $retry_after)
+        );
+    }
+    
     public function process_publisher_warm_queue()
     {
         $queue = get_transient(
