@@ -299,7 +299,7 @@ class TCS_Collection_Inventory_View {
             return '<p>No genres have been assigned to your collection entries yet.</p>';
         }
         $total = array_sum($counts);
-        $minimum_share = 0.017; // 1.7% of the chart total.
+        $minimum_share = $taxonomy === 'creators' ? 0.006 : 0.017;
         
         $visible = in_array($taxonomy, ['comic_series', 'comic_genre', 'creators'], true)
             ? array_filter(
@@ -417,13 +417,12 @@ class TCS_Collection_Inventory_View {
 
 
             <?php
-            if ($show_charts) {
-                    ?>
-                    
+            if ($show_charts) { ?>
+                <div class="tci-charts"> 
                         <?php $value_html = $this->collection_value_html(get_current_user_id()); ?>
 
                         <?php if ($value_html !== '') : ?>
-                            <section class="tci-era-breakdown" aria-labelledby="tci-value-heading">
+                            <section class="tci-era-breakdown tci-chart-wide tci-chart-value" aria-labelledby="tci-value-heading">
                                 <h2 id="tci-value-heading">Collection value</h2>
                                 <?php echo $value_html; ?>
                             </section>
@@ -441,8 +440,8 @@ class TCS_Collection_Inventory_View {
                             'comic_genre' => 'Most collected genres',
                             'creators' => 'Most collected creators',
                         ] as $taxonomy => $heading) : ?>
-                            <section class="tci-era-breakdown"
-                                    aria-labelledby="tci-chart-<?php echo esc_attr($taxonomy); ?>">
+                            <section class="tci-era-breakdown<?php echo $taxonomy === 'creators' ? ' tci-chart-wide' : ''; ?>"
+                                aria-labelledby="tci-chart-<?php echo esc_attr($taxonomy); ?>">
                                 <h2 id="tci-chart-<?php echo esc_attr($taxonomy); ?>">
                                     <?php echo esc_html($heading); ?>
                                 </h2>                                                       
@@ -458,6 +457,7 @@ class TCS_Collection_Inventory_View {
                                 <?php echo $this->taxonomy_breakdown_html(get_current_user_id(), $taxonomy); ?>
                             </section>
                     <?php endforeach; ?>
+                </div>
                 <?php
                 return;
             }
