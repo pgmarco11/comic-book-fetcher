@@ -441,15 +441,18 @@
 
 .tcs-wishlist ul.user-wishlist > li > .wishlist-item-selection:not([hidden]) {
   position: absolute;
-  top: 0;
-  left: -2px;
+  top: 12px;
+  left: 12px;
   z-index: 1;
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 34px;
+  height: 34px;
   margin: 0;
   cursor: pointer;
+  border: 1px solid #000;
+  background: white;
+  border-radius: 10px;
 }
 
 /* Make room beside the cover in List view. */
