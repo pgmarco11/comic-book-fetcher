@@ -203,24 +203,24 @@ class TCS_Collection_Inventory_Repository {
             return [];
         }
     
-        $post_ids = get_posts([
-            'post_type'      => 'collection',
-            'post_status'    => 'publish',
-            'author'         => $user_id,
-            'posts_per_page' => -1,
-            'fields'         => 'ids',
+        $posts = get_posts([
+            'post_type'              => 'collection',
+            'post_status'            => 'publish',
+            'author'                 => $user_id,
+            'posts_per_page'         => -1,
+            'fields'                 => 'all',
+            'no_found_rows'          => true,
+            'cache_results'          => true,
+            'update_post_meta_cache' => true,
+            'update_post_term_cache' => true,
         ] + $scope);
-    
-        if (!$post_ids) {
-            return [];
-        }
-    
-        update_meta_cache('post', $post_ids);
     
         $records = [];
     
-        foreach ($post_ids as $post_id) {
-            $records[] = $this->record((int) $post_id);
+        foreach ($posts as $post) {
+            $records[] = $this->record( 
+                (int) $post->ID
+            );
         }
     
         $this->sort_records($records);
@@ -937,18 +937,26 @@ class TCS_Collection_Inventory_Repository {
 
             $collection_args['posts_per_page'] = -1;
             $collection_args['paged'] = 1;
-            $collection_args['fields'] = 'ids';
-
+            $collection_args['fields'] = 'all';
+            
+            // Pagination totals are calculated below after sorting.
+            $collection_args['no_found_rows'] = true;
+            
+            // Load posts, metadata, and taxonomy terms in batches.
+            $collection_args['cache_results'] = true;
+            $collection_args['update_post_meta_cache'] = true;
+            $collection_args['update_post_term_cache'] = true;
+            
             unset($collection_args['orderby']);
-
+            
             $collection_query = new WP_Query(
                 $collection_args
             );
-
+            
             $records = array_map(
-                static function ($post_id): array {
-                    return tcs_inventory_repository()->record(
-                        (int) $post_id
+                function ($post): array {
+                    return $this->record(
+                        (int) $post->ID
                     );
                 },
                 $collection_query->posts
@@ -1158,23 +1166,41 @@ class TCS_Collection_Inventory_Repository {
 
         LEFT JOIN (
             SELECT
-                post_id,
+                qty_meta.post_id,
                 MAX(
-                    CAST(meta_value AS UNSIGNED)
+                    CAST(qty_meta.meta_value AS UNSIGNED)
                 ) AS qty
-            FROM {$wpdb->postmeta}
-            WHERE meta_key = 'qty'
-            GROUP BY post_id
+
+            FROM {$wpdb->posts} quantity_posts
+
+            INNER JOIN {$wpdb->postmeta} qty_meta
+                ON qty_meta.post_id = quantity_posts.ID
+                AND qty_meta.meta_key = 'qty'
+
+            WHERE quantity_posts.post_type = 'collection'
+                AND quantity_posts.post_status = 'publish'
+                AND quantity_posts.post_author = %d
+
+            GROUP BY qty_meta.post_id
         ) quantity
             ON quantity.post_id = posts.ID
 
         LEFT JOIN (
             SELECT
-                post_id,
-                MAX(meta_value) AS volume
-            FROM {$wpdb->postmeta}
-            WHERE meta_key = 'volume'
-            GROUP BY post_id
+                vol_meta.post_id,
+                MAX(vol_meta.meta_value) AS volume
+
+            FROM {$wpdb->posts} volume_posts
+
+            INNER JOIN {$wpdb->postmeta} vol_meta
+                ON vol_meta.post_id = volume_posts.ID
+                AND vol_meta.meta_key = 'volume'
+
+            WHERE volume_posts.post_type = 'collection'
+                AND volume_posts.post_status = 'publish'
+                AND volume_posts.post_author = %d
+
+            GROUP BY vol_meta.post_id
         ) volume_meta
             ON volume_meta.post_id = posts.ID
 
@@ -1183,7 +1209,11 @@ class TCS_Collection_Inventory_Repository {
             AND posts.post_author = %d
     ";
 
-        $parameters = [$user_id];
+        $parameters = [
+            $user_id, // Quantity aggregation.
+            $user_id, // Volume aggregation.
+            $user_id, // Main collection query.
+        ];
 
         if ($publisher_id > 0) {
             $sql .= ' AND publisher_terms.term_id = %d';
