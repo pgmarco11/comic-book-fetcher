@@ -2177,34 +2177,94 @@ class ComicDataService {
             ];
         }
 
+        $invalid_page = static function () use ($url): array {
+            // The HTTP client may have cached this malformed response.
+            delete_transient(
+                'metron:api:' . md5(esc_url_raw($url))
+            );
+        
+            return [
+                'items' => [],
+                'total' => 0,
+                'has_next' => false,
+                'temporary_error' =>
+                    'Metron returned an incomplete publisher series page. Please retry.',
+                'retry_after' => 10,
+            ];
+        };
+        
         /*
-        * At this point the request succeeded, so an empty results array can
-        * safely be cached as a genuinely empty page.
-        */
+         * Require a complete pagination envelope.
+         * A missing results field is different from a valid empty list.
+         */
         if (
-            empty($response['results']) ||
-            (
-                    !empty($response['detail']) &&
-                    str_contains(
-                        $response['detail'],
-                        'Invalid page'
-                    )
+            !array_key_exists('results', $response)
+            || !is_array($response['results'])
+            || !array_is_list($response['results'])
+            || !array_key_exists('count', $response)
+            || !(
+                is_int($response['count'])
+                || (
+                    is_string($response['count'])
+                    && ctype_digit($response['count'])
+                )
+            )
+            || (int) $response['count'] < 0
+            || !array_key_exists('next', $response)
+            || (
+                $response['next'] !== null
+                && (
+                    !is_string($response['next'])
+                    || trim($response['next']) === ''
+                )
             )
         ) {
-            $empty = [
-                    'items'    => [],
-                    'total'    => 0,
-                    'has_next' => false,
-            ];
-
-            $this->save_series_page_cache(
-                $publisher_id,
-                $api_page,
-                $api_page_size,
-                $empty
-            );
-            
-            return $empty;
+            return $invalid_page();
+        }
+        
+        $total = (int) $response['count'];
+        $has_next = $response['next'] !== null;
+        
+        $offset = ($api_page - 1) * $api_page_size;
+        $received = count($response['results']);
+        
+        $expected = min(
+            $api_page_size,
+            max(0, $total - $offset)
+        );
+        
+        // Reject truncated pages and contradictory pagination.
+        if (
+            $received !== $expected
+            || $has_next !== ($offset + $received < $total)
+        ) {
+            return $invalid_page();
+        }
+        
+        /*
+         * Validate every row before updating page caches or
+         * Comic Vine mapping caches.
+         */
+        $seen_ids = [];
+        
+        foreach ($response['results'] as $item) {
+            if (
+                !is_array($item)
+                || !isset($item['id'])
+                || !(
+                    is_int($item['id'])
+                    || is_string($item['id'])
+                )
+                || !ctype_digit((string) $item['id'])
+                || (int) $item['id'] <= 0
+                || isset($seen_ids[(int) $item['id']])
+                || !is_string($item['series'] ?? null)
+                || trim($item['series']) === ''
+            ) {
+                return $invalid_page();
+            }
+        
+            $seen_ids[(int) $item['id']] = true;
         }
 
         $items = [];
@@ -2254,8 +2314,8 @@ class ComicDataService {
 
         $result = [
             'items'    => $items,
-            'total'    => (int) ( $response['count'] ?? 0 ),
-            'has_next' => ! empty( $response['next'] ),
+            'total'    => $total,
+            'has_next' => $has_next,
         ];
 
         $this->save_series_page_cache(
