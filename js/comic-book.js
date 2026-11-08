@@ -131,96 +131,17 @@ jQuery(document).ready(function($){
         });
     }
 
-
-
-    // ===================================================================
-    // Cache Helpers
-    // ===================================================================
-    const CACHE_TTL =
-    24 * 60 * 60 * 1000;
-
-    const CACHE_PREFIX =
-        'tcs:comic-database:v1:';
-
-    function browserCacheKey(key) {
-        return CACHE_PREFIX + key;
-    }
-
-    function getCachedData(key) {
-        const versionedKey = browserCacheKey(key);
-        const cached = localStorage.getItem(versionedKey);
-    
-        if (!cached) {
-            return null;
-        }
-    
-        try {
-            const { value, expiry } = JSON.parse(cached);
-    
-            if (Date.now() > expiry) {
-                localStorage.removeItem(versionedKey);
-                return null;
-            }
-
-            // Let PHP attach current cached publisher details when this
-            // browser snapshot was saved before enrichment finished.
-            if (
-                Array.isArray(value?.publishers) &&
-                value.publishers.some(item => item.publisher_loaded !== true)
-            ) {
-                return null;
-            }
-
-            // Let PHP recheck unresolved or confirmed-missing covers.
-            // This also avoids retaining a six-hour missing-image result
-            // for the browser cache's longer 24-hour lifetime.
-            if (
-                Array.isArray(value?.series) &&
-                value.series.some(item => !item.image)
-            ) {
-                return null;
-            }
-    
-            return value;
-        } catch (error) {
-            console.error('Cache error:', error);
-            localStorage.removeItem(versionedKey);
-            return null;
-        }
-    }
-    
-    function setCachedData(key, data) {
-        const versionedKey = browserCacheKey(key);
-        const expiry = Date.now() + CACHE_TTL;
-    
-        try {
-            localStorage.setItem(
-                versionedKey,
-                JSON.stringify({
-                    value: data,
-                    expiry,
-                })
-            );
-        } catch (error) {
-            console.warn(
-                'localStorage quota exceeded:',
-                error
-            );
-        }
-    }
-    
-    function clearCachedData(key) {
-        try {
-            localStorage.removeItem(
-                browserCacheKey(key)
-            );
-        } catch (error) {
-            console.warn(
-                'Failed to clear cache:',
-                key,
-                error
-            );
-        }
+    // Remove obsolete browser snapshots.
+    // Server caches now own catalog data.
+    try {
+        Object.keys(localStorage)
+            .filter(key => key.startsWith('tcs:comic-database:'))
+            .forEach(key => localStorage.removeItem(key));
+    } catch (error) {
+        console.warn(
+            'Could not remove old catalog snapshots:',
+            error
+        );
     }
 
     // ===================================================================
@@ -1375,45 +1296,6 @@ jQuery(document).ready(function($){
             return;
         }   
 
-    
-        const cacheKey = `metron_books_${publisherId}_${page}_${name}_${letter}`;
-        const cached = getCachedData(cacheKey);
-    
-        if (cached) {
-    
-            // A newer request started while we were getting here.
-            if (requestId !== booksRequestId) {
-                return;
-            }
-    
-            allSeries = cached.series || [];
-    
-            const perPage = cached.perPage || cached.per_page || 10;
-            const total = cached.total || 0;
-            const isTotalExact = cached.isTotalExact !== false;
-    
-            renderItems(
-                allSeries,
-                'books',
-                page,
-                total,
-                name,
-                letter,
-                perPage,
-                isTotalExact
-            );
-    
-            showLetterButtons(true);
-            updateActiveLetter(letter);
-            $('#book-container')
-            .attr('aria-busy', 'false')
-            .css('visibility', 'visible');
-
-            hideSpinner();
-    
-            return;
-        }
-    
         $.ajax({
             url: comicbooks_fetchers_data.ajax_url,
             method: 'POST',
@@ -1502,16 +1384,7 @@ jQuery(document).ready(function($){
     
                     const isTotalExact =
                         response.data.is_total_exact !== false;
-    
-                    if (isTotalExact) {
-                        setCachedData(cacheKey, {
-                                series: allSeries,
-                                total,
-                                perPage,
-                                isTotalExact
-                        });
-                    }
-    
+     
                     renderItems(
                         allSeries,
                         'books',
