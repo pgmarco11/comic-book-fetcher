@@ -1,7 +1,7 @@
 <?php
 defined('ABSPATH') || exit;
 
-/** Owns collection transfer behavior; legacy function entry points delegate here. */
+/** Owns collection transfer behavior. */
 class TCS_Collection_Transfer {
     private $service;
 

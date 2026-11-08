@@ -1,7 +1,7 @@
 <?php
 defined('ABSPATH') || exit;
 
-/** Owns collection inventory view behavior; legacy function entry points delegate here. */
+/** Owns collection inventory view behavior */
 class TCS_Collection_Inventory_View {
     private $repository;
 
@@ -12,7 +12,7 @@ class TCS_Collection_Inventory_View {
     public function items_html(array $records): string {
         ob_start();
         if (!$records) {
-            echo '<div class="tci-empty"><span aria-hidden="true">✦</span><h3>No issues here yet</h3><p>Try another filter, or add a comic from the catalog.</p><a class="tci-button tci-button-primary" href="' . esc_url(home_url('/comic-catalog/')) . '">Explore the comic catalog</a></div>';
+            echo '<div class="tci-empty"><span aria-hidden="true">✦</span><h3>No issues here yet</h3><p>Try another filter, or add a comic from the catalog.</p><a class="tci-button tci-button-primary" href="' . esc_url(home_url('/comic-database/')) . '">Explore the comic catalog</a></div>';
         } else {
             echo '<ul class="tci-items" aria-label="Collection issues">';
             foreach ($records as $record) {

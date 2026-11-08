@@ -83,7 +83,7 @@ class TCS_Collection_Inventory_Repository {
                         'title_id' => $record['series_id'],
                         'view'     => 'collection',
                     ],
-                    home_url('/comic-catalog/issue/')
+                    home_url('/comic-database/issue/')
                 )
                 : get_permalink($id);
         return $record;
@@ -1013,6 +1013,7 @@ class TCS_Collection_Inventory_Repository {
 
         if ($sort === 'title') $args['orderby'] = ['title' => 'ASC', 'ID' => 'ASC'];
         if ($sort === 'oldest') $args['orderby'] = ['date' => 'ASC', 'ID' => 'ASC'];
+
         // Named optional clause includes legacy records with no issue_number meta.
         if ($sort === 'issue') {
             if (!isset($args['meta_query'])) {

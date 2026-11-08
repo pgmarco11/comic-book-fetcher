@@ -216,7 +216,7 @@ function comicbooks_enqueue_scripts() {
     $load_category_archive  = false;
 
     // Load on specific pages
-    if (is_page(['comic-catalog', 'issues', 'issue'])) {
+    if (is_page(['comic-database', 'issues', 'issue'])) {
         $load_comic_assets = true;
     }
 
@@ -534,14 +534,14 @@ function comicbooks_remap_catalog_page_parameter(
 
     $catalog_path = trailingslashit(
         wp_parse_url(
-            home_url('/comic-catalog/'),
+            home_url('/comic-database/'),
             PHP_URL_PATH
         )
     );
 
     $issues_path = trailingslashit(
         wp_parse_url(
-            home_url('/comic-catalog/issues/'),
+            home_url('/comic-database/issues/'),
             PHP_URL_PATH
         )
     );
@@ -611,14 +611,14 @@ function comicbooks_preserve_catalog_page_parameter(
 
     $catalog_path = trailingslashit(
         wp_parse_url(
-            home_url('/comic-catalog/'),
+            home_url('/comic-database/'),
             PHP_URL_PATH
         )
     );
 
     $issues_path = trailingslashit(
         wp_parse_url(
-            home_url('/comic-catalog/issues/'),
+            home_url('/comic-database/issues/'),
             PHP_URL_PATH
         )
     );
@@ -670,19 +670,19 @@ function comicbooks_protect_logged_in_catalog_pages(): void
     $catalog_paths = [
         trailingslashit(
             wp_parse_url(
-                home_url('/comic-catalog/'),
+                home_url('/comic-database/'),
                 PHP_URL_PATH
             )
         ),
         trailingslashit(
             wp_parse_url(
-                home_url('/comic-catalog/issues/'),
+                home_url('/comic-database/issues/'),
                 PHP_URL_PATH
             )
         ),
         trailingslashit(
             wp_parse_url(
-                home_url('/comic-catalog/issue/'),
+                home_url('/comic-database/issue/'),
                 PHP_URL_PATH
             )
         ),

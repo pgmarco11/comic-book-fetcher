@@ -214,7 +214,7 @@ function collectiblespot_get_collection_item_url( $post_id ) {
             'title_id' => $title_id,
             'view'     => 'collection',
         ],
-        home_url( '/comic-catalog/issue/' )
+        home_url( '/comic-database/issue/' )
     );
 }
 

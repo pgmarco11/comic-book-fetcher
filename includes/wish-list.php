@@ -115,7 +115,7 @@ function mwp_get_user_wishlist($user_id) {
 
     $issue_path = untrailingslashit(
         (string) wp_parse_url(
-            home_url('/comic-catalog/issue/'),
+            home_url('/comic-database/issue/'),
             PHP_URL_PATH
         )
     );
@@ -143,6 +143,12 @@ function mwp_get_user_wishlist($user_id) {
             (int) $issue_id > 0
         ) {
             $item['item_id'] = 'metron:issue:' . (int) $issue_id;
+            $item['item_url'] = esc_url_raw(
+                add_query_arg(
+                    $query,
+                    home_url('/comic-database/issue/')
+                )
+            );
         }
     }
 
@@ -491,7 +497,7 @@ function check_wishlist_status_ajax() {
 function mwp_wishlist_category_term(array $item) {
     $id = (string) ($item['item_id'] ?? '');
     $url = wp_parse_url((string) ($item['item_url'] ?? ''));
-    $comic_path = untrailingslashit((string) wp_parse_url(home_url('/comic-catalog/issue/'), PHP_URL_PATH));
+    $comic_path = untrailingslashit((string) wp_parse_url(home_url('/comic-database/issue/'), PHP_URL_PATH));
     $is_comic = strpos($id, 'metron:issue:') === 0
         || (is_array($url) && untrailingslashit($url['path'] ?? '') === $comic_path);
     if ($is_comic) {

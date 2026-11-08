@@ -46,9 +46,9 @@ The plugin also provides collection and wish-list functionality for logged-in us
 
 6. Create the catalog pages required by the plugin:
 
-   * `/comic-catalog/`
-   * `/comic-catalog/issues/`
-   * `/comic-catalog/issue/`
+   * `/comic-database/`
+   * `/comic-database/issues/`
+   * `/comic-database/issue/`
 
 > The current templates and front-end links assume these page paths. Update the plugin templates if your website uses different URLs.
 
@@ -78,9 +78,9 @@ Publishers
 The primary catalog routes are:
 
 ```text
-/comic-catalog/
-/comic-catalog/issues/?title_id=SERIES_ID
-/comic-catalog/issue/?issue_id=ISSUE_ID&title_id=SERIES_ID
+/comic-database/
+/comic-database/issues/?title_id=SERIES_ID
+/comic-database/issue/?issue_id=ISSUE_ID&title_id=SERIES_ID
 ```
 
 ## Data and image flow

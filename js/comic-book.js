@@ -140,7 +140,7 @@ jQuery(document).ready(function($){
     24 * 60 * 60 * 1000;
 
     const CACHE_PREFIX =
-        'tcs:comic-catalog:v3:';
+        'tcs:comic-database:v1:';
 
     function browserCacheKey(key) {
         return CACHE_PREFIX + key;
@@ -447,7 +447,7 @@ jQuery(document).ready(function($){
                             data-publisher-id="${item.id}"
                             ${loaded ? 'data-publisher-loaded="true"' : ''}>
                 
-                            <a href="/comic-catalog/?publisher_id=${item.id}&letter=all&page=1">
+                            <a href="/comic-database/?publisher_id=${item.id}&letter=all&page=1">
                                 <div class="publisher-image">
                                     <img
                                         src="${escapeCatalogHtml(imageUrl)}"
@@ -494,7 +494,7 @@ jQuery(document).ready(function($){
                 
                     html += `
                     <div class="comic-title" data-series-id="${item.series_id}">
-                            <a href="/comic-catalog/issues/?title_id=${item.series_id}&page=1">
+                            <a href="/comic-database/issues/?title_id=${item.series_id}&page=1">
                                 <div class="comic-image">
                                     <img src="${escapeCatalogHtml(imgSrc)}"
                                         ${imgAttrs}
@@ -1973,14 +1973,14 @@ jQuery(document).ready(function($){
          */
         if (
             !window.location.pathname.includes(
-                '/comic-catalog/issues/'
+                '/comic-database/issues/'
             )
         ) {
             return;
         }
     
         const url = new URL(
-            '/comic-catalog/issues/',
+            '/comic-database/issues/',
             window.location.origin
         );
     
@@ -2058,11 +2058,11 @@ jQuery(document).ready(function($){
 
     // Check if issues-list is populated (server-side or initial AJAX)
     if (
-        window.location.pathname.includes('/comic-catalog/issues/') &&
+        window.location.pathname.includes('/comic-database/issues/') &&
         $('#issues-list .issues-list').children().length > 0
     ) {
         $('#issues-list .issues-list').addClass('loaded');
-    } else if (window.location.pathname.includes('/comic-catalog/issues/')) {
+    } else if (window.location.pathname.includes('/comic-database/issues/')) {
     
         const urlParams = new URLSearchParams(window.location.search);
     
@@ -2220,7 +2220,7 @@ jQuery(document).ready(function($){
         const letter    = $btn.data('letter') ?? currentLetter;
         const search    = $btn.data('search') ?? currentSearch;
     
-        const isIssuesPage = window.location.pathname.includes('/comic-catalog/issues/');
+        const isIssuesPage = window.location.pathname.includes('/comic-database/issues/');
         const hasTitleId   = !!titleId;
         const hasPublisher = !!currentPublisherId;
     
@@ -2354,10 +2354,10 @@ jQuery(document).ready(function($){
     
         let url;
         if (isPublisher) {
-            url = `/comic-catalog/?publisher_id=${id}&letter=all&page=1`;
+            url = `/comic-database/?publisher_id=${id}&letter=all&page=1`;
             currentPublisherId = Number(id); // if you use this global
         } else {
-            url = `/comic-catalog/issues/?title_id=${id}&page=1`;
+            url = `/comic-database/issues/?title_id=${id}&page=1`;
             currentSeriesId = Number(id);
         }
     
@@ -2381,7 +2381,7 @@ jQuery(document).ready(function($){
         showSpinner();
     
         // Build proper permalink-style URL
-        const cleanUrl = new URL('/comic-catalog/issue/', location.origin);
+        const cleanUrl = new URL('/comic-database/issue/', location.origin);
         cleanUrl.searchParams.set('issue_id', issueId);
         cleanUrl.searchParams.set('title_id', titleId);         
 
@@ -2636,7 +2636,7 @@ jQuery(document).ready(function($){
     const issueSearch = urlParams.get('search') || '';
     
     // Only run on issues page
-    if (titleId && window.location.pathname.includes('/comic-catalog/issues/')) {
+    if (titleId && window.location.pathname.includes('/comic-database/issues/')) {
         $('#issue-search').val(issueSearch);
     } 
     if (window.__resumeFetchOnLoad) {

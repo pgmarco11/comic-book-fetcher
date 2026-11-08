@@ -196,7 +196,7 @@
             'issue_id' => (int) $issue_id,
             'title_id' => (int) $title_id,
         ],
-        home_url('/comic-catalog/issue/')
+        home_url('/comic-database/issue/')
     );
 
     $collection_url = add_query_arg(
@@ -205,7 +205,7 @@
             'title_id' => (int) $title_id,
             'view'     => 'collection',
         ],
-        home_url('/comic-catalog/issue/')
+        home_url('/comic-database/issue/')
     );
 
     ?>
@@ -216,16 +216,16 @@
                     <div class="comic-issue-details-container">
                         <header class="page-header">                        
                             <nav class="category-breadcrumbs">
-                                <a href="<?php echo esc_url(home_url('/comic-catalog')); ?>">Publishers</a>
+                                <a href="<?php echo esc_url(home_url('/comic-database')); ?>">Publishers</a>
                                 <span class="separator">&#10148;</span>
-                                <span class="category"><a href="<?php echo esc_url(home_url('/comic-catalog/?publisher_id=' . $publisher['id'])); ?>">
+                                <span class="category"><a href="<?php echo esc_url(home_url('/comic-database/?publisher_id=' . $publisher['id'])); ?>">
 
                                     <?php echo esc_html($publisher['name']); ?>
 
                                 </a></span>
                                 <span class="separator">&#10148;</span>
                                 <span class="category">
-                                    <a href="<?php echo esc_url(home_url('/comic-catalog/issues/?title_id=' . $title_id)); ?>">
+                                    <a href="<?php echo esc_url(home_url('/comic-database/issues/?title_id=' . $title_id)); ?>">
                                     <?php echo esc_html($series['name'] ?? 'Comic Series'); ?></a>
                                     </span>
                                     <span
@@ -398,7 +398,7 @@
                                                             'issue_id' => $issue_id,
                                                             'title_id' => $title_id
                                                         ],
-                                                        site_url('/comic-catalog/issue/')
+                                                        site_url('/comic-database/issue/')
                                                     );
                                                     ?>
                                                     <button

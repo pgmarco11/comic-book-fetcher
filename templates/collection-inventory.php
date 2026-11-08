@@ -24,7 +24,7 @@ $inventory_url = tcs_inventory_url();
         <div>
             <p class="tci-intro">Enjoy the covers. Keep the details in order.</p>
         </div>
-        <a class="tci-button tci-button-primary" href="<?php echo esc_url(home_url('/comic-catalog/')); ?>"><span
+        <a class="tci-button tci-button-primary" href="<?php echo esc_url(home_url('/comic-database/')); ?>"><span
                 aria-hidden="true">＋</span> Add comics</a>
     </header>
 

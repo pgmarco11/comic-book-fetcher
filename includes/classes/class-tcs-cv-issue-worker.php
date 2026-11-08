@@ -1,7 +1,7 @@
 <?php
 defined('ABSPATH') || exit;
 
-/** Owns cv issue worker behavior; legacy function entry points delegate here. */
+/** Owns cv issue worker behavior */
 class TCS_CV_Issue_Worker {
     public function read_cv_issue_queue(): array
     {

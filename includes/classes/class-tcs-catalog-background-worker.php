@@ -1,7 +1,7 @@
 <?php
 defined('ABSPATH') || exit;
 
-/** Owns catalog background worker behavior; legacy function entry points delegate here. */
+/** Owns catalog background worker behavior */
 class TCS_Catalog_Background_Worker {
     private function valid_series_metadata(
         $series,

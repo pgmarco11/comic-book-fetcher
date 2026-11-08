@@ -149,7 +149,7 @@ $collection_post_id = $in_collection
     data-issue-id="<?php echo esc_attr($metron_id); ?>">
 
     <a href="<?php 
-        echo esc_url( home_url( '/comic-catalog/issue/' ) . '?' . http_build_query([
+        echo esc_url( home_url( '/comic-database/issue/' ) . '?' . http_build_query([
             'issue_id' => $metron_id,
             'title_id' => $title_id
         ]));
@@ -232,7 +232,7 @@ $collection_post_id = $in_collection
                             : ''
                     ); ?>"
                     data-volume="<?php echo esc_attr($item_series['volume'] ?? ''); ?>"
-                    data-item-url="<?php echo esc_url(add_query_arg(['issue_id' => $metron_id, 'title_id' => $title_id], home_url('/comic-catalog/issue/'))); ?>"
+                    data-item-url="<?php echo esc_url(add_query_arg(['issue_id' => $metron_id, 'title_id' => $title_id], home_url('/comic-database/issue/'))); ?>"
                     data-image-url="<?php echo esc_url($image_url); ?>">
                     Add to Wishlist
                 </button>

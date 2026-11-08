@@ -433,7 +433,7 @@
 
     document.addEventListener('click', function (event) {
         const issueLink = event.target.closest(
-            'a[href*="/comic-catalog/issue/"], a[href*="issue_id="]'
+            'a[href*="/comic-database/issue/"], a[href*="issue_id="]'
         );
 
         if (issueLink) {

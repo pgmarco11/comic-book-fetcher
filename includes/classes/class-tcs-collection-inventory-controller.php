@@ -1,7 +1,7 @@
 <?php
 defined('ABSPATH') || exit;
 
-/** Owns collection inventory controller behavior; legacy function entry points delegate here. */
+/** Owns collection inventory controller behavior */
 class TCS_Collection_Inventory_Controller {
     private $repository;
 

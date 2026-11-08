@@ -1,6 +1,6 @@
 <?php
 /**
- * comic-catalog-template.php
+ * comic-database-template.php
  * Used by ComicRenderer::render_template()
  * 100% identical to renderItems() output, except the empty‑state text.
  */
@@ -104,7 +104,7 @@ $is_publisher = $type === 'publishers';
                                                 'letter'       => 'all',
                                                 'page'         => 1,
                                             ],
-                                            home_url('/comic-catalog/')
+                                            home_url('/comic-database/')
                                         )
                                     );
                                 ?>">
@@ -193,7 +193,7 @@ $is_publisher = $type === 'publishers';
                                                 'title_id' => $series_id,
                                                 'page'     => 1,
                                             ],
-                                            home_url('/comic-catalog/issues/')
+                                            home_url('/comic-database/issues/')
                                         )
                                     );
                                 ?>">

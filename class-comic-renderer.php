@@ -134,7 +134,7 @@ class ComicRenderer {
         if (defined('DOING_AJAX') && DOING_AJAX) ob_start();
     
         extract($initial_data);
-        include plugin_dir_path(__FILE__) . 'templates/comic-catalog-template.php';
+        include plugin_dir_path(__FILE__) . 'templates/comic-database-template.php';
     
         if (defined('DOING_AJAX') && DOING_AJAX) {
             wp_send_json_success(['html' => ob_get_clean()]);
