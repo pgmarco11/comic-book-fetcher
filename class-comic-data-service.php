@@ -180,60 +180,138 @@ class ComicDataService {
         );
     }
 
-    public function continue_series_scan(
-        int $publisher_id
-    ): array {
+    public function restart_series_scan(int $publisher_id): bool {
+        $publisher_id = absint($publisher_id);
+    
+        if (
+            !$publisher_id
+            || !$this->acquire_scan_lock($publisher_id)
+        ) {
+            return false;
+        }
+    
+        try {
+            $key = "metron:series_scan_progress:v1:{$publisher_id}";
+            $progress = get_transient($key);
+    
+            // Resume an existing rebuild instead of resetting its progress.
+            if (
+                !is_array($progress)
+                || empty($progress['refresh_from_api'])
+                || !empty($progress['exhausted'])
+            ) {
+                $progress = [
+                    'next_api_page' => 1,
+                    'exhausted' => false,
+                    'raw_items' => [],
+                    'refresh_from_api' => true,
+                ];
+    
+                set_transient(
+                    $key,
+                    $progress,
+                    30 * DAY_IN_SECONDS
+                );
+    
+                if (get_transient($key) !== $progress) {
+                    return false;
+                }
+            }
+    
+            $this->schedule_series_scan($publisher_id, 1);
+    
+            for ($attempt = 0; $attempt <= 4; $attempt++) {
+                if (
+                    wp_next_scheduled(
+                        'comicbooks_continue_series_scan',
+                        [$publisher_id, $attempt]
+                    )
+                ) {
+                    return true;
+                }
+            }
+    
+            return false;
+        } finally {
+            $this->release_scan_lock($publisher_id);
+        }
+    }
+
+    public function continue_series_scan(int $publisher_id): array {
         $publisher_id = absint($publisher_id);
     
         if (!$publisher_id) {
             return [
-                'complete'  => true,
-                'temporary' => false,
-            ];
-        }
-    
-        $progress_key =
-            "metron:series_scan_progress:v1:{$publisher_id}";
-    
-        $progress = get_transient($progress_key);
-    
-        if (!is_array($progress)) {
-            $progress = [
-                'next_api_page' => 1,
-                'exhausted'     => false,
-                'raw_items'     => [],
-            ];
-        }
-    
-        if (!empty($progress['exhausted'])) {
-            return [
-                'complete'  => true,
+                'complete' => true,
                 'temporary' => false,
             ];
         }
     
         if (!$this->acquire_scan_lock($publisher_id)) {
             return [
-                'complete'    => false,
-                'temporary'   => true,
+                'complete' => false,
+                'temporary' => true,
                 'retry_after' => 3,
             ];
         }
     
         try {
+            $key = "metron:series_scan_progress:v1:{$publisher_id}";
+    
+            // Read progress after acquiring the lock.
+            $progress = get_transient($key);
+    
+            if (!is_array($progress)) {
+                $progress = [
+                    'next_api_page' => 1,
+                    'exhausted' => false,
+                    'raw_items' => [],
+                ];
+            }
+    
+            if (!empty($progress['exhausted'])) {
+                return [
+                    'complete' => true,
+                    'temporary' => false,
+                ];
+            }
+    
+            $api_page = max(
+                1,
+                absint($progress['next_api_page'])
+            );
+    
+            $refresh = !empty($progress['refresh_from_api']);
+    
+            if ($refresh) {
+                // Remove the cached HTTP response for this exact page.
+                $url = esc_url_raw(
+                    $this->client->api_base
+                    . "publisher/{$publisher_id}/series_list/?page={$api_page}&page_size=100"
+                );
+    
+                delete_transient(
+                    'metron:api:' . md5($url)
+                );
+            }
+    
+            /*
+             * During a rebuild, force_api bypasses both the fresh
+             * and stale series-page caches.
+             */
             $page_data = $this->get_series_api_page(
                 $publisher_id,
-                max(1, absint($progress['next_api_page'])),
+                $api_page,
                 100,
-                false,
+                $refresh,
                 false,
                 1
             );
     
             if (!empty($page_data['temporary_error'])) {
                 return [
-                    'complete'    => false,
-                    'temporary'   => true,
+                    'complete' => false,
+                    'temporary' => true,
                     'retry_after' => max(
                         5,
                         absint($page_data['retry_after'] ?? 10)
@@ -241,51 +319,46 @@ class ComicDataService {
                 ];
             }
     
-            $new_items = isset($page_data['items'])
-                && is_array($page_data['items'])
-                    ? $page_data['items']
-                    : [];
+            $new_items = is_array($page_data['items'] ?? null)
+                ? $page_data['items']
+                : [];
     
-            if (!$new_items) {
-                $progress['exhausted'] = true;
-            } else {
-                $existing_ids = [];
+            $by_id = [];
     
-                foreach ($progress['raw_items'] as $item) {
-                    $item_id = absint($item['series_id'] ?? 0);
+            foreach ($progress['raw_items'] as $item) {
+                $by_id[absint($item['series_id'] ?? 0)] = $item;
+            }
     
-                    if ($item_id) {
-                        $existing_ids[$item_id] = true;
-                    }
-                }
+            foreach ($new_items as $item) {
+                $by_id[absint($item['series_id'] ?? 0)] = $item;
+            }
     
-                foreach ($new_items as $item) {
-                    $item_id = absint($item['series_id'] ?? 0);
+            unset($by_id[0]);
     
-                    if (
-                        $item_id &&
-                        empty($existing_ids[$item_id])
-                    ) {
-                        $progress['raw_items'][] = $item;
-                        $existing_ids[$item_id] = true;
-                    }
-                }
+            $progress['raw_items'] = array_values($by_id);
+            $progress['next_api_page'] = $api_page + 1;
+            $progress['exhausted'] = empty($page_data['has_next']);
     
-                $progress['next_api_page']++;
-    
-                if (empty($page_data['has_next'])) {
-                    $progress['exhausted'] = true;
-                }
+            if ($progress['exhausted']) {
+                unset($progress['refresh_from_api']);
             }
     
             set_transient(
-                $progress_key,
+                $key,
                 $progress,
                 30 * DAY_IN_SECONDS
             );
     
+            if (get_transient($key) !== $progress) {
+                return [
+                    'complete' => false,
+                    'temporary' => true,
+                    'retry_after' => 5,
+                ];
+            }
+    
             return [
-                'complete'  => !empty($progress['exhausted']),
+                'complete' => $progress['exhausted'],
                 'temporary' => false,
             ];
         } finally {

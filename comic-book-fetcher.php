@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Comic Books Fetcher & Manager
  * Description: Manage Comic Collection, edit API settings, and enqueues scripts for displaying comic book data from the Metron & Comic Vine API.
- * Version: 1.1.1
+ * Version: 1.1.2
  * Author: Peter Giammarco
  * Author URI: https://www.pgiammarco.com
  * License: GPL-2.0-or-later
@@ -707,73 +707,105 @@ add_action(
 
 
 function render_api_settings_page() {
+
+    if (!current_user_can('manage_options')) {
+        wp_die('Administrator access required.');
+    }
+
     // Save API credentials
     if (isset($_POST['submit']) && check_admin_referer('save_api_settings')) {
         update_option('metron_api_username', sanitize_text_field($_POST['metron_api_username']));
         update_option('metron_api_password', sanitize_text_field($_POST['metron_api_password']));
         update_option('comic_vine_api_key', sanitize_text_field($_POST['comic_vine_api_key']));        
-     }
+    }
 
-
-    // Warm publisher caches – now supports custom IDs or top 5
     if (
-        isset($_POST['warm_publisher_caches']) &&
-        check_admin_referer('warm_publisher_caches')
+        isset($_POST['warm_publisher_caches'])
+        && check_admin_referer('warm_publisher_caches')
     ) {
-        $custom_input = sanitize_text_field(
-            wp_unslash(
-                $_POST['custom_publisher_ids'] ?? ''
-            )
-        );
-    
+        $raw_input = $_POST['custom_publisher_ids'] ?? '';
+
+        $custom_input = is_string($raw_input)
+            ? sanitize_text_field(wp_unslash($raw_input))
+            : '';
+
         $publisher_ids = array_values(
             array_unique(
                 array_filter(
                     array_map(
-                        'absint',
+                        static function ($value): int {
+                            $value = trim($value);
+
+                            return ctype_digit($value)
+                                ? absint($value)
+                                : 0;
+                        },
                         explode(',', $custom_input)
                     )
                 )
             )
         );
-    
-        /*
-         * Default publishers when no IDs were entered.
-         */
-        if (empty($publisher_ids)) {
-            $publisher_ids = [2, 3];
-        }
-    
-        /*
-         * Save the work instead of performing it during this page request.
-         */
-        set_transient(
-            'comicbooks:publisher_warm_queue',
-            $publisher_ids,
-            DAY_IN_SECONDS
-        );
-    
-        /*
-         * Prevent duplicate scheduled workers.
-         */
-        if (
-            !wp_next_scheduled(
-                'comicbooks_process_publisher_warm_queue'
-            )
-        ) {
-            wp_schedule_single_event(
-                time() + 5,
-                'comicbooks_process_publisher_warm_queue'
+
+        $rebuild = isset($_POST['rebuild_publisher_series'])
+            && $_POST['rebuild_publisher_series'] === '1';
+
+        if (!$publisher_ids) {
+            echo '<div class="notice notice-error"><p>';
+            echo 'Enter valid publisher IDs before rebuilding or warming.';
+            echo '</p></div>';
+        } elseif ($rebuild) {
+            $service = new ComicDataService(
+                new MetronClient()
             );
+
+            $failed = [];
+
+            foreach ($publisher_ids as $publisher_id) {
+                if (!$service->restart_series_scan($publisher_id)) {
+                    $failed[] = $publisher_id;
+                }
+            }
+
+            if ($failed) {
+                echo '<div class="notice notice-warning"><p>';
+
+                echo esc_html(
+                    'Could not schedule publishers: '
+                    . implode(', ', $failed)
+                    . '. They may be busy. Retry those IDs shortly.'
+                );
+
+                echo '</p></div>';
+            }
+
+            if (count($failed) < count($publisher_ids)) {
+                echo '<div class="notice notice-success"><p>';
+                echo 'Series rebuild scheduled. Fresh publisher pages will be fetched in the background.';
+                echo '</p></div>';
+            }
+        } else {
+ 
+            set_transient(
+                'comicbooks:publisher_warm_queue',
+                $publisher_ids,
+                DAY_IN_SECONDS
+            );
+
+            if (
+                !wp_next_scheduled(
+                    'comicbooks_process_publisher_warm_queue'
+                )
+            ) {
+                wp_schedule_single_event(
+                    time() + 5,
+                    'comicbooks_process_publisher_warm_queue'
+                );
+            }
+
+            echo '<div class="notice notice-success"><p>';
+            echo 'Cache warming scheduled.';
+            echo '</p></div>';
         }
-    
-        echo '<div class="notice notice-success is-dismissible">';
-        echo '<p><strong>Cache warming scheduled.</strong> ';
-        echo esc_html(
-            count($publisher_ids) .
-            ' publisher(s) will be processed in the background.'
-        );
-        echo '</p></div>';
     }
 
     // HTML output
@@ -816,21 +848,49 @@ function render_api_settings_page() {
             <?php wp_nonce_field('warm_publisher_caches'); ?>
 
             <p>
-                <label for="custom_publisher_ids"><strong>Publisher IDs to warm (comma-separated or single ID):</strong></label><br>
-                <input type="text" id="custom_publisher_ids" name="custom_publisher_ids" placeholder="e.g. 1,2,57 or leave blank for DC & Dark Horse" class="regular-text" style="width:400px;" />
+                <label for="custom_publisher_ids">
+                    <strong>Publisher IDs</strong>
+                </label><br>
+
+                <input
+                    type="text"
+                    id="custom_publisher_ids"
+                    name="custom_publisher_ids"
+                    placeholder="e.g. 73 or 2,3"
+                    class="regular-text"
+                    required
+                >
             </p>
 
             <p>
-                <input type="submit" name="warm_publisher_caches" class="button button-primary"
-                       value="Warm Selected / DC & Dark Horse"
-                       onclick="return confirm('This will make API calls to pre-cache series & some issues. May take 30–120 seconds depending on IDs. Continue?');" />
+                <label>
+                    <input
+                        type="checkbox"
+                        name="rebuild_publisher_series"
+                        value="1"
+                    >
+                    Rebuild selected publishers from fresh API data
+                </label>
+            </p>
 
-                <span style="margin-left:15px; color:#555; font-style:italic;">
-                    If field empty → warms DC & Dark Horse.
-                </span>
+            <p class="description">
+            Enter one publisher ID or multiple IDs separated by commas.
+            Leave the checkbox unchecked to warm existing caches.
+            Check it to rebuild the complete series lists from fresh API data
+            in the background.
+            </p>
+
+            <p>
+                <button
+                    type="submit"
+                    name="warm_publisher_caches"
+                    value="1"
+                    class="button button-primary"
+                >
+                    Run selected cache task
+                </button>
             </p>
         </form>
-
     </div>
     <?php
 }
