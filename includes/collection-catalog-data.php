@@ -15,6 +15,24 @@ function tcs_catalog_names($values): array {
     return array_values(array_unique($names));
 }
 
+function tcs_catalog_classification(
+    array $series,
+    array $cv_issue = []
+): array {
+    $genres = tcs_catalog_names(
+        $series['genres'] ?? []
+    );
+
+    $concepts = tcs_catalog_names(
+        $cv_issue['concept_credits'] ?? []
+    );
+
+    return [
+        'genres'   => $genres ?: $concepts,
+        'concepts' => $concepts,
+    ];
+}
+
 function tcs_catalog_description(array $record): string {
     foreach (['description', 'desc', 'deck'] as $key) {
         $value = isset($record[$key]) && is_string($record[$key]) ? trim($record[$key]) : '';
@@ -156,59 +174,13 @@ function tcs_collection_catalog_data(int $title_id, int $issue_id) {
     $characters = tcs_catalog_names($issue['characters'] ?? []);
     if (!$characters) $characters = tcs_catalog_names($cv['character_credits'] ?? []);
 
-    $genres = tcs_catalog_names(
-        $series['genres'] ?? []
+    $classification = tcs_catalog_classification(
+        $series,
+        $cv
     );
     
-    /*
-     * Concepts are a Comic Vine field.
-     *
-     * First prefer concepts attached directly to the issue.
-     */
-    $concepts = tcs_catalog_names(
-        $cv['concept_credits'] ?? []
-    );
-    
-    /*
-     * If the issue has no concepts, try the Comic Vine volume.
-     *
-     * Do this independently of genres because concepts have their
-     * own ACF/meta field and should still be populated even when
-     * Metron already supplied valid genres.
-     */
-    if (
-        empty( $concepts ) &&
-        ! empty( $cv['volume']['id'] )
-    ) {
-        $cv_volume_id = absint(
-            $cv['volume']['id']
-        );
-    
-        if ( $cv_volume_id ) {
-            $concepts = tcs_get_comicvine_volume_concepts(
-                $cv_volume_id
-            );
-        }
-    }
-    
-    /*
-     * Genre fallback.
-     *
-     * Metron genres always win.
-     * Only when Metron has no genres do we use the Comic Vine
-     * concepts as a fallback classification.
-     */
-    if (
-        empty( $genres ) && 
-        ! empty( $cv['volume']['id'] )     
-    ) {
-        $cv_volume_id = absint(
-            $cv['volume']['id']
-        );
-        $genres = tcs_get_comicvine_volume_concepts(
-            $cv_volume_id
-        );
-    }
+    $genres = $classification['genres'];
+    $concepts = $classification['concepts'];
 
     $image = is_string($issue['image'] ?? null) ? esc_url_raw($issue['image']) : '';
     if ($image === '') $image = tcs_get_cv_image_url($cv);

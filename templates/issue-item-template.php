@@ -105,9 +105,19 @@ if ($creator_info_string === '') {
     );
 }
 
+$classification = tcs_catalog_classification(
+    $item_series,
+    $cv_details
+);
+
 $genre_string = implode(
     ', ',
-    tcs_catalog_names($item_series['genres'] ?? [])
+    $classification['genres']
+);
+
+$concept_string = implode(
+    ', ',
+    $classification['concepts']
 );
 
 $placeholder_url = defined('PUBLISHER_PLACEHOLDER_IMAGE_URL')
@@ -198,6 +208,7 @@ $collection_post_id = $in_collection
                 data-creators="<?php echo esc_attr($creator_info_string); ?>"
                 data-date="<?php echo esc_attr($cover_date); ?>"
                 data-genres="<?php echo esc_attr($genre_string); ?>"
+                data-concepts="<?php echo esc_attr($concept_string); ?>"
                 data-publisher="<?php echo esc_attr($publisher['name'] ?? ''); ?>"
                 data-volume="<?php echo esc_attr($volume); ?>"
                 data-issue-number="<?php echo esc_attr($raw_number); ?>"

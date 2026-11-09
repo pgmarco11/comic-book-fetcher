@@ -109,13 +109,19 @@
     $creator_info_string = implode("\n", $creator_infos);
 
 
-    $genre_sources = tcs_catalog_names($series['genres'] ?? []);
-
-    $genre_string = implode(', ', $genre_sources);
+    $classification = tcs_catalog_classification(
+        $series,
+        $cv_issue
+    );
+    
+    $genre_string = implode(
+        ', ',
+        $classification['genres']
+    );
     
     $concept_string = implode(
         ', ',
-        tcs_catalog_names($cv_issue['concept_credits'] ?? [])
+        $classification['concepts']
     );
 
     // Optional: more fallbacks
@@ -378,6 +384,7 @@
                                                             data-creators="<?php echo esc_attr($creator_info_string ?: ''); ?>"
                                                             data-date="<?php echo esc_attr($date_raw); ?>"
                                                             data-genres="<?php echo esc_attr($genre_string); ?>"
+                                                            data-concepts="<?php echo esc_attr($concept_string); ?>"
                                                             data-publisher="<?php echo esc_attr($publisher['name'] ?? 'Unknown'); ?>"
                                                             data-volume="<?php echo esc_attr($volume); ?>"
                                                             data-issue-number="<?php echo esc_attr($issue['number']); ?>"
@@ -821,6 +828,9 @@
                                                 ?>"
                                                 data-genres="<?php
                                                     echo esc_attr($genre_string);
+                                                ?>"
+                                                data-concepts="<?php
+                                                    echo esc_attr($concept_string);
                                                 ?>"
                                                 data-publisher="<?php
                                                     echo esc_attr(
