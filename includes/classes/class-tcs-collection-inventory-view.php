@@ -138,14 +138,20 @@ class TCS_Collection_Inventory_View {
                                             'collection_view' =>
                                                 'inventory',
                                             'collection_page' => 1,
-                                            'collection_chart_type' => tcs_inventory_text(
-                                                $input['collection_chart_type'] ?? ''
+                                            'collection_chart_type' => rawurlencode(
+                                                tcs_inventory_text(
+                                                    $input['collection_chart_type'] ?? ''
+                                                )
                                             ),
-                                            'collection_chart_label' => tcs_inventory_text(
-                                                $input['collection_chart_label'] ?? ''
+                                            'collection_chart_label' => rawurlencode(
+                                                tcs_inventory_text(
+                                                    $input['collection_chart_label'] ?? ''
+                                                )
                                             ),
-                                            'collection_search' => tcs_inventory_text(
-                                                $input['collection_search'] ?? ''
+                                            'collection_search' => rawurlencode(
+                                                tcs_inventory_text(
+                                                    $input['collection_search'] ?? ''
+                                                )
                                             ),
                                         ],
                                         $inventory_url

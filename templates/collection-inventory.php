@@ -384,16 +384,19 @@ $search_placeholder = $is_chart
                     );
                     $page_no++
                 ) :
-                    $page_url = add_query_arg(
-                        array_merge(
-                            array_map(
-                                'tcs_inventory_text',
-                                $input
-                            ),
-                            [
-                                'collection_page' =>
-                                    $page_no,
-                            ]
+                $page_url = add_query_arg(
+                        array_map(
+                            static function ($value): string {
+                                return rawurlencode(
+                                    tcs_inventory_text($value)
+                                );
+                            },
+                            array_merge(
+                                $input,
+                                [
+                                    'collection_page' => $page_no,
+                                ]
+                            )
                         ),
                         $inventory_url
                     );

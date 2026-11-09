@@ -27,7 +27,7 @@ class TCS_Collection_Chart_Links {
                 'collection_view' => 'inventory',
                 'collection_page' => 1,
                 'collection_chart_type' => $type,
-                'collection_chart_label' => $label,
+                'collection_chart_label' => rawurlencode((string) $label),
             ], tcs_inventory_url());
         }
 
