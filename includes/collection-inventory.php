@@ -2,6 +2,7 @@
 /** Owner-scoped collection inventory. No Metron or Comic Vine requests. */
 defined('ABSPATH') || exit;
 
+require_once __DIR__ . '/classes/class-tcs-collection-chart-links.php';
 require_once __DIR__ . '/classes/class-tcs-collection-inventory-repository.php';
 require_once __DIR__ . '/classes/class-tcs-collection-inventory-view.php';
 require_once __DIR__ . '/classes/class-tcs-collection-inventory-controller.php';

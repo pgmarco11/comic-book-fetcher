@@ -984,6 +984,13 @@ class TCS_Collection_Inventory_Repository {
             ],
             'ignore_sticky_posts' => true,
         ];
+
+        $chart_ids = TCS_Collection_Chart_Links::matching_ids($input);
+
+        if ($chart_ids !== null) {
+            $args['post__in'] = $chart_ids ?: [0];
+        }
+
         $search = tcs_inventory_text($input['collection_search'] ?? '');
         if ($search !== '') {
             $args['s'] = $search;

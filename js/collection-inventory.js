@@ -130,6 +130,21 @@
         select.replaceChildren(...options);
         select.value = value;
     }
+
+    function syncChartFilter() {
+        const note = $('#tci-chart-filter');
+    
+        if (!note) return;
+    
+        const label =
+            filters.elements.collection_chart_label.value;
+    
+        note.hidden = !label;
+        note.querySelector('strong').textContent = label;
+    }
+    
+    syncChartFilter();
+
     async function refresh(push = false, announce = true) {
         const version = ++readVersion;
         readController?.abort();
@@ -150,6 +165,8 @@
                     data.taxonomy_html;
             }
             filters.elements.collection_page.value = data.page;
+            syncChartFilter();
+
             $('#tci-total').textContent = `${data.total} ${data.total === 1 ? 'entry' : 'entries'}`;
             Object.entries(data.summary).forEach(([key, value]) => { const el = $(`[data-stat="${key}"]`); if (el) el.textContent = value; });
             updateFacets('#tci-publisher', data.publishers, 'All publishers');
@@ -205,6 +222,9 @@
         event.preventDefault(); clearTimeout(searchTimer);
         filters.querySelectorAll('input[type=search],select').forEach(el => { el.value = el.name === 'collection_sort' ? 'collection' : ''; });
         filters.elements.collection_duplicates.checked = false;
+        filters.elements.collection_chart_type.value = '';
+        filters.elements.collection_chart_label.value = '';
+        syncChartFilter();
         filterChanged();
     });
     $('.tci-view-switch').addEventListener('click', event => { const button = event.target.closest('button[data-view]'); if (button) { setView(button.dataset.view); setUrl(); } });

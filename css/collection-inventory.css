@@ -1040,6 +1040,17 @@
     outline-offset: 3px;
 }
 
+.tci .tci-chart-link {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+}
+
+.tci .tci-chart-link:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 3px;
+}
+
 @media (min-width: 58rem) {
     .tci .tci-charts {
         grid-template-columns: repeat(2, minmax(0, 1fr));

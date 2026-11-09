@@ -225,18 +225,22 @@ class TCS_Collection_Inventory_View {
             'Post-Modern' => '2012 onward',
         ];
 
+        $counts = $this->repository->era_counts($user_id);
+
         return $this->pie_breakdown_html(
-            $this->repository->era_counts($user_id),
+            $counts,
             $colors,
-            $era_ranges
+            $era_ranges,
+            TCS_Collection_Chart_Links::urls($counts, 'era')
         );
 
     }
 
     private function pie_breakdown_html(
-            array $counts,
-            array $colors,
-            array $era_ranges = []
+                array $counts,
+                array $colors,
+                array $era_ranges = [],
+                array $links = []
         ): string {
 
         $total = array_sum($counts);
@@ -262,11 +266,20 @@ class TCS_Collection_Inventory_View {
             $stops[] = sprintf('%s %.6F%% %.6F%%', $color, $start, $end);
     
             $percentage = number_format_i18n(100 * $count / $total, 1);
+            $name = esc_html($era);
+
+            if (isset($links[$era])) {
+                $name = '<a class="tci-chart-link" href="'
+                    . esc_url($links[$era])
+                    . '">'
+                    . $name
+                    . '</a>';
+            }
 
             $range = $era_ranges[$era] ?? '';
 
             $legend .= '<li><span class="tci-era-swatch" aria-hidden="true" style="background-color: '
-                . esc_attr($color) . '"></span> ' . esc_html($era)
+                . esc_attr($color) . '"></span> ' . $name
                 . ' <strong>' . esc_html(number_format_i18n($count)) . '</strong>'
                 . ' <span>(' . esc_html($percentage) . '%)</span>';
             
@@ -311,6 +324,12 @@ class TCS_Collection_Inventory_View {
         if ($taxonomy === 'creators') {
                 $visible = array_slice($counts, 0, 10, true) + $visible;
         }
+
+
+        $links = TCS_Collection_Chart_Links::urls(
+            $visible,
+            $taxonomy
+        );
         
         $remaining = $total - array_sum($visible);
         
@@ -336,7 +355,12 @@ class TCS_Collection_Inventory_View {
             $colors[$label] = $palette[$index % count($palette)];
         }
     
-        return $this->pie_breakdown_html($visible, $colors);
+        return $this->pie_breakdown_html(
+            $visible,
+            $colors,
+            [],
+            $links
+        );
     }
 
     private function collection_value_html(int $user_id): string {

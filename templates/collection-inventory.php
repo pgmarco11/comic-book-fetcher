@@ -66,7 +66,9 @@ $inventory_url = tcs_inventory_url();
                 </option>
                 <?php endforeach; ?>
             </select></div>
-        <div><label for="tci-series">Series</label><select id="tci-series" name="collection_series">
+        <div>
+            <label for="tci-series">Series</label>
+            <select id="tci-series" name="collection_series">
                 <option value="">All series</option>
                 <?php foreach ($overview['series'] as $series) : ?>
                 <option value="<?php echo (int) $series['id']; ?>" <?php selected($value('collection_series'), (string)
@@ -74,8 +76,11 @@ $inventory_url = tcs_inventory_url();
                     <?php echo esc_html($series['name']); ?>
                 </option>
                 <?php endforeach; ?>
-            </select></div>
-        <div><label for="tci-sort">Sort by</label><select id="tci-sort" name="collection_sort">
+            </select>
+        </div>
+        <div>
+        <label for="tci-sort">Sort by</label>
+        <select id="tci-sort" name="collection_sort">
                 <?php foreach ([
                     'collection' =>
                         'Publisher + series + volume',
@@ -102,14 +107,41 @@ $inventory_url = tcs_inventory_url();
                     </option>
                 <?php endforeach; ?>
             </select></div>
-        <input type="hidden" name="collection_page" value="<?php echo (int) $results['page']; ?>">
-        <input type="hidden" name="collection_view" value="<?php echo esc_attr($view); ?>">
-        <button class="tci-button tci-filter-submit" type="submit">Apply filters</button>
-        <div class="tci-filter-extras"><label class="tci-check"><input type="checkbox" name="collection_duplicates"
-                    value="1" <?php checked($value('collection_duplicates'), '1' ); ?>> Multiple copies only</label><a
-                href="<?php echo esc_url($inventory_url); ?>" id="tci-reset">Clear filters</a></div>
-    </form>
+            <input
+                type="hidden"
+                name="collection_chart_type"
+                value="<?php echo esc_attr($value('collection_chart_type')); ?>"
+            >
 
+            <input
+                type="hidden"
+                name="collection_chart_label"
+                value="<?php echo esc_attr($value('collection_chart_label')); ?>"
+            >
+
+            <input type="hidden" name="collection_page" value="<?php echo (int) $results['page']; ?>">
+            <input type="hidden" name="collection_view" value="<?php echo esc_attr($view); ?>">
+
+            <button class="tci-button tci-filter-submit" type="submit">Apply filters</button>
+            <div class="tci-filter-extras">
+                <label class="tci-check">
+                    <input type="checkbox" name="collection_duplicates" value="1" <?php checked($value('collection_duplicates'), '1' ); ?>> Multiple copies only
+                </label>
+                <a href="<?php echo esc_url($inventory_url); ?>" id="tci-reset">Clear filters</a>
+            </div>
+    </form>
+    <p
+        id="tci-chart-filter"
+        <?php
+        if ($value('collection_chart_label') === '') {
+            echo ' hidden';
+        }
+        ?>
+    >
+        Chart filter:
+        <strong><?php echo esc_html($value('collection_chart_label')); ?></strong>.
+        Use Clear filters to show your full collection.
+    </p>
     <noscript>
         <p class="tci-feedback">Enable JavaScript to edit inventory, switch views, or use bulk actions. Search and
             filters still work with Apply filters.</p>
