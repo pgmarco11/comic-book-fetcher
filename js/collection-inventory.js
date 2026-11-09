@@ -359,20 +359,54 @@
         filters.elements.collection_page.value = link.dataset.page;
         refresh(true);
     });
+
     window.addEventListener('popstate', () => {
+        clearTimeout(searchTimer);
+
         const query = new URL(location.href).searchParams;
+
+        const defaults = {
+            collection_page: '1',
+            collection_view: 'inventory',
+            collection_sort: 'collection'
+        };
+
         [...filters.elements].forEach(el => {
             if (!el.name) return;
-            if (el.type === 'checkbox') el.checked = query.get(el.name) === el.value;
-            else el.value = query.get(el.name) || ({
-                collection_page: '1',
-                collection_view: 'inventory',
-                collection_sort: 'collection'
-            }[el.name] || '');
+
+            if (el.type === 'checkbox') {
+                el.checked = query.get(el.name) === el.value;
+                return;
+            }
+
+            const value =
+                query.get(el.name) || defaults[el.name] || '';
+
+            const isCollectionSelect = [
+                'collection_publisher',
+                'collection_series'
+            ].includes(el.name);
+
+            if (
+                isCollectionSelect
+                && value !== ''
+                && !Array.from(el.options).some(
+                    option => option.value === value
+                )
+            ) {
+                el.add(
+                    new Option('Restoring selection…', value)
+                );
+            }
+
+            el.value = value;
         });
+
         setView(filters.elements.collection_view.value);
+        syncChartFilter();
         refresh();
     });
+
     results.addEventListener('change', event => {
         if (event.target.name !== 'inventory_selected[]') return;
         event.target.checked ? selected.add(Number(event.target.value)) : selected.delete(Number(event.target.value));
