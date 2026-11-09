@@ -1267,9 +1267,14 @@ class TCS_Collection_Inventory_Repository {
     public function taxonomy_tree(
         int $user_id,
         int $publisher_id = 0,
-        int $series_term_id = 0
+        int $series_term_id = 0,
+        ?array $entry_ids = null
     ): array {
         global $wpdb;
+    
+        if ($entry_ids === []) {
+            return [];
+        }
 
         $sql = "SELECT
             publisher_terms.term_id AS publisher_id,
@@ -1363,6 +1368,32 @@ class TCS_Collection_Inventory_Repository {
             $user_id, // Volume aggregation.
             $user_id, // Main collection query.
         ];
+
+        if ($entry_ids !== null) {
+            $entry_ids = array_values(
+                array_unique(
+                    array_filter(
+                        array_map('absint', $entry_ids)
+                    )
+                )
+            );
+        
+            if (!$entry_ids) {
+                return [];
+            }
+        
+            $slots = implode(
+                ', ',
+                array_fill(0, count($entry_ids), '%d')
+            );
+        
+            $sql .= " AND posts.ID IN ({$slots})";
+        
+            $parameters = array_merge(
+                $parameters,
+                $entry_ids
+            );
+        }
 
         if ($publisher_id > 0) {
             $sql .= ' AND publisher_terms.term_id = %d';

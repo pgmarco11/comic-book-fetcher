@@ -128,11 +128,13 @@ class TCS_Collection_Inventory_Controller {
         $taxonomy_tree = $this->repository->taxonomy_tree(
             $user_id,
             $publisher_id,
-            $series_term_id
+            $series_term_id,
+            TCS_Collection_Chart_Links::index_ids($input)
         );
 
         $taxonomy_html = tcs_inventory_view()->taxonomy_html(
-            $taxonomy_tree
+            $taxonomy_tree,
+            $input
         );
 
         wp_send_json_success(

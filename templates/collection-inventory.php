@@ -18,17 +18,55 @@ $view = in_array(
 
 $inventory_url = tcs_inventory_url();
 
+$chart_type = $value('collection_chart_type');
+$chart_label = $value('collection_chart_label');
+
+$is_chart = $chart_type !== '' || $chart_label !== '';
+
+$chart_types = [
+    'publisher'    => 'Publisher',
+    'comic_series' => 'Series',
+    'comic_genre'  => 'Genre',
+    'creators'     => 'Creator',
+    'era'          => 'Era',
+];
+
+$chart_type_name = $chart_types[$chart_type] ?? 'Chart selection';
+
+$chart_caption = $chart_type_name . ': ' . $chart_label;
+
+$search_caption = $is_chart
+    ? 'Search comics in this '
+        . strtolower($chart_type_name)
+        . ' selection'
+    : 'Search series';
+
+$search_placeholder = $is_chart
+    ? 'Find a title within ' . $chart_label . '…'
+    : 'Find a title in your collection…';
+
 ?>
 <div class="tci-shell" data-view="<?php echo esc_attr($view); ?>">
     <header class="tci-heading">
         <div>
             <p class="tci-intro">Enjoy the covers. Keep the details in order.</p>
+        <h2
+            id="tci-chart-subtitle"
+            <?php if (!$is_chart) echo 'hidden'; ?>
+        >
+            <?php echo esc_html($chart_caption); ?>
+        </h2>
         </div>
         <a class="tci-button tci-button-primary" href="<?php echo esc_url(home_url('/comic-database/')); ?>"><span
                 aria-hidden="true">＋</span> Add comics</a>
     </header>
 
-    <dl class="tci-stats" aria-label="Your entire collection">
+    <dl
+        id="tci-collection-stats"
+        class="tci-stats"
+        aria-label="Your entire collection"
+        <?php if ($is_chart) echo 'hidden'; ?>
+    >
         <div>
             <dt>Collection entries</dt>
             <dd data-stat="entries">
@@ -51,22 +89,62 @@ $inventory_url = tcs_inventory_url();
             <p>A place for every issue.<br><strong>Make it your own.</strong></p>
         </div>
     </dl>
+    <dl
+        id="tci-chart-stats"
+        class="tci-stats"
+        <?php if (!$is_chart) echo 'hidden'; ?>
+    >
+        <div>
+            <dt>
+                Matching collection entries
+                <span id="tci-chart-count-label">
+                    — <?php echo esc_html($chart_caption); ?>
+                </span>
+            </dt>
+
+            <dd id="tci-chart-count">
+                <?php
+                echo esc_html(
+                    number_format_i18n($results['total'])
+                );
+                ?>
+            </dd>
+        </div>
+    </dl>
 
     <form id="tci-filters" class="tci-filters" method="get" action="<?php echo esc_url($inventory_url); ?>" role="search"
         aria-label="Search and filter your collection">
-        <div class="tci-search"><label for="tci-search">Search series</label><input id="tci-search" type="search"
-                name="collection_search" placeholder="Find a title in your collection…"
-                value="<?php echo esc_attr($value('collection_search')); ?>"></div>
-        <div><label for="tci-publisher">Publisher</label><select id="tci-publisher" name="collection_publisher">
+        <div class="tci-search">
+            <label id="tci-search-label" for="tci-search">
+                <?php echo esc_html($search_caption); ?>
+            </label>
+            <input
+                id="tci-search"
+                type="search"
+                name="collection_search"
+                placeholder="<?php echo esc_attr($search_placeholder); ?>"
+                value="<?php echo esc_attr($value('collection_search')); ?>"
+            >
+        </div>
+        <div
+            data-regular-filter
+            <?php if ($is_chart) echo 'hidden'; ?>
+        >
+            <label for="tci-publisher">Publisher</label>
+            <select id="tci-publisher" name="collection_publisher">
                 <option value="">All publishers</option>
                 <?php foreach ($overview['publishers'] as $publisher) : ?>
-                <option value="<?php echo (int) $publisher['id']; ?>" <?php selected($value('collection_publisher'),
-                    (string) $publisher['id']); ?>>
-                    <?php echo esc_html($publisher['name']); ?>
-                </option>
-                <?php endforeach; ?>
-            </select></div>
-        <div>
+                    <option value="<?php echo (int) $publisher['id']; ?>" <?php selected($value('collection_publisher'),
+                        (string) $publisher['id']); ?>>
+                        <?php echo esc_html($publisher['name']); ?>
+                    </option>
+                    <?php endforeach; ?>
+            </select>
+        </div>
+        <div
+            data-regular-filter
+            <?php if ($is_chart) echo 'hidden'; ?>
+        >
             <label for="tci-series">Series</label>
             <select id="tci-series" name="collection_series">
                 <option value="">All series</option>
@@ -124,24 +202,36 @@ $inventory_url = tcs_inventory_url();
 
             <button class="tci-button tci-filter-submit" type="submit">Apply filters</button>
             <div class="tci-filter-extras">
-                <label class="tci-check">
-                    <input type="checkbox" name="collection_duplicates" value="1" <?php checked($value('collection_duplicates'), '1' ); ?>> Multiple copies only
-                </label>
-                <a href="<?php echo esc_url($inventory_url); ?>" id="tci-reset">Clear filters</a>
-            </div>
+            <label
+                class="tci-check"
+                data-regular-filter
+                <?php if ($is_chart) echo 'hidden'; ?>
+            >
+                <input
+                    type="checkbox"
+                    name="collection_duplicates"
+                    value="1"
+                    <?php checked($value('collection_duplicates'), '1'); ?>
+                >
+                Multiple copies only
+            </label>
+
+            <a
+                href="<?php echo esc_url($inventory_url); ?>"
+                id="tci-reset"
+            >
+                <?php echo $is_chart ? 'Reset search' : 'Clear filters'; ?>
+            </a>
+
+            <a
+                id="tci-full-collection"
+                href="<?php echo esc_url($inventory_url); ?>"
+                <?php if (!$is_chart) echo 'hidden'; ?>
+            >
+                Show full collection
+            </a>
+        </div>
     </form>
-    <p
-        id="tci-chart-filter"
-        <?php
-        if ($value('collection_chart_label') === '') {
-            echo ' hidden';
-        }
-        ?>
-    >
-        Chart filter:
-        <strong><?php echo esc_html($value('collection_chart_label')); ?></strong>.
-        Use Clear filters to show your full collection.
-    </p>
     <noscript>
         <p class="tci-feedback">Enable JavaScript to edit inventory, switch views, or use bulk actions. Search and
             filters still work with Apply filters.</p>

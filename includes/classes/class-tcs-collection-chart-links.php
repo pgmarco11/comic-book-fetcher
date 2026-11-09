@@ -2,7 +2,7 @@
 defined('ABSPATH') || exit;
 
 class TCS_Collection_Chart_Links {
-    
+
     private const TYPES = [
         'publisher',
         'comic_series',
@@ -202,6 +202,50 @@ class TCS_Collection_Chart_Links {
         }
 
         return $ids;
+    }
+
+    public static function index_ids(array $input): ?array {
+        $ids = self::matching_ids($input);
+    
+        // An invalid or empty chart selection must stay empty.
+        if ($ids === []) {
+            return [];
+        }
+    
+        $search = tcs_inventory_text(
+            $input['collection_search'] ?? ''
+        );
+    
+        if ($search === '') {
+            return $ids;
+        }
+    
+        $user_id = get_current_user_id();
+    
+        if ($user_id <= 0) {
+            return [];
+        }
+    
+        $args = [
+            'post_type'              => 'collection',
+            'post_status'            => 'publish',
+            'author'                 => $user_id,
+            'posts_per_page'         => -1,
+            'fields'                 => 'ids',
+            'no_found_rows'          => true,
+            'update_post_meta_cache' => false,
+            'update_post_term_cache' => false,
+            's'                      => $search,
+            'search_columns'         => ['post_title'],
+        ];
+    
+        if ($ids !== null) {
+            $args['post__in'] = $ids;
+        }
+    
+        $query = new WP_Query($args);
+    
+        return array_map('intval', $query->posts);
     }
 
     private static function name_key(string $name): string {

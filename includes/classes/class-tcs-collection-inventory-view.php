@@ -65,7 +65,8 @@ class TCS_Collection_Inventory_View {
     }
 
     public function taxonomy_html(
-        array $publishers
+        array $publishers,
+        array $input = []
     ): string {
         $inventory_url = tcs_inventory_url();
 
@@ -136,6 +137,16 @@ class TCS_Collection_Inventory_View {
                                                 $series['id'],
                                             'collection_view' =>
                                                 'inventory',
+                                            'collection_page' => 1,
+                                            'collection_chart_type' => tcs_inventory_text(
+                                                $input['collection_chart_type'] ?? ''
+                                            ),
+                                            'collection_chart_label' => tcs_inventory_text(
+                                                $input['collection_chart_label'] ?? ''
+                                            ),
+                                            'collection_search' => tcs_inventory_text(
+                                                $input['collection_search'] ?? ''
+                                            ),
                                         ],
                                         $inventory_url
                                     );
@@ -507,11 +518,13 @@ class TCS_Collection_Inventory_View {
         $taxonomy_tree = $this->repository->taxonomy_tree(
             get_current_user_id(),
             $publisher_id,
-            $series_term_id
+            $series_term_id,
+            TCS_Collection_Chart_Links::index_ids($input)
         );
 
         $taxonomy_html = $this->taxonomy_html(
-            $taxonomy_tree
+            $taxonomy_tree,
+            $input
         );
         include COMICBOOKS_PLUGIN_DIR . 'templates/collection-inventory.php';
     }

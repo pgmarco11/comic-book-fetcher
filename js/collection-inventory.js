@@ -131,16 +131,59 @@
         select.value = value;
     }
 
-    function syncChartFilter() {
-        const note = $('#tci-chart-filter');
-    
-        if (!note) return;
+    function syncChartFilter(total = null) {
+        const type =
+            filters.elements.collection_chart_type.value;
     
         const label =
             filters.elements.collection_chart_label.value;
     
-        note.hidden = !label;
-        note.querySelector('strong').textContent = label;
+        const active = Boolean(type || label);
+    
+        const types = {
+            publisher: 'Publisher',
+            comic_series: 'Series',
+            comic_genre: 'Genre',
+            creators: 'Creator',
+            era: 'Era'
+        };
+    
+        const typeName = types[type] || 'Chart selection';
+        const caption = `${typeName}: ${label}`;
+    
+        $('#tci-chart-subtitle').hidden = !active;
+        $('#tci-chart-subtitle').textContent = caption;
+    
+        $('#tci-collection-stats').hidden = active;
+        $('#tci-chart-stats').hidden = !active;
+    
+        $('#tci-chart-count-label').textContent =
+            `— ${caption}`;
+    
+        if (total !== null) {
+            $('#tci-chart-count').textContent =
+                new Intl.NumberFormat().format(Number(total));
+        }
+    
+        filters.querySelectorAll(
+            '[data-regular-filter]'
+        ).forEach(element => {
+            element.hidden = active;
+        });
+    
+        $('#tci-search-label').textContent = active
+            ? `Search comics in this ${typeName.toLowerCase()} selection`
+            : 'Search series';
+    
+        $('#tci-search').placeholder = active
+            ? `Find a title within ${label}…`
+            : 'Find a title in your collection…';
+    
+        $('#tci-reset').textContent = active
+            ? 'Reset search'
+            : 'Clear filters';
+    
+        $('#tci-full-collection').hidden = !active;
     }
     
     syncChartFilter();
@@ -165,7 +208,7 @@
                     data.taxonomy_html;
             }
             filters.elements.collection_page.value = data.page;
-            syncChartFilter();
+            syncChartFilter(data.total);
 
             $('#tci-total').textContent = `${data.total} ${data.total === 1 ? 'entry' : 'entries'}`;
             Object.entries(data.summary).forEach(([key, value]) => { const el = $(`[data-stat="${key}"]`); if (el) el.textContent = value; });
@@ -222,12 +265,22 @@
         event.preventDefault(); clearTimeout(searchTimer);
         filters.querySelectorAll('input[type=search],select').forEach(el => { el.value = el.name === 'collection_sort' ? 'collection' : ''; });
         filters.elements.collection_duplicates.checked = false;
-        filters.elements.collection_chart_type.value = '';
-        filters.elements.collection_chart_label.value = '';
         syncChartFilter();
         filterChanged();
     });
-    $('.tci-view-switch').addEventListener('click', event => { const button = event.target.closest('button[data-view]'); if (button) { setView(button.dataset.view); setUrl(); } });
+    $('.tci-view-switch').addEventListener('click', event => {
+        const button = event.target.closest(
+            'button[data-view]'
+        );
+    
+        if (!button) return;
+    
+        clearTimeout(searchTimer);
+    
+        setView(button.dataset.view);
+    
+        refresh(true);
+    }); 
     seriesView.addEventListener('click', async event => {
         const link = event.target.closest('a');
     
@@ -259,12 +312,24 @@
         }
     
         event.preventDefault();
-    
-        filters.elements.collection_publisher.value =
-            publisherId;
-    
-        filters.elements.collection_series.value =
-            seriesId;
+        [            
+            ['collection_publisher', publisherId],
+            ['collection_series', seriesId]
+        ].forEach(([name, value]) => {
+            const select = filters.elements[name];
+        
+            const exists = Array.from(select.options).some(
+                option => option.value === value
+            );
+        
+            if (!exists) {
+                select.add(
+                    new Option('Selected from series index', value)
+                );
+            }
+        
+            select.value = value;
+        });
     
         filters.elements.collection_page.value = '1';
     
