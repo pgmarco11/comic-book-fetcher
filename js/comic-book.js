@@ -131,17 +131,52 @@ jQuery(document).ready(function($){
         });
     }
 
-    // Remove obsolete browser snapshots.
-    // Server caches now own catalog data.
-    try {
-        Object.keys(localStorage)
-            .filter(key => key.startsWith('tcs:comic-database:'))
-            .forEach(key => localStorage.removeItem(key));
-    } catch (error) {
-        console.warn(
-            'Could not remove old catalog snapshots:',
-            error
-        );
+
+    const SERIES_PREVIEW_PREFIX = 'tcs:series-preview:v1:';
+    const SERIES_PREVIEW_TTL = 24 * 60 * 60 * 1000;
+
+    function readSeriesPreview(key) {
+        try {
+            const raw = localStorage.getItem(
+                SERIES_PREVIEW_PREFIX + key
+            );
+
+            if (!raw) return null;
+
+            const saved = JSON.parse(raw);
+
+            if (
+                !Number.isFinite(saved.expires)
+                || saved.expires <= Date.now()
+                || !Array.isArray(saved.data?.series)
+                || !Number.isFinite(saved.data.total)
+                || !Number.isInteger(saved.data.per_page)
+                || saved.data.per_page < 1
+            ) {
+                localStorage.removeItem(
+                    SERIES_PREVIEW_PREFIX + key
+                );
+                return null;
+            }
+
+            return saved.data;
+        } catch {
+            return null;
+        }
+    }
+
+    function saveSeriesPreview(key, data) {
+        try {
+            localStorage.setItem(
+                SERIES_PREVIEW_PREFIX + key,
+                JSON.stringify({
+                    expires: Date.now() + SERIES_PREVIEW_TTL,
+                    data
+                })
+            );
+        } catch {
+            // The list still works if storage is unavailable or full.
+        }
     }
 
     // ===================================================================
@@ -1268,204 +1303,233 @@ jQuery(document).ready(function($){
         scanPolls = 0
     ) {
         refreshSeriesLetters(publisherId);
-
         ++publishersRequestId;
-
-        // Every new request invalidates any previous request.
+    
         const requestId = ++booksRequestId;
+        const current = () => requestId === booksRequestId;
+        const container = $('#book-container');
+        const key = JSON.stringify([
+            publisherId,
+            page,
+            name,
+            letter
+        ]);
     
-        showSpinner();
+        let hasVisibleResults = false;
     
-        // Don't leave an old "No series found" message visible
-        // while the next request/scan is running.
-        $('#book-container .empty-results').remove();
+        function display(data) {
+            if (!current()) return;
     
-        if (!publisherId && !name) {
-            $('#book-container').html(
-                '<p>Please select a publisher or enter a search term.</p>'
+            container.find('.tcs-series-refresh-note').remove();
+            allSeries = data.series;
+    
+            if (data.series_letters) {
+                $('#letter-buttons')
+                    .attr('data-publisher-id', publisherId)
+                    .attr(
+                        'data-series-letters',
+                        JSON.stringify(data.series_letters)
+                    );
+            }
+    
+            renderItems(
+                allSeries,
+                'books',
+                page,
+                Number(data.total || 0),
+                name,
+                letter,
+                Number(data.per_page || 10),
+                data.is_total_exact !== false
             );
     
-            showLetterButtons(false);
+            hasVisibleResults = true;
+    
+            showLetterButtons(true);
+            refreshSeriesLetters(publisherId);
             updateActiveLetter(letter);
-
-            $('#book-container')
-            .attr('aria-busy', 'false')
-            .css('visibility', 'visible');
-
+    
+            container
+                .attr('aria-busy', 'false')
+                .css('visibility', 'visible');
+    
             hideSpinner();
-            return;
-        }   
-
-        $.ajax({
-            url: comicbooks_fetchers_data.ajax_url,
-            method: 'POST',
+        }
     
-            data: {
-                action: 'load_book',
-                nonce: comicbooks_fetchers_data.nonce,
-                publisher_id: publisherId || '',
-                page: page,
-                per_page: 10,
-                name: name,
-                letter: letter
-            },
+        function message(text, retry = false) {
+            if (!current()) return;
     
-            timeout: 30000,
+            hideSpinner();
     
-            beforeSend: () => {
-                console.log(
-                    'Sending REAL request for page',
-                    page,
-                    'request',
-                    requestId
-                );
-            },
+            container
+                .attr('aria-busy', 'false')
+                .css('visibility', 'visible');
     
-            success: response => {
+            container.find('.tcs-series-refresh-note').remove();
     
-                // Important:
-                // Ignore this response if another fetchBooks() started after it.
-                if (requestId !== booksRequestId) {          
-                    return;
-                }   
+            if (!hasVisibleResults) {
+                container.empty();
+            }
     
-                if (response.success && response.data) {
+            const note = $('<div>', {
+                class: 'tcs-series-refresh-note',
+                role: 'status'
+            }).append(
+                $('<p>').text(text)
+            );
     
-                    const scanComplete =
-                        response.data.scan_complete !== false;
-    
-                        if (!scanComplete) {
-                            if (scanPolls >= 24) {
-                                $('#book-container')
-                                    .attr('aria-busy', 'false')
-                                    .css('visibility', 'visible')
-                                    .html(`
-                                        <div class="error-message">
-                                            <p>
-                                                The series index is still being prepared.
-                                                Please try again shortly.
-                                            </p>
-                                            <button type="button" class="retry-books">
-                                                Retry
-                                            </button>
-                                        </div>
-                                    `);
-                        
-                                hideSpinner();
-                                return;
-                            }
-                        
-                            setTimeout(() => {
-                                if (requestId !== booksRequestId) {
-                                    return;
-                                }
-                        
-                                fetchBooks(
-                                    publisherId,
-                                    page,
-                                    name,
-                                    letter,
-                                    retries,
-                                    scanPolls + 1
-                                );
-                            }, 5000);
-                        
-                            return;
-                        }
-    
-                    // Scan is definitely complete now.
-                    allSeries = response.data.series || [];
-    
-                    const perPage =
-                        response.data.per_page || 10;
-    
-                    const total =
-                        response.data.total || 0;
-    
-                    const isTotalExact =
-                        response.data.is_total_exact !== false;
-     
-                    renderItems(
-                        allSeries,
-                        'books',
-                        page,
-                        total,
-                        name,
-                        letter,
-                        perPage,
-                        isTotalExact
-                    );
-    
-                    showLetterButtons(true);
-                    updateActiveLetter(letter);
-                    $('#book-container')
-                    .attr('aria-busy', 'false')
-                    .css('visibility', 'visible');
-
-                    hideSpinner();
-    
-                } else {
-
-                    $('#book-container')
-                    .attr('aria-busy', 'false')
-                    .css('visibility', 'visible');
-    
-                    $('#book-container').html(`
-                        <div class="error-message">
-                            Failed to load series.
-                            <button class="retry-books">Retry</button>
-                        </div>
-                    `);
-    
-                    hideSpinner();
-                }
-            },
-    
-            error: (xhr, status) => {
-                if (requestId !== booksRequestId) {
-                    return;
-                }
-            
-                if (
-                    (
-                        xhr.status === 429 ||
-                        xhr.status === 503 ||
-                        status === 'timeout'
-                    ) &&
-                    retries > 0
-                ) {
-                    setTimeout(() => {
-                        if (requestId !== booksRequestId) {
-                            return;
-                        }
-                    
+            if (retry) {
+                note.append(
+                    $('<button>', {
+                        type: 'button',
+                        class: 'button',
+                        text: 'Try again'
+                    }).on('click', () => {
                         fetchBooks(
                             publisherId,
                             page,
                             name,
-                            letter,
-                            retries - 1,
-                            scanPolls
+                            letter
                         );
-                    }, apiRetryDelay(xhr));
-            
+                    })
+                );
+            }
+    
+            container.append(note);
+        }
+    
+        if (!publisherId && !name) {
+            container.empty();
+            showLetterButtons(false);
+            message('Please select a publisher or enter a search term.');
+            return;
+        }
+    
+        const preview = readSeriesPreview(key);
+    
+        if (preview) {
+            display(preview);
+        } else {
+            container
+                .empty()
+                .attr('aria-busy', 'true')
+                .css('visibility', 'visible');
+    
+            showSpinner();
+        }
+    
+        // A preview never skips checking the WordPress cache.
+        $.ajax({
+            url: comicbooks_fetchers_data.ajax_url,
+            method: 'POST',
+            timeout: 30000,
+            data: {
+                action: 'load_book',
+                nonce: comicbooks_fetchers_data.nonce,
+                publisher_id: publisherId || '',
+                page,
+                per_page: 10,
+                name,
+                letter
+            },
+    
+            success(response) {
+                if (!current()) return;
+    
+                const data = response?.data;
+    
+                if (
+                    !response?.success
+                    || !data
+                    || !Array.isArray(data.series)
+                ) {
+                    message(
+                        'Series could not be updated. Please try again.',
+                        true
+                    );
                     return;
                 }
-            
-                $('#book-container')
-                    .attr('aria-busy', 'false')
-                    .css('visibility', 'visible');
-            
-                $('#book-container').html(`
-                    <div class="error-message">
-                        The comic catalog is temporarily busy.
-                        <button class="retry-books">
-                            Retry
-                        </button>
-                    </div>
-                `);
-            
-                hideSpinner();
+    
+                if (data.scan_complete === false) {
+                    // Display available matches while the index builds.
+                    if (
+                        data.series.length
+                        && !hasVisibleResults
+                    ) {
+                        display(data);
+                    }
+    
+                    if (scanPolls >= 24) {
+                        message(
+                            'The series index is still being prepared. Please check again shortly.',
+                            true
+                        );
+                        return;
+                    }
+    
+                    message(
+                        hasVisibleResults
+                            ? 'Updating results in the background…'
+                            : 'Preparing the publisher series index…'
+                    );
+    
+                    setTimeout(() => {
+                        if (current()) {
+                            fetchBooks(
+                                publisherId,
+                                page,
+                                name,
+                                letter,
+                                retries,
+                                scanPolls + 1
+                            );
+                        }
+                    }, 5000);
+    
+                    return;
+                }
+    
+                if (data.is_total_exact !== false) {
+                    saveSeriesPreview(key, data);
+                }
+    
+                display(data);
+            },
+    
+            error(xhr, status) {
+                if (!current()) return;
+    
+                const temporary =
+                    xhr.status === 0
+                    || xhr.status === 429
+                    || xhr.status >= 500
+                    || status === 'timeout';
+    
+                if (temporary && retries > 0) {
+                    message(
+                        'Results could not be updated yet. Retrying…'
+                    );
+    
+                    setTimeout(() => {
+                        if (current()) {
+                            fetchBooks(
+                                publisherId,
+                                page,
+                                name,
+                                letter,
+                                retries - 1,
+                                scanPolls
+                            );
+                        }
+                    }, apiRetryDelay(xhr));
+    
+                    return;
+                }
+    
+                message(
+                    'Results could not be updated. Please try again.',
+                    true
+                );
             }
         });
     }

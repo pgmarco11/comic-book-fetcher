@@ -228,6 +228,7 @@ class Comicbooks {
 
         wp_send_json_success( [
             'series'         => $series_data['items'],
+            'series_letters' => $this->data_service->get_series_letters($publisher_id),
             'total'          => $series_data['total'],
             'is_total_exact' => $series_data['is_total_exact'] ?? true,
             'scan_complete'  => $series_data['scan_complete'] ?? true,

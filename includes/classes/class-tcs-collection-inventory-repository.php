@@ -170,6 +170,37 @@ class TCS_Collection_Inventory_Repository {
     
         return [];
     }
+
+    public function has_owned_publisher_records(string $publisher_name): bool {
+        $publisher_name = trim($publisher_name);
+    
+        if (!is_user_logged_in() || $publisher_name === '') {
+            return false;
+        }
+    
+        $term = get_term_by('name', $publisher_name, 'publisher');
+    
+        if (!($term instanceof WP_Term)) {
+            return false;
+        }
+    
+        return !empty(get_posts([
+            'post_type' => 'collection',
+            'post_status' => 'publish',
+            'author' => get_current_user_id(),
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+            'no_found_rows' => true,
+            'update_post_meta_cache' => false,
+            'update_post_term_cache' => false,
+            'tax_query' => [[
+                'taxonomy' => 'publisher',
+                'field' => 'term_id',
+                'terms' => [$term->term_id],
+                'include_children' => false,
+            ]],
+        ]));
+    }
     
     public function owned_publisher_records(string $publisher_name): array {
         $publisher_name = trim($publisher_name);

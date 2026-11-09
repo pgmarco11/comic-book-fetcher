@@ -1506,214 +1506,58 @@ class ComicDataService {
     ): array {
         $page = max(1, $page);
         $per_page = max(1, $per_page);
-        $needed_count = $page * $per_page;
     
-        /*
-         * Keep building the full publisher index in the background.
-         */
-        $full = get_transient(
+        if (
+            $force_api
+            && !$this->restart_series_scan($publisher_id)
+        ) {
+            return [
+                'items' => [],
+                'total' => 0,
+                'is_total_exact' => false,
+                'scan_complete' => false,
+                'page' => $page,
+                'per_page' => $per_page,
+                'temporary_error' =>
+                    'The publisher index is busy. Please retry shortly.',
+            ];
+        }
+    
+        $progress = get_transient(
             "metron:series_scan_progress:v1:{$publisher_id}"
         );
     
-        $full_complete = (
-            is_array($full) &&
-            !empty($full['exhausted']) &&
-            is_array($full['raw_items'] ?? null)
-        );
+        $items = is_array($progress)
+            && is_array($progress['raw_items'] ?? null)
+                ? $progress['raw_items']
+                : [];
     
-        if (!$full_complete) {
+        $complete = is_array($progress)
+            && !empty($progress['exhausted'])
+            && is_array($progress['raw_items'] ?? null);
+    
+        if (!$complete) {
             $this->schedule_series_scan($publisher_id, 1);
         }
     
-        $temporary_error = '';
-    
-        if ($full_complete && !$force_api) {
-            $filtered = $this->filter_series_list(
-                $full['raw_items'],
-                $letter,
-                $search
-            );
-    
-            $exhausted = true;
-        } else {
-            /*
-             * This state belongs to this filter only.
-             * Never mix filtered results into the full publisher index.
-             */
-            $key = 'tcs_filtered_series_v2_' . md5(
-                wp_json_encode([
-                    $publisher_id,
-                    $letter,
-                    $search,
-                ])
-            );
-    
-            $empty = [
-                'next_api_page' => 1,
-                'exhausted' => false,
-                'items' => [],
-            ];
-    
-            $state = $force_api
-                ? false
-                : get_transient($key);
-    
-            $state = is_array($state) ? $state : $empty;
-    
-            $scope = 'filtered-series:' . $key;
-    
-            if (
-                count($state['items']) < $needed_count &&
-                !$state['exhausted'] &&
-                MetronClient::acquire_lock($scope)
-            ) {
-                try {
-                    /*
-                     * Recheck after acquiring the lock.
-                     */
-                    if (!$force_api) {
-                        if (!wp_using_ext_object_cache()) {
-                            wp_cache_delete(
-                                '_transient_' . $key,
-                                'options'
-                            );
-                            wp_cache_delete(
-                                '_transient_timeout_' . $key,
-                                'options'
-                            );
-                            wp_cache_delete('notoptions', 'options');
-                        }
-    
-                        $latest = get_transient($key);
-                        $state = is_array($latest)
-                            ? $latest
-                            : $empty;
-                    }
-    
-                    if (
-                        count($state['items']) < $needed_count &&
-                        !$state['exhausted']
-                    ) {
-                        $query = [
-                            'publisher_id' => $publisher_id,
-                            'page' => $state['next_api_page'],
-                            'page_size' => 100,
-                        ];
-    
-                        /*
-                         * Narrow alphabetic lookups upstream.
-                         * Keep exact article/letter handling locally.
-                         */
-                        if (preg_match('/^[A-Z]$/i', $letter)) {
-                            $query['name'] = strtoupper($letter);
-                        }
-    
-                        $response = $this->client->api_get(
-                            add_query_arg(
-                                $query,
-                                $this->client->api_base . 'series/'
-                            ),
-                            1
-                        );
-    
-                        if (
-                            !is_array($response) ||
-                            isset($response['error']) ||
-                            !is_array($response['results'] ?? null) ||
-                            !array_key_exists('next', $response) ||
-                            (
-                                !empty($response['next']) &&
-                                empty($response['results'])
-                            )
-                        ) {
-                            $temporary_error =
-                                'The series lookup is temporarily unavailable.';
-                        } else {
-                            $incoming = [];
-    
-                            foreach ($response['results'] as $item) {
-                                if (
-                                    !is_array($item) ||
-                                    empty($item['id']) ||
-                                    !is_string($item['series'] ?? null)
-                                ) {
-                                    $temporary_error =
-                                        'The series lookup returned incomplete data.';
-                                    break;
-                                }
-    
-                                $incoming[] = [
-                                    'series_id' => absint($item['id']),
-                                    'name' => $item['series'],
-                                    'volume' => $item['volume'] ?? '1',
-                                    'issue_count' => $item['issue_count'] ?? 0,
-                                    'year_began' => $item['year_began'] ?? 'N/A',
-                                    'image' => $item['image'] ?? '',
-                                    'cv_id' => $item['cv_id'] ?? null,
-                                ];
-                            }
-    
-                            if ($temporary_error === '') {
-                                $matches = $this->filter_series_list(
-                                    $incoming,
-                                    $letter,
-                                    $search
-                                );
-    
-                                $by_id = [];
-    
-                                foreach (
-                                    array_merge($state['items'], $matches)
-                                    as $item
-                                ) {
-                                    $by_id[$item['series_id']] = $item;
-                                }
-    
-                                $state['items'] = array_values($by_id);
-                                $state['next_api_page']++;
-                                $state['exhausted'] =
-                                    empty($response['next']);
-    
-                                set_transient(
-                                    $key,
-                                    $state,
-                                    DAY_IN_SECONDS
-                                );
-                            }
-                        }
-                    }
-                } finally {
-                    MetronClient::release_lock($scope);
-                }
-            }
-    
-            $filtered = $state['items'];
-            $exhausted = (bool) $state['exhausted'];
-        }
-    
-        /*
-         * Ready means this page can be shown.
-         * It does not require an exact final total.
-         */
-        $ready = (
-            count($filtered) >= $needed_count ||
-            $exhausted
+        $filtered = $this->filter_series_list(
+            $items,
+            $letter,
+            $search
         );
     
         return [
-            'items' => $ready
-                ? array_slice(
-                    $filtered,
-                    ($page - 1) * $per_page,
-                    $per_page
-                )
-                : [],
+            'items' => array_slice(
+                $filtered,
+                ($page - 1) * $per_page,
+                $per_page
+            ),
             'total' => count($filtered),
-            'is_total_exact' => $exhausted,
-            'scan_complete' => $ready,
+            'is_total_exact' => $complete,
+            'scan_complete' => $complete,
             'page' => $page,
             'per_page' => $per_page,
-            'temporary_error' => $ready ? '' : $temporary_error,
+            'temporary_error' => '',
         ];
     }
 
