@@ -923,6 +923,8 @@ img.lazy-placeholder,
   margin-top: 1em;
 }
 
+
+
 /*  description table */
 .issue-section.description-block table {
   width: 100%;
@@ -957,6 +959,46 @@ img.lazy-placeholder,
 
 .issue-section.description-block table tbody tr:hover {
   background-color: #f0f0f0;
+}
+
+/* Reprint issue links */
+.issue-section.reprints ul {
+  display: block;
+  margin: 0;
+  padding-left: 1.25rem;
+  list-style: disc outside;
+}
+
+.issue-section.reprints li {
+  display: list-item;
+  margin: 0 0 0.35rem;
+  padding-left: 0.2rem;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.issue-section.reprints li:last-child {
+  margin-bottom: 0;
+}
+
+.issue-section.reprints a {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.35rem 0;
+  color: var(--bs-link-color, #075985);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+  overflow-wrap: anywhere;
+}
+
+.issue-section.reprints a:hover {
+  text-decoration-thickness: 2px;
+}
+
+.issue-section.reprints a:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+  border-radius: 2px;
 }
 
 /* Responsive styles */
@@ -1012,6 +1054,8 @@ img.lazy-placeholder,
   }
 }
 
+
+
 .add-to-wishlist,
 .add-to-collection {
     border-radius: 6px;
@@ -1058,6 +1102,7 @@ img.lazy-placeholder,
   color: #c82333;
   text-decoration: underline;
 }
+
 #book-container .error-message {
   display: flex;
   flex-direction: column;
@@ -1070,7 +1115,6 @@ img.lazy-placeholder,
 #book-container .error-message p {
   margin: 0;
 }
-
 #book-container .retry-books {
   display: block;
   margin: 0;

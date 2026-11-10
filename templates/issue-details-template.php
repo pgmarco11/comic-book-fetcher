@@ -495,26 +495,11 @@
                                             </div>
                                         <?php endif; ?>
                                         
-                                        <?php if (!empty($issue['reprints'])): ?>
-                                            <div class="issue-section reprints">
-                                                <h3>Reprints</h3>
-                                                <ul>
-                                                    <?php
-                                                    $reprint_count = count($issue['reprints']);
-                                                    $reprint_num = 0;
-                                                    foreach ($issue['reprints'] as $reprint):
-                                                        $reprint_num++;
-                                                    ?>
-                                                        <li>
-                                                            <?php
-                                                            echo esc_html($reprint['issue']);
-                                                            if ($reprint_num < $reprint_count) echo ',';
-                                                            ?>
-                                                        </li>
-                                                    <?php endforeach; ?>
-                                                </ul>
-                                            </div>
-                                        <?php endif; ?>
+                                        <?php
+                                            echo tcs_reprints_html(
+                                                $issue['reprints'] ?? []
+                                            );
+                                        ?>
         
                                         <?php if (!empty($creator_infos)): ?>
                                             <div class="issue-section creators">

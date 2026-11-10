@@ -51,6 +51,7 @@ require_once COMICBOOKS_PLUGIN_DIR . 'includes/wish-list.php';
 require_once COMICBOOKS_PLUGIN_DIR . 'includes/comic-collection.php';
 require_once COMICBOOKS_PLUGIN_DIR . 'includes/collection-inventory.php';
 require_once COMICBOOKS_PLUGIN_DIR . 'includes/collection-transfer.php';
+require_once COMICBOOKS_PLUGIN_DIR . 'includes/reprint-links.php';
 
 add_action(
     'comicbooks_refresh_publisher_list',
