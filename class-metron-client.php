@@ -74,6 +74,25 @@
      public static function disable_ajax_errors(): void {
          self::$ajax_errors = false;
      }
+
+     public static function retryable_error(
+        string $message,
+        int $retry_after = 2
+    ): WP_Error {
+        $retry_after = max(1, $retry_after);
+    
+        // Import jobs use the existing temporary-exception handler.
+        self::temporary_failure($message, $retry_after);
+    
+        return new WP_Error(
+            'comic_api_temporary',
+            $message,
+            [
+                'retryable' => true,
+                'retry_after' => $retry_after,
+            ]
+        );
+    }
  
      private static function temporary_failure(
          $message,

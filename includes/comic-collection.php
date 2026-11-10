@@ -365,86 +365,158 @@ function tcs_ensure_collection_term(
  * Fetch basic Comic Vine issue data directly, without calling Metron /issue/?cv_id.
  * This avoids extra Metron API calls when adding one issue to collection.
  */
-function tcs_get_comicvine_issue_basic( int $cv_id ): array {
+function tcs_cv_issue_complete($record): bool {
+    return is_array($record)
+        && is_scalar($record['id'] ?? null)
+        && ctype_digit((string) $record['id'])
+        && (int) $record['id'] > 0
+        && is_scalar($record['issue_number'] ?? null)
+        && trim((string) $record['issue_number']) !== ''
+        && array_key_exists('volume', $record)
+        && (
+            $record['volume'] === null
+            || is_array($record['volume'])
+        )
+        && array_key_exists('concept_credits', $record)
+        && (
+            $record['concept_credits'] === null
+            || is_array($record['concept_credits'])
+        );
+}
 
-    if ( $cv_id <= 0 ) {
+function tcs_get_comicvine_issue_basic(int $cv_id) {
+    if ($cv_id <= 0) {
         return [];
     }
 
     $cache_key = "tcs:cv_issue_basic:v2:{$cv_id}";
-    $cached = get_transient( $cache_key );
+    $cached = get_transient($cache_key);
 
-    if ( $cached !== false && is_array( $cached ) ) {
-
-        // Re-populate per-series cv_id cache from the cached page data.
-        foreach ( $cached['items'] ?? [] as $item ) {
-    
-            if (
-                ! empty( $item['series_id'] ) &&
-                ! empty( $item['cv_id'] )
-            ) {
-                set_transient(
-                    "metron:series_cvid:{$item['series_id']}",
-                    (int) $item['cv_id'],
-                    YEAR_IN_SECONDS
-                );
-            }
-        }
-    
+    if (
+        tcs_cv_issue_complete($cached)
+        && (int) $cached['id'] === $cv_id
+    ) {
         return $cached;
     }
 
-    $cv_key = get_option( 'comic_vine_api_key', '' );
-
-    if ( empty( $cv_key ) ) {
-        return [];
+    if ($cached !== false) {
+        delete_transient($cache_key);
     }
 
-    $url = add_query_arg(
-        [
-            'api_key'    => $cv_key,
-            'format'     => 'json',
-            'field_list' => implode(',', [
-                'id',
-                'name',
-                'issue_number',
-                'volume',
-                'cover_date',
-                'description',
-                'deck',
-                'image',
-                'person_credits',
-                'concept_credits',
-                'character_credits',
-            ]),
-        ],
-        "https://comicvine.gamespot.com/api/issue/4000-{$cv_id}/"
+    $cv_key = get_option('comic_vine_api_key', '');
+
+    if ($cv_key === '') {
+        return new WP_Error(
+            'tcs_cv_credentials',
+            'The Comic Vine API key is missing.',
+            ['retryable' => false]
+        );
+    }
+
+    $fields = [
+        'id',
+        'name',
+        'issue_number',
+        'volume',
+        'cover_date',
+        'description',
+        'deck',
+        'image',
+        'person_credits',
+        'concept_credits',
+        'character_credits',
+    ];
+
+    sort($fields, SORT_STRING);
+
+    $query = [
+        'api_key' => $cv_key,
+        'format' => 'json',
+        'field_list' => implode(',', $fields),
+    ];
+
+    ksort($query);
+
+    $path = "/api/issue/4000-{$cv_id}/";
+
+    $query_string = http_build_query(
+        $query,
+        '',
+        '&',
+        PHP_QUERY_RFC3986
     );
 
-    $response = wp_remote_get(
+    $url = 'https://comicvine.gamespot.com'
+        . $path . '?' . $query_string;
+
+    $client = new MetronClient();
+
+    $response = $client->http_get(
         $url,
         [
-            'timeout' => 30,
+            'timeout' => 8,
             'headers' => [
-                'User-Agent' => 'ComicBookFetcher/1.1 (+' . get_site_url() . ')',
+                'User-Agent' => 'ComicBookFetcher/1.1 (+'
+                    . get_site_url() . ')',
             ],
-        ]
+        ],
+        false
     );
 
-    if ( is_wp_error( $response ) ) {
-        return [];
+    if (is_wp_error($response)) {
+        $data = $response->get_error_data();
+
+        $retry_after = is_array($data)
+            ? max(1, (int) ($data['retry_after'] ?? 3))
+            : 3;
+
+        return MetronClient::retryable_error(
+            'Comic Vine issue details are temporarily unavailable. Please retry.',
+            $retry_after
+        );
     }
 
-    $body = json_decode( wp_remote_retrieve_body( $response ), true );
+    $body = json_decode(
+        wp_remote_retrieve_body($response),
+        true
+    );
 
-    if ( empty( $body['results'] ) || ! is_array( $body['results'] ) ) {
-        return [];
+    $result = is_array($body)
+        ? ($body['results'] ?? null)
+        : null;
+
+    if (
+        (int) wp_remote_retrieve_response_code($response) !== 200
+        || (string) ($body['status_code'] ?? '') !== '1'
+        || !tcs_cv_issue_complete($result)
+    ) {
+        // Remove only this unusable shared HTTP response.
+        $http_cache_key = 'tcs_cv_http_v1_' . hash(
+            'sha256',
+            $path . '?' . $query_string
+        );
+
+        delete_transient($http_cache_key);
+
+        return MetronClient::retryable_error(
+            'Comic Vine returned incomplete issue details. Please retry.',
+            3
+        );
     }
 
-    $result = $body['results'];
+    $result['concept_credits'] =
+        $result['concept_credits'] ?? [];
+
     $result['cv_id'] = $cv_id;
 
-    set_transient( $cache_key, $result, 30 * DAY_IN_SECONDS );
+    // Let the existing mapping validator handle a complete wrong issue.
+    if ((int) $result['id'] === $cv_id) {
+        set_transient(
+            $cache_key,
+            $result,
+            30 * DAY_IN_SECONDS
+        );
+    }
 
     return $result;
 }
@@ -1237,15 +1309,34 @@ add_action('wp_ajax_tcs_collection_button_data', function () {
     $catalog = tcs_collection_catalog_data($title_id, $issue_id);
 
     if (is_wp_error($catalog)) {
-        wp_send_json_error(
-            [
-                'code'     => $catalog->get_error_code(),
-                'message'  => $catalog->get_error_message(),
-                'issue_id' => $issue_id,
-                'title_id' => $title_id,
-            ],
-            503
-        );
+        $error_data = $catalog->get_error_data();
+    
+        $error_data = is_array($error_data)
+            ? $error_data
+            : [];
+    
+        $retryable = !empty($error_data['retryable'])
+            || in_array(
+                $catalog->get_error_code(),
+                [
+                    'collection_issue_unavailable',
+                    'collection_mapping_unavailable',
+                    'collection_series_unavailable',
+                ],
+                true
+            );
+    
+        wp_send_json_error([
+            'code' => $catalog->get_error_code(),
+            'message' => $catalog->get_error_message(),
+            'issue_id' => $issue_id,
+            'title_id' => $title_id,
+            'retryable' => $retryable,
+            'retry_after' => max(
+                1,
+                (int) ($error_data['retry_after'] ?? 3)
+            ),
+        ], 503);
     }
 
     $meta = $catalog['meta'];

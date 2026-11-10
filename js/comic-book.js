@@ -2408,55 +2408,121 @@ jQuery(document).ready(function($){
 
     checkCollectionStatusBatch();
 
-    $(document).on('click', '.add-to-collection', async function(e) {
+    $(document).on('click', '.add-to-collection', async function (e) {
         e.preventDefault();
+    
         const btn = $(this);
-        const action = btn.data('action');
-        const isRemove = action === 'remove';
+    
+        if (btn.data('collectionBusy')) return;
+    
+        btn.data('collectionBusy', true);
+    
+        const isRemove = btn.data('action') === 'remove';
         const originalText = btn.text();
-
-        if (isRemove) {
-            const confirmRemove = await toastConfirm('Remove this issue from your collection?');
-            if (!confirmRemove) return;
-        }
-
-        btn.text(isRemove ? 'Removing...' : 'Adding...').prop('disabled', true);
-
-        $.post(comicbooks_fetchers_data.ajax_url, {
-            action: isRemove ? 'remove_comic_from_collection' : 'add_comic_to_collection',
-            security: comicbooks_fetchers_data.nonce,
-            post_id: isRemove ? btn.data('post-id') : 0,
-            data: btn.data()
-        }, function(response) {
-            if (response.success) {
-                if (isRemove) {
-                    btn.text('Add to My Collection')
-                        .removeClass('in-collection')
-                        .css({'background-color': '', 'color': ''})
-                        .data('action', 'add')
-                        .removeAttr('data-post-id')
-                        .removeData('post-id');
-                } else {
-                    btn.text('Remove from Collection')
-                        .addClass('in-collection')
-                        .css({'background-color': 'red', 'color': 'white'})
-                        .data('action', 'remove')
-                        .data('post-id', response.data.post_id);
-                }
-
-                $(document).trigger('comicbooks:collection-changed');
-            } else {
-                btn.text(isRemove ? 'Error Removing' : 'Error Adding');
-                console.error('Error:', response.data);
-                setTimeout(() => btn.text(originalText), 2000);
+        const wasDisabled = btn.prop('disabled');
+    
+        try {
+            if (isRemove) {
+                const confirmed = await toastConfirm(
+                    'Remove this issue from your collection?'
+                );
+    
+                if (!confirmed) return;
             }
-        }).fail(function(jqXHR, textStatus, errorThrown) {
-            console.error('AJAX request failed:', textStatus, errorThrown);
-            btn.text(isRemove ? 'Error Removing' : 'Error Adding');
-            setTimeout(() => btn.text(originalText), 2000);
-        }).always(function() {
-            btn.prop('disabled', false);
-        });
+    
+            btn.text(isRemove ? 'Removing...' : 'Adding...')
+                .prop('disabled', true);
+    
+            const sendRequest = () => $.post(
+                comicbooks_fetchers_data.ajax_url,
+                {
+                    action: isRemove
+                        ? 'remove_comic_from_collection'
+                        : 'add_comic_to_collection',
+    
+                    security: comicbooks_fetchers_data.nonce,
+    
+                    post_id: isRemove
+                        ? btn.data('post-id')
+                        : 0,
+    
+                    data: {
+                        issueId: btn.attr('data-issue-id'),
+                        titleId: btn.attr('data-title-id')
+                    }
+                }
+            );
+    
+            const response =
+                !isRemove && window.tcsCollectionMetadata
+                    ? await window.tcsCollectionMetadata.runAdd(
+                        sendRequest
+                    )
+                    : await sendRequest();
+    
+            if (!response?.success) {
+                const data = response?.data;
+    
+                throw new Error(
+                    (
+                        typeof data === 'string'
+                            ? data
+                            : data?.message
+                    ) || 'The collection could not be updated.'
+                );
+            }
+    
+            if (isRemove) {
+                btn.text('Add to My Collection')
+                    .removeClass('in-collection')
+                    .css({
+                        'background-color': '',
+                        'color': ''
+                    })
+                    .attr('data-action', 'add')
+                    .data('action', 'add')
+                    .removeAttr('data-post-id')
+                    .removeData('post-id');
+            } else {
+                btn.text('Remove from Collection')
+                    .addClass('in-collection')
+                    .css({
+                        'background-color': 'red',
+                        'color': 'white'
+                    })
+                    .attr('data-action', 'remove')
+                    .data('action', 'remove')
+                    .attr('data-post-id', response.data.post_id)
+                    .data('post-id', response.data.post_id);
+            }
+    
+            $(document).trigger(
+                'comicbooks:collection-changed'
+            );
+        } catch (error) {
+            console.error(
+                'Collection update failed:',
+                error
+            );
+    
+            const errorText = isRemove
+                ? 'Error Removing'
+                : 'Error Adding';
+    
+            btn.text(errorText);
+    
+            setTimeout(() => {
+                if (
+                    !btn.data('collectionBusy') &&
+                    btn.text() === errorText
+                ) {
+                    btn.text(originalText);
+                }
+            }, 2000);
+        } finally {
+            btn.data('collectionBusy', false)
+                .prop('disabled', wasDisabled);
+        }
     });
 
     // Popstate handler
@@ -2642,6 +2708,32 @@ jQuery(function ($) {
     const watched = new Set();
 
     let busy = false;
+    const maxAttempts = 5;
+
+    let activeLoad = null;
+    let foregroundCount = 0;
+    let foregroundTail = Promise.resolve();
+
+    window.tcsCollectionMetadata = {
+        runAdd(work) {
+            foregroundCount++;
+
+            const task = foregroundTail.then(async () => {
+                if (activeLoad) {
+                    await activeLoad;
+                }
+
+                return work();
+            });
+
+            foregroundTail = task.catch(() => {});
+
+            return task.finally(() => {
+                foregroundCount--;
+                pump();
+            });
+        }
+    };
 
     function apply(button, attributes) {
         for (const [name, value] of Object.entries(attributes)) {
@@ -2678,11 +2770,11 @@ jQuery(function ($) {
     }
 
     async function pump() {
-        if (busy) return;
+        if (busy || foregroundCount > 0) return;
 
         const record = [...records.values()].find(item =>
             !item.attributes &&
-            item.attempts < 2 &&
+            item.attempts < maxAttempts &&
             item.retryAt <= Date.now() &&
             [...item.buttons].some(wanted)
         );
@@ -2690,6 +2782,13 @@ jQuery(function ($) {
         if (!record) return;
 
         busy = true;
+
+        let finishLoad;
+        
+        activeLoad = new Promise(resolve => {
+            finishLoad = resolve;
+        });
+        
         record.attempts++;
 
         record.buttons.forEach(button => {
@@ -2755,20 +2854,48 @@ jQuery(function ($) {
                 `${code}: ${message}`
             );
 
-            record.retryAt = Date.now() + 3000;
+            const retryable =
+                payload?.retryable === true
+                || error?.status === 0
+                || error instanceof Error;
+
+            const seconds = Number(payload?.retry_after);
+
+            const retrySeconds =
+                Number.isFinite(seconds) && seconds > 0
+                    ? Math.ceil(seconds)
+                    : 3;
+
+            if (!retryable) {
+                record.attempts = maxAttempts;
+            }
+
+            const willRetry =
+                retryable && record.attempts < maxAttempts;
+
+            record.retryAt =
+                Date.now() + retrySeconds * 1000;
 
             record.buttons.forEach(button => {
                 if (button.isConnected) {
-                    button.setAttribute('data-catalog-state', 'error');
+                    button.setAttribute(
+                        'data-catalog-state',
+                        willRetry ? 'retrying' : 'error'
+                    );
                 }
             });
 
-            // One automatic retry for this issue.
-            if (record.attempts < 2) {
-                setTimeout(pump, 3100);
+            if (willRetry) {
+                setTimeout(
+                    pump,
+                    retrySeconds * 1000 + 50
+                );
             }
+
         } finally {
             busy = false;
+            activeLoad = null;
+            finishLoad();
             pump();
         }
     }
