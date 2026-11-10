@@ -1109,6 +1109,67 @@ function restrict_collections_to_owner( $query ): void {
     );
 }
 
+/**
+ * Count only the current user's records on the collection admin screen.
+ *
+ * Applies to every user, including administrators.
+ */
+function tcs_collection_admin_owner_counts(
+    $counts,
+    $post_type,
+    $permission
+) {
+    if (
+        ! is_admin() ||
+        $post_type !== 'collection'
+    ) {
+        return $counts;
+    }
+
+    $screen = get_current_screen();
+
+    if (
+        ! $screen ||
+        $screen->id !== 'edit-collection'
+    ) {
+        return $counts;
+    }
+
+    global $wpdb;
+
+    $rows = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT post_status, COUNT(*) AS total
+             FROM {$wpdb->posts}
+             WHERE post_type = %s
+               AND post_author = %d
+             GROUP BY post_status",
+            'collection',
+            get_current_user_id()
+        )
+    );
+
+    // Preserve the expected status properties without changing shared counts.
+    $owner_counts = clone $counts;
+
+    foreach ( $owner_counts as $status => $total ) {
+        $owner_counts->{$status} = 0;
+    }
+
+    foreach ( $rows as $row ) {
+        $owner_counts->{$row->post_status} = (int) $row->total;
+    }
+
+    return $owner_counts;
+}
+
+add_filter(
+    'wp_count_posts',
+    'tcs_collection_admin_owner_counts',
+    10,
+    3
+);
+
 add_action('wp_ajax_check_collection_status_batch', function () {
     check_ajax_referer('comicbooks_fetchers_data', 'security');
 
