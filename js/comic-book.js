@@ -529,6 +529,14 @@ jQuery(document).ready(function($){
         }
     
         if (page > 1) {
+            html += `
+                <a href="${escapeCatalogHtml(getPageLink(1))}"
+                class="page-btn"
+                data-page="1"
+                data-letter="${escapeCatalogHtml(letter)}"
+                aria-label="Go to first page">
+                    First
+                </a>`;
             html += `<a href="${getPageLink(page - 1)}" class="page-btn" data-page="${page - 1}" data-letter="${letter}">Previous</a>`;
         }
     
@@ -543,6 +551,17 @@ jQuery(document).ready(function($){
     
         if (page < totalPages || !isTotalExact) {
             html += `<a href="${getPageLink(page + 1)}" class="page-btn" data-page="${page + 1}" data-letter="${letter}">Next</a>`;
+        }
+
+        if (isTotalExact && page < totalPages) {
+            html += `
+                <a href="${escapeCatalogHtml(getPageLink(totalPages))}"
+                   class="page-btn"
+                   data-page="${totalPages}"
+                   data-letter="${escapeCatalogHtml(letter)}"
+                   aria-label="Go to last page">
+                    Last
+                </a>`;
         }
     
         html += '</div>';
@@ -1599,6 +1618,17 @@ jQuery(document).ready(function($){
         let html = `<p>Page ${page} of ${totalPages}</p>`;
     
         if (page > 1) {
+
+            html += `
+                <a href="?title_id=${titleId}&page=1${searchParam}"
+                class="page-btn"
+                data-page="1"
+                data-title-id="${titleId}"
+                data-search="${escapeCatalogHtml(search)}"
+                aria-label="Go to first page">
+                    First
+                </a>`;
+
             const previousPage = page - 1;
     
             html += `
@@ -1645,6 +1675,18 @@ jQuery(document).ready(function($){
                    data-search="${search}"
                    aria-label="Go to next page">
                     Next
+                </a>`;
+        }
+
+        if (page < totalPages) {
+            html += `
+                <a href="?title_id=${titleId}&page=${totalPages}${searchParam}"
+                   class="page-btn"
+                   data-page="${totalPages}"
+                   data-title-id="${titleId}"
+                   data-search="${escapeCatalogHtml(search)}"
+                   aria-label="Go to last page">
+                    Last
                 </a>`;
         }
     

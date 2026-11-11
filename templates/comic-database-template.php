@@ -254,6 +254,15 @@ $is_publisher = $type === 'publishers';
         </p>
 
         <?php if ($page > 1): ?>
+            <a
+                href="<?php echo esc_url(add_query_arg('page', 1)); ?>"
+                class="page-btn"
+                data-page="1"
+                data-letter="<?php echo esc_attr($letter); ?>"
+            >First</a>
+        <?php endif; ?>
+
+        <?php if ($page > 1): ?>
             <a href="<?php echo esc_url(add_query_arg('page', $page - 1)); ?>"
                 class="page-btn" data-page="<?php echo $page - 1; ?>"
                 data-letter="<?php echo esc_attr($letter); ?>">Previous</a>
@@ -270,6 +279,19 @@ $is_publisher = $type === 'publishers';
             <a href="<?php echo esc_url(add_query_arg('page', $page + 1)); ?>" class="page-btn">
                 Next
             </a>
+        <?php endif; ?>
+
+        <?php if ($is_total_exact && $page < $total_pages): ?>
+            <a
+                href="<?php
+                echo esc_url(
+                    add_query_arg('page', $total_pages)
+                );
+                ?>"
+                class="page-btn"
+                data-page="<?php echo (int) $total_pages; ?>"
+                data-letter="<?php echo esc_attr($letter); ?>"
+            >Last</a>
         <?php endif; ?>
     </div>
 <?php endif; ?>

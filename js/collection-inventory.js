@@ -115,9 +115,15 @@
             if (number === page) a.setAttribute('aria-current', 'page');
             nav.append(a);
         }
-        if (page > 1) link(page - 1, 'Previous');
+        if (page > 1) {
+            link(1, 'First');
+            link(page - 1, 'Previous');
+        }
         for (let i = Math.max(1, page - 2); i <= Math.min(pages, page + 2); i++) link(i, String(i));
-        if (page < pages) link(page + 1, 'Next');
+        if (page < pages) {
+            link(page + 1, 'Next');
+            link(pages, 'Last');
+        }
     }
     function updateFacets(selector, rows, allLabel) {
         const select = $(selector);

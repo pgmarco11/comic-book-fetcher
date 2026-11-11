@@ -373,18 +373,41 @@ $search_placeholder = $is_chart
                 aria-label="Collection pages"
             >
                 <?php
+                $page_links = [];
+
+                if ($results['page'] > 1) {
+                    $page_links[] = [1, 'First'];
+                    $page_links[] = [
+                        $results['page'] - 1,
+                        'Previous',
+                    ];
+                }
+
                 for (
-                    $page_no = max(
-                        1,
-                        $results['page'] - 2
-                    );
-                    $page_no <= min(
+                    $n = max(1, $results['page'] - 2);
+                    $n <= min(
                         $results['pages'],
                         $results['page'] + 2
                     );
-                    $page_no++
-                ) :
-                $page_url = add_query_arg(
+                    $n++
+                ) {
+                    $page_links[] = [$n, (string) $n];
+                }
+
+                if ($results['page'] < $results['pages']) {
+                    $page_links[] = [
+                        $results['page'] + 1,
+                        'Next',
+                    ];
+
+                    $page_links[] = [
+                        $results['pages'],
+                        'Last',
+                    ];
+                }
+
+                foreach ($page_links as [$page_no, $page_label]) :
+                    $page_url = add_query_arg(
                         array_map(
                             static function ($value): string {
                                 return rawurlencode(
@@ -401,22 +424,16 @@ $search_placeholder = $is_chart
                         $inventory_url
                     );
                     ?>
-
                     <a
                         href="<?php echo esc_url($page_url); ?>"
-                        data-page="<?php
-                            echo (int) $page_no;
-                        ?>"
+                        data-page="<?php echo (int) $page_no; ?>"
                         <?php
                         if ($page_no === $results['page']) {
                             echo 'aria-current="page"';
                         }
                         ?>
-                    >
-                        <?php echo (int) $page_no; ?>
-                    </a>
-
-                <?php endfor; ?>
+                    ><?php echo esc_html($page_label); ?></a>
+                <?php endforeach; ?>
             </nav>
         </div>
 
