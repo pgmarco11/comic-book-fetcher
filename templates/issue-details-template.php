@@ -134,6 +134,24 @@
 
     $volume = $series['volume'] ?? '';
 
+    $ebay_search_url = '';
+    $ebay_series_name = trim((string) ($series['name'] ?? ''));
+    $ebay_issue_number = trim((string) ($issue['number'] ?? ''));
+
+    if ($ebay_series_name !== '' && $ebay_issue_number !== '') {
+        $publication_year = preg_match('/^(\d{4})(?:-|$)/', (string) $date_raw, $match)
+            ? $match[1]
+            : '';
+
+        $ebay_search_url = mwp_wishlist_tools_url([
+            'type' => 'post',
+            'item_id' => 'metron:issue:' . (int) $issue_id,
+            'title' => $ebay_series_name . ' #' . $ebay_issue_number,
+            'publisher' => $publisher['name'] ?? '',
+            'publication_year' => $publication_year,
+        ]);
+    }
+
     /*
     * ---------------------------------------------------------
     * Current user's collection record
@@ -369,7 +387,8 @@
         
                                             // Collection and Wishlist Buttons
                                             if (is_user_logged_in()): ?>
-                                                <div class="d-flex flex-wrap align-items-end gap-3">
+                                            
+                                                <div class="issue-summary-actions d-flex flex-wrap align-items-end gap-3">
                                                     <!-- Collection Button -->
                                                     <div class="text-center">
                                                     <button
@@ -425,6 +444,11 @@
                                                         data-image-url="<?php echo esc_url($issue['image']); ?>">
                                                         Add to Wishlist
                                                     </button>
+                                                    <?php if ($ebay_search_url !== '') : ?>
+                                                        <a class="issue-search-ebay" href="<?php echo esc_url($ebay_search_url); ?>">
+                                                            Search eBay
+                                                        </a>
+                                                    <?php endif; ?>
                                                 </div>
                                             <?php endif; ?>
                                         </div>
@@ -510,7 +534,7 @@
                                                     <?php endforeach; ?>
                                                 </ul>
                                             </div>
-                                        <?php endif; ?>
+                                        <?php endif; ?> 
                                     <?php endif; ?>
                                 </div> 
                             </div>

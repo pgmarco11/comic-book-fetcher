@@ -872,7 +872,7 @@ img.lazy-placeholder,
 }
 
 .issue-section {
-  margin-bottom: 20px;
+  margin: 20px auto;
   text-align: left;
 }
 .issue-section h3, 
@@ -1057,7 +1057,8 @@ img.lazy-placeholder,
 
 
 .add-to-wishlist,
-.add-to-collection {
+.add-to-collection,
+.issue-search-ebay {
     border-radius: 6px;
     text-decoration: none;
     cursor: pointer;
@@ -1083,7 +1084,8 @@ img.lazy-placeholder,
 }  
 @media (max-width: 768px) {
   .add-to-wishlist,
-  .add-to-collection {
+  .add-to-collection,
+  .issue-search-ebay {
       min-height: 64px;
       min-width: 0;
   }
@@ -1097,10 +1099,63 @@ img.lazy-placeholder,
   border: none;
   cursor: pointer;
 }
+
 .remove-collection-form .btn-link.text-danger {
   font-size: 0.9rem;
   color: #c82333;
   text-decoration: underline;
+}
+
+.issue-search-ebay {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  background-color: #0056b3;
+  color: #fff;
+}
+
+.issue-search-ebay:hover {
+  background-color: #00458f;
+  color: #fff;
+  text-decoration: none;
+}
+
+.issue-search-ebay:focus-visible {
+  outline: 2px solid #0056b3;
+  outline-offset: 3px;
+} 
+
+@media (max-width: 1081px) {
+  .issue-summary-actions.d-flex {
+      display: grid !important;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.625rem !important;
+      width: 100%;
+  }
+
+  /* The Collection button sits inside this wrapper. */
+  .issue-summary-actions > .text-center {
+      grid-column: 1 / -1;
+  }
+
+  .issue-summary-actions .add-to-collection,
+  .issue-summary-actions .add-to-wishlist,
+  .issue-summary-actions .issue-search-ebay {
+      box-sizing: border-box;
+      width: 100%;
+      min-width: 0;
+      max-width: none;
+      min-height: 48px;
+      margin: 0;
+      padding: 0.5rem 0.625rem;
+      font-size: 1.125rem;
+      line-height: 1.2;
+  }
+
+  .issue-summary-actions .issue-search-ebay {
+      align-self: stretch;
+  }
 }
 
 #book-container .error-message {

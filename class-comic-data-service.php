@@ -3158,22 +3158,17 @@ class ComicDataService {
                 'total_issues' => $total,
                 'per_page'     => $per_page,
             ];
-        }
-    
-        /* ── Backward compat: legacy v5 full-list cache ──────────────────── */
-        $full_key  = "metron:issue_list_full:{$title_id}:v5";
-        $full_data = get_transient( $full_key );
-        $use_new   = ( $full_data === false || ! isset( $full_data['results'] ) || ! is_array( $full_data['results'] ) );
+        }   
     
         $combined = [];  /* api_page => results[]  (new mode only) */
         $total    = 0;
     
-        if ( $use_new ) {
-            /* display pages 1-10 → api page 1, 11-20 → 2, etc.*/
-            $api_pg_needed = max( 1, (int) ceil( $current_page * $per_page / $api_size ) );
+
+        /* display pages 1-10 → api page 1, 11-20 → 2, etc.*/
+        $api_pg_needed = max( 1, (int) ceil( $current_page * $per_page / $api_size ) );
     
-            $total_key = "metron:issue_total:{$title_id}";
-            $total     = (int)( get_transient( $total_key ) ?: 0 );
+        $total_key = "metron:issue_total:{$title_id}";
+        $total     = (int)( get_transient( $total_key ) ?: 0 );
     
             /*
              * Fetch ONLY the Metron API page that covers the requested display
@@ -3357,13 +3352,8 @@ class ComicDataService {
                         wp_rand(8, 15)
                     );
                 }
-            }
-    
-        } else {
-                /* Legacy complete cache */
-                $all   = $full_data['results'];
-                $total = count( $all );
-        }    
+            }   
+   
  
         usort( $all, function( $a, $b ) {
             $nA = is_numeric( trim( (string)( $a['number'] ?? '' ) ) ) ? (float) $a['number'] : INF;
@@ -3371,15 +3361,12 @@ class ComicDataService {
             return $nA !== $nB ? ( $nA <=> $nB ) : ( (int)( $a['id'] ?? 0 ) ) <=> ( (int)( $b['id'] ?? 0 ) );
         } );   
 
-        if ( $use_new ) {
-            $min_api_page    = $combined ? min( array_keys( $combined ) ) : $api_pg_needed;
-            $assembled_start = ( $min_api_page - 1 ) * $api_size;
-            $abs_start       = ( $current_page  - 1 ) * $per_page;
-            $offset          = max( 0, $abs_start - $assembled_start );
-            $paged_issues    = array_slice( $all, $offset, $per_page );
-        } else {
-            $paged_issues = array_slice( $all, ( $current_page - 1 ) * $per_page, $per_page );
-        }
+
+        $min_api_page    = $combined ? min( array_keys( $combined ) ) : $api_pg_needed;
+        $assembled_start = ( $min_api_page - 1 ) * $api_size;
+        $abs_start       = ( $current_page  - 1 ) * $per_page;
+        $offset          = max( 0, $abs_start - $assembled_start );
+        $paged_issues    = array_slice( $all, $offset, $per_page );
     
         $total_pages = max( 1, (int) ceil( $total / $per_page ) );
     
