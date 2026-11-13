@@ -17,6 +17,7 @@ if (!defined('ABSPATH')) {
 require_once __DIR__ . '/includes/classes/class-tcs-cv-issue-worker.php';
 require_once __DIR__ . '/includes/classes/class-tcs-catalog-background-worker.php';
 require_once __DIR__ . '/includes/series-header.php';
+require_once __DIR__ . '/includes/issue-pagination.php';
 
 function comicbooks_cv_worker(): TCS_CV_Issue_Worker {
     static $instance;
@@ -49,6 +50,7 @@ require_once COMICBOOKS_PLUGIN_DIR . 'class-comicbooks.php';
 // === INCLUDE FUNCTIONS ===
 require_once COMICBOOKS_PLUGIN_DIR . 'includes/wish-list.php';
 require_once COMICBOOKS_PLUGIN_DIR . 'includes/comic-collection.php';
+require_once COMICBOOKS_PLUGIN_DIR . 'includes/creator-role-credits.php';
 require_once COMICBOOKS_PLUGIN_DIR . 'includes/collection-inventory.php';
 require_once COMICBOOKS_PLUGIN_DIR . 'includes/collection-transfer.php';
 require_once COMICBOOKS_PLUGIN_DIR . 'includes/reprint-links.php';

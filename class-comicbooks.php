@@ -405,13 +405,18 @@ class Comicbooks {
     
         $html = ob_get_clean();    
     
+        $total_pages = (int) ($data['total_pages'] ?? 1);
+
         wp_send_json_success([
-            'issues'       => $html,
-            'page'         => $page,
-            'current_page' => $page,
-            'total_issues' => $total_issues,
-            'total_pages'  => ceil($total_issues / 10),
-            'search'       => $search
+            'issues'          => $html,
+            'pagination_html' => comicbooks_issue_pagination_html(
+                $title_id, $page, $total_pages, $search
+            ),
+            'page'            => $page,
+            'current_page'    => $page,
+            'total_issues'    => $total_issues,
+            'total_pages'     => $total_pages,
+            'search'          => $search,
         ]);
     }
 

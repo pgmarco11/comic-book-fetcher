@@ -28,6 +28,7 @@ $chart_types = [
     'comic_series' => 'Series',
     'comic_genre'  => 'Genre',
     'creators'     => 'Creator',
+    'creator_role' => 'Creator role',
     'era'          => 'Era',
 ];
 
@@ -159,7 +160,7 @@ $search_placeholder = $is_chart
         <div>
         <label for="tci-sort">Sort by</label>
         <select id="tci-sort" name="collection_sort">
-                <?php foreach ([
+                <?php foreach ([    
                     'collection' =>
                         'Publisher + series + volume',
                     'title' =>
@@ -171,8 +172,8 @@ $search_placeholder = $is_chart
                         'Recently added',
                     'oldest' =>
                         'Oldest added',                    
-                    'year_asc' => 'Publication year: Oldest first',
-                    'year_desc' => 'Publication year: Newest first',
+                    'year_asc' => 'Publication date: Oldest first',
+                    'year_desc' => 'Publication date: Newest first',
                     'price_asc' =>
                         'Price: Low to High',
                     'price_desc' =>

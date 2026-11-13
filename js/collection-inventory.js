@@ -151,6 +151,7 @@
             comic_series: 'Series',
             comic_genre: 'Genre',
             creators: 'Creator',
+            creator_role: 'Creator role',
             era: 'Era'
         };
     

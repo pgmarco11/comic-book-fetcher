@@ -511,6 +511,33 @@ class TCS_Collection_Inventory_Repository {
     
         return $counts;
     }
+
+    public function creator_role_counts(int $user_id): array {
+        $counts = [];
+        $labels = [];
+    
+        foreach ($this->chart_entry_ids($user_id) as $id) {
+            $credits = (string) get_post_meta($id, 'creators', true);
+    
+            foreach (tcs_creator_role_credits($credits) as $role => $creators) {
+                foreach ($creators as $key => $name) {
+                    $label = $labels[$role][$key] ??= $name;
+                    $counts[$role][$label] = ($counts[$role][$label] ?? 0) + 1;
+                }
+            }
+        }
+    
+        ksort($counts, SORT_NATURAL | SORT_FLAG_CASE);
+    
+        foreach ($counts as &$role_counts) {
+            ksort($role_counts, SORT_NATURAL | SORT_FLAG_CASE);
+            arsort($role_counts, SORT_NUMERIC);
+        }
+    
+        unset($role_counts);
+    
+        return $counts;
+    }
     
     public function collection_value(int $user_id): array {
         $ids = $this->chart_entry_ids($user_id);
@@ -853,34 +880,52 @@ class TCS_Collection_Inventory_Repository {
     }
 
     private function sort_by_year(array &$records, bool $descending): void {
-        $years = [];
+        $dates = [];
     
         foreach ($records as $record) {
             $year = trim((string) ($record['year'] ?? ''));
+            $date = trim((string) ($record['date_published'] ?? ''));
+    
+            preg_match(
+                '/^([1-9]\d{3})(?:-(0[1-9]|1[0-2])(?:-\d{2})?)?$/D',
+                $date,
+                $parts
+            );
     
             if (!preg_match('/^[1-9]\d{3}$/D', $year)) {
-                preg_match(
-                    '/^([1-9]\d{3})(?:-|$)/',
-                    trim((string) ($record['date_published'] ?? '')),
-                    $match
-                );
-                $year = $match[1] ?? '';
+                $year = $parts[1] ?? '';
             }
     
-            $years[$record['id']] = $year === '' ? null : (int) $year;
+            $dates[$record['id']] = [
+                'year' => $year === '' ? null : (int) $year,
+                'month' => ($parts[1] ?? '') === $year
+                    ? (int) ($parts[2] ?? 0)
+                    : 0,
+            ];
         }
     
-        usort($records, static function (array $a, array $b) use ($years, $descending): int {
-            $year_a = $years[$a['id']];
-            $year_b = $years[$b['id']];
+        usort($records, static function (array $a, array $b) use ($dates, $descending): int {
+            $left = $dates[$a['id']];
+            $right = $dates[$b['id']];
     
-            $unknown_order = ($year_a === null) <=> ($year_b === null);
-            if ($unknown_order !== 0) {
-                return $unknown_order;
+            $unknown_year = ($left['year'] === null) <=> ($right['year'] === null);
+            if ($unknown_year !== 0) {
+                return $unknown_year;
             }
     
-            $comparison = $descending ? $year_b <=> $year_a : $year_a <=> $year_b;
-            return $comparison ?: ($a['id'] <=> $b['id']);
+            $by_year = $left['year'] <=> $right['year'];
+            if ($by_year !== 0) {
+                return $descending ? -$by_year : $by_year;
+            }
+    
+            $unknown_month = ($left['month'] === 0) <=> ($right['month'] === 0);
+            if ($unknown_month !== 0) {
+                return $unknown_month;
+            }
+    
+            $by_month = $left['month'] <=> $right['month'];
+            return ($descending ? -$by_month : $by_month)
+                ?: ($a['id'] <=> $b['id']);
         });
     }
 

@@ -56,14 +56,7 @@ jQuery(document).ready(function($){
     
             if ($list.hasClass('server-rendered') && hasContent) {
                 $list.addClass('loaded');
-                $('#loading-spinner').addClass('hidden').css({ display: 'none', opacity: 0 });
-                const total = parseInt($list.attr('data-total')) || 0;
-                const page  = parseInt($list.attr('data-page')) || 1;
-                const search = $('#issue-search').val() || '';
-                const titleId = new URLSearchParams(location.search).get('title_id');
-                if (total > 0 && titleId) {
-                    renderIssuePagination(titleId, page, search, total);
-                }
+                $('#loading-spinner').addClass('hidden').css({ display: 'none', opacity: 0 });         
             }
             // No else. The bottom sync block already calls fetchIssues at t=0 when needed.
             // Calling it again here after SPA nav cleared the list is the double-fetch bug.
@@ -1573,148 +1566,6 @@ jQuery(document).ready(function($){
     styleSheet.innerText = styles;
     document.head.appendChild(styleSheet);
 
-    function renderIssuePagination(titleId, page, search, totalIssues) {
-        const $wrapper = $('#pagination-wrapper');
-    
-        if (!$wrapper.length) {
-            return;
-        }
-    
-        if (!totalIssues || totalIssues < 1) {
-            $wrapper.empty();
-            return;
-        }
-    
-        const perPage     = 10;
-        const totalPages  = Math.ceil(totalIssues / perPage);
-        const visiblePages = 5;
-    
-        page = Math.max(1, Math.min(Number(page) || 1, totalPages));
-    
-        /*
-         * Keep five numbered buttons visible whenever possible.
-         *
-         * Page 1: 1 2 3 4 5 Next
-         * Page 5: Previous 3 4 5 6 7 Next
-         * Page 10: Previous 6 7 8 9 10
-         */
-        const start = Math.max(
-            1,
-            Math.min(
-                page - Math.floor(visiblePages / 2),
-                totalPages - visiblePages + 1
-            )
-        );
-    
-        const end = Math.min(
-            totalPages,
-            start + visiblePages - 1
-        );
-    
-        const searchParam = search
-            ? `&search=${encodeURIComponent(search)}`
-            : '';
-    
-        let html = `<p>Page ${page} of ${totalPages}</p>`;
-    
-        if (page > 1) {
-
-            html += `
-                <a href="?title_id=${titleId}&page=1${searchParam}"
-                class="page-btn"
-                data-page="1"
-                data-title-id="${titleId}"
-                data-search="${escapeCatalogHtml(search)}"
-                aria-label="Go to first page">
-                    First
-                </a>`;
-
-            const previousPage = page - 1;
-    
-            html += `
-                <a href="?title_id=${titleId}&page=${previousPage}${searchParam}"
-                   class="page-btn"
-                   data-page="${previousPage}"
-                   data-title-id="${titleId}"
-                   data-search="${search}"
-                   aria-label="Go to previous page">
-                    Previous
-                </a>`;
-        }
-    
-        for (let pageNumber = start; pageNumber <= end; pageNumber++) {
-            const isActive = pageNumber === page;
-            const activeClass = isActive ? ' active' : '';
-            const href = isActive
-                ? '#'
-                : `?title_id=${titleId}&page=${pageNumber}${searchParam}`;
-    
-            html += `
-                <a href="${href}"
-                   class="page-btn${activeClass}"
-                   data-page="${pageNumber}"
-                   data-title-id="${titleId}"
-                   data-search="${search}"
-                   ${isActive ? 'aria-current="page"' : ''}
-                   aria-label="Go to page ${pageNumber}">
-                    ${pageNumber}
-                </a>`;
-        }
-    
-        /*
-         * Next must always mean the immediately following page.
-         */
-        if (page < totalPages) {
-            const nextPage = page + 1;
-    
-            html += `
-                <a href="?title_id=${titleId}&page=${nextPage}${searchParam}"
-                   class="page-btn"
-                   data-page="${nextPage}"
-                   data-title-id="${titleId}"
-                   data-search="${search}"
-                   aria-label="Go to next page">
-                    Next
-                </a>`;
-        }
-
-        if (page < totalPages) {
-            html += `
-                <a href="?title_id=${titleId}&page=${totalPages}${searchParam}"
-                   class="page-btn"
-                   data-page="${totalPages}"
-                   data-title-id="${titleId}"
-                   data-search="${escapeCatalogHtml(search)}"
-                   aria-label="Go to last page">
-                    Last
-                </a>`;
-        }
-    
-        if (totalPages > 1) {
-            html += `
-                <form class="issue-page-jump"
-                      data-title-id="${titleId}"
-                      data-total-pages="${totalPages}">
-                    <label for="issue-page-jump-input">Go to page</label>
-    
-                    <input type="number"
-                           id="issue-page-jump-input"
-                           class="issue-page-jump__input"
-                           min="1"
-                           max="${totalPages}"
-                           inputmode="numeric"
-                           required
-                           aria-label="Page number">
-    
-                    <button type="submit" class="issue-page-jump__button">
-                        Go
-                    </button>
-                </form>`;
-        }
-    
-        $wrapper.html(html);
-    }
-
     function fetchIssues(
         titleId = null,
         page = null,
@@ -1824,7 +1675,6 @@ jQuery(document).ready(function($){
                 }
             
                 const currentPageFromResponse = Number(data.current_page || page);
-                const totalPagesFromResponse = Number(data.total_pages || Math.ceil((data.total_issues || 0) / 10));
             
                 $issuesList
                     .stop(true, true)
@@ -1851,12 +1701,7 @@ jQuery(document).ready(function($){
                     // New buttons now exist; refresh their saved status.
                     $(document).trigger('comicbooks:issues-rendered');
                 
-                    renderIssuePagination(
-                        titleId,
-                        currentPageFromResponse,
-                        search,
-                        data.total_issues || 0
-                    );
+                    $('#pagination-wrapper').html(data.pagination_html || '');
                 
                     lazyLoadImages();
                 

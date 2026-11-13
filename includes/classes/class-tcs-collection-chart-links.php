@@ -8,6 +8,7 @@ class TCS_Collection_Chart_Links {
         'comic_series',
         'comic_genre',
         'creators',
+        'creator_role',
         'era',
     ];
 
@@ -107,8 +108,25 @@ class TCS_Collection_Chart_Links {
             );
         }
 
-        // Read only the metadata required for this filter.
-        $keys = $type === 'creators'
+        $role = '';
+        $creator = '';
+        
+        if ($type === 'creator_role') {
+            $parts = explode(': ', $label, 2);
+        
+            if (count($parts) !== 2) {
+                return [];
+            }
+        
+            $role = tcs_creator_role_key($parts[0]);
+            $creator = tcs_creator_role_key($parts[1]);
+        
+            if ($role === '' || $creator === '') {
+                return [];
+            }
+        }
+        
+        $keys = in_array($type, ['creators', 'creator_role'], true)
             ? ['creators']
             : ['year', 'date_published'];
 
@@ -154,6 +172,15 @@ class TCS_Collection_Chart_Links {
         $ids = [];
 
         foreach ($values as $id => $meta) {
+            if ($type === 'creator_role') {
+                $credits = tcs_creator_role_credits((string) ($meta['creators'] ?? ''));
+            
+                if (isset($credits[$role][$creator])) {
+                    $ids[] = $id;
+                }
+            
+                continue;
+            }
             if ($type === 'creators') {
                 $lines = preg_split(
                     '/\R/u',

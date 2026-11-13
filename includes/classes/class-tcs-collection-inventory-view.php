@@ -312,6 +312,42 @@ class TCS_Collection_Inventory_View {
             . $legend . '</ul></div>';
     }
 
+    private function creator_role_breakdown_html(string $role, array $counts): string {
+        $visible = array_slice($counts, 0, 10, true);
+        $links = [];
+        $role_label = ucwords($role);
+    
+        foreach ($visible as $name => $count) {
+            $label = $role_label . ': ' . $name;
+            $urls = TCS_Collection_Chart_Links::urls([$label => $count], 'creator_role');
+            $links[$name] = $urls[$label];
+        }
+    
+        $remaining = array_sum($counts) - array_sum($visible);
+    
+        if ($remaining > 0) {
+            $other_label = 'Other creators';
+            while (array_key_exists($other_label, $counts)) {
+                $other_label .= ' (combined)';
+            }
+    
+            $visible[$other_label] = $remaining;
+        }
+    
+        $palette = [
+            '#0072B2', '#E69F00', '#009E73', '#D55E00',
+            '#CC79A7', '#56B4E9', '#8A8A8A',
+        ];
+    
+        $colors = [];
+    
+        foreach (array_keys($visible) as $index => $name) {
+            $colors[$name] = $palette[$index % count($palette)];
+        }
+    
+        return $this->pie_breakdown_html($visible, $colors, [], $links);
+    }
+
     private function taxonomy_breakdown_html(int $user_id, string $taxonomy): string {
         if ($taxonomy === 'creators') {
             $counts = $this->repository->creator_credit_counts($user_id);
@@ -478,8 +514,7 @@ class TCS_Collection_Inventory_View {
                     <?php foreach ([
                             'publisher'    => 'Collection by publisher',
                             'comic_series' => 'Most collected series',
-                            'comic_genre' => 'Most collected genres',
-                            'creators' => 'Most collected creators',
+                            'comic_genre' => 'Most collected genres',                      
                         ] as $taxonomy => $heading) : ?>
                             <section class="tci-era-breakdown<?php echo $taxonomy === 'creators' ? ' tci-chart-wide' : ''; ?>"
                                 aria-labelledby="tci-chart-<?php echo esc_attr($taxonomy); ?>">
@@ -498,6 +533,29 @@ class TCS_Collection_Inventory_View {
                                 <?php echo $this->taxonomy_breakdown_html(get_current_user_id(), $taxonomy); ?>
                             </section>
                     <?php endforeach; ?>
+                    <?php
+                        $creator_roles = $this->repository->creator_role_counts(get_current_user_id());
+                        $role_headings = [
+                            'writer' => 'Most collected writers',
+                            'penciler' => 'Most collected pencilers',
+                            'inker' => 'Most collected inkers',
+                            'colorist' => 'Most collected colorists',
+                            'letterer' => 'Most collected letterers',
+                            'editor' => 'Most collected editors',
+                        ];
+
+                        $chart_index = 0;
+
+                        foreach ($creator_roles as $role => $counts) :
+                            $heading_id = 'tci-creator-role-' . ++$chart_index;
+                            $heading = $role_headings[$role] ?? 'Creator credits: ' . ucwords($role);
+                            ?>
+                            <section class="tci-era-breakdown" aria-labelledby="<?php echo esc_attr($heading_id); ?>">
+                                <h2 id="<?php echo esc_attr($heading_id); ?>"><?php echo esc_html($heading); ?></h2>
+                                <p>Each creator counts once per comic for this role.</p>
+                                <?php echo $this->creator_role_breakdown_html($role, $counts); ?>
+                            </section>
+                        <?php endforeach; ?>
                 </div>
                 <?php
                 return;
