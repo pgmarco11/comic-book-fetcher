@@ -22,7 +22,7 @@ The plugin also provides collection and wish-list functionality for logged-in us
 ## Requirements
 
 * WordPress
-* PHP 7.4 or newer
+* PHP 8.3 or newer
 * A Metron account and API credentials
 * A Comic Vine API key
 * jQuery, included with WordPress

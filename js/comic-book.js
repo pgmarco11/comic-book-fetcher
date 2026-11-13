@@ -2057,7 +2057,7 @@ jQuery(document).ready(function($){
              * Save the requested page before updating the browser URL.
              */
             currentPage = page;
-            currentSearch = search || '';
+            currentSearch = $btn.attr('data-search') ?? currentSearch;
         
             updateIssuesUrl(
                 titleId,
