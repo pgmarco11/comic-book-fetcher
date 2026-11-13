@@ -162,14 +162,17 @@ $search_placeholder = $is_chart
                 <?php foreach ([
                     'collection' =>
                         'Publisher + series + volume',
-                    'recent' =>
-                        'Recently added',
                     'title' =>
                         'Series A–Z',
                     'issue' =>
                         'Series + issue number',
+                    'qty_desc' => 'Quantity: Most copies first',
+                    'recent' =>
+                        'Recently added',
                     'oldest' =>
-                        'Oldest added',
+                        'Oldest added',                    
+                    'year_asc' => 'Publication year: Oldest first',
+                    'year_desc' => 'Publication year: Newest first',
                     'price_asc' =>
                         'Price: Low to High',
                     'price_desc' =>

@@ -13,6 +13,7 @@ class TCS_Collection_Inventory_Repository {
             'issue' => $read('issue_number'),
             'volume' => $read('volume'),
             'year' => $read('year'),
+            'date_published' => $read('date_published'),
             'series_id' => absint($read('title_id')),
             'issue_id' => absint($read('issue_id')),
             'qty' => max(1, (int) $read('qty', '1')),
@@ -851,6 +852,38 @@ class TCS_Collection_Inventory_Repository {
         );
     }
 
+    private function sort_by_year(array &$records, bool $descending): void {
+        $years = [];
+    
+        foreach ($records as $record) {
+            $year = trim((string) ($record['year'] ?? ''));
+    
+            if (!preg_match('/^[1-9]\d{3}$/D', $year)) {
+                preg_match(
+                    '/^([1-9]\d{3})(?:-|$)/',
+                    trim((string) ($record['date_published'] ?? '')),
+                    $match
+                );
+                $year = $match[1] ?? '';
+            }
+    
+            $years[$record['id']] = $year === '' ? null : (int) $year;
+        }
+    
+        usort($records, static function (array $a, array $b) use ($years, $descending): int {
+            $year_a = $years[$a['id']];
+            $year_b = $years[$b['id']];
+    
+            $unknown_order = ($year_a === null) <=> ($year_b === null);
+            if ($unknown_order !== 0) {
+                return $unknown_order;
+            }
+    
+            $comparison = $descending ? $year_b <=> $year_a : $year_a <=> $year_b;
+            return $comparison ?: ($a['id'] <=> $b['id']);
+        });
+    }
+
     private function sorting_records(array $posts, string $sort): array {
         global $wpdb;
     
@@ -862,10 +895,14 @@ class TCS_Collection_Inventory_Repository {
             static fn($post): int => (int) $post->ID,
             $posts
         );
+        
     
-        $keys = $sort === 'collection'
-            ? ['volume', 'issue_number']
-            : ['price'];
+        $keys = match ($sort) {
+            'collection' => ['volume', 'issue_number'],
+            'year_asc', 'year_desc' => ['year', 'date_published'],
+            'qty_desc' => ['qty'],
+            default => ['price'],
+        };
     
         $id_slots = implode(
             ', ',
@@ -931,7 +968,10 @@ class TCS_Collection_Inventory_Repository {
                 'publisher' => '',
                 'volume'    => (string) ($values[$id]['volume'] ?? ''),
                 'issue'     => (string) ($values[$id]['issue_number'] ?? ''),
+                'qty' => max(1, (int) ($values[$id]['qty'] ?? 1)),
                 'price'     => (string) ($values[$id]['price'] ?? ''),
+                'year'      => (string) ($values[$id]['year'] ?? ''),
+                'date_published' => (string) ($values[$id]['date_published'] ?? ''),
             ];
         }
     
@@ -1077,7 +1117,9 @@ class TCS_Collection_Inventory_Repository {
             ];
         }
 
-        if (in_array($sort, ['collection', 'price_asc', 'price_desc'], true)) {
+        $sort_by_year = in_array($sort, ['year_asc', 'year_desc'], true);
+
+        if ($sort_by_year || in_array($sort, ['collection', 'price_asc', 'price_desc', 'qty_desc'], true)) {
             $collection_args = $args;
         
             $collection_args['posts_per_page'] = -1;
@@ -1101,11 +1143,14 @@ class TCS_Collection_Inventory_Repository {
             // Sort the complete matching collection before selecting a page.
             if ($sort === 'collection') {
                 $this->sort_records($records);
+            } elseif ($sort_by_year) {
+                $this->sort_by_year($records, $sort === 'year_desc');
+            } elseif ($sort === 'qty_desc') {
+                usort($records, static function (array $a, array $b): int {
+                    return ($b['qty'] <=> $a['qty']) ?: ($a['id'] <=> $b['id']);
+                });    
             } else {
-                $this->sort_by_price(
-                    $records,
-                    $sort === 'price_desc'
-                );
+                $this->sort_by_price($records, $sort === 'price_desc');
             }
         
             $total = count($records);

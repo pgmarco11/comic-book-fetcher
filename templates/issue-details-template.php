@@ -587,13 +587,23 @@
 
                                             <div class="issue-collection-heading">
                                                 <a
-                                                    id="back-to-collection"
+                                                    id="back-to-collection" 
                                                     class="issue-collection-back"
                                                     href="<?php echo esc_url( $my_collection_url ); ?>"
                                                 >
                                                     <span aria-hidden="true">←</span>
                                                     <span>My Collection</span>
                                                 </a>
+
+                                                <?php if ($collection_post_id && current_user_can('manage_options')) : ?>
+                                                    <?php $edit_url = get_edit_post_link($collection_post_id, 'raw'); ?>
+
+                                                    <?php if ($edit_url) : ?>
+                                                        <a class="issue-collection-back" href="<?php echo esc_url($edit_url); ?>">
+                                                            Edit in WordPress
+                                                        </a>
+                                                    <?php endif; ?>
+                                                <?php endif; ?>
 
                                                 <span class="issue-collection-status">
                                                     In collection

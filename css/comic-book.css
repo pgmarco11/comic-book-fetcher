@@ -858,7 +858,9 @@ img.lazy-placeholder,
 .issue-details-content img {
     height: 100%;
     max-width: 350px;
-    width: 100%;
+    width: auto;
+    display: flex;
+    margin: 0 auto 1rem 0;
 }
 
 .issue-notes-box {

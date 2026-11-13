@@ -306,6 +306,36 @@ add_filter(
     2
 );
 
+add_action('admin_bar_menu', function (WP_Admin_Bar $admin_bar): void {
+    if (!is_admin() || !current_user_can('manage_options')) {
+        return;
+    }
+
+    $screen = get_current_screen();
+
+    if (!$screen || $screen->base !== 'post' || $screen->post_type !== 'collection') {
+        return;
+    }
+
+    $post = get_post();
+
+    if (!$post || !current_user_can('edit_post', $post->ID)) {
+        return;
+    }
+
+    $url = collectiblespot_get_collection_item_url($post->ID);
+
+    if ($url === '') {
+        return;
+    }
+
+    $admin_bar->add_node([
+        'id'    => 'tcs-view-collection-comic',
+        'title' => esc_html__('View Comic', 'collectiblespot'),
+        'href'  => $url,
+    ]);
+}, 90);
+
 function normalize_comic_title(string $title): string {
 
     // Remove issue numbers like #1, #001, etc.
