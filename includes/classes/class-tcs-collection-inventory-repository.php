@@ -885,22 +885,27 @@ class TCS_Collection_Inventory_Repository {
         foreach ($records as $record) {
             $year = trim((string) ($record['year'] ?? ''));
             $date = trim((string) ($record['date_published'] ?? ''));
-    
-            preg_match(
-                '/^([1-9]\d{3})(?:-(0[1-9]|1[0-2])(?:-\d{2})?)?$/D',
-                $date,
-                $parts
-            );
-    
+            
+            preg_match('/^([1-9]\d{3})(?:-|$)/', $date, $year_parts);
+            $date_year = $year_parts[1] ?? '';
+            
             if (!preg_match('/^[1-9]\d{3}$/D', $year)) {
-                $year = $parts[1] ?? '';
+                $year = $date_year;
             }
-    
+            
+            $month = 0;
+            
+            if (
+                $year !== ''
+                && $year === $date_year
+                && preg_match('/^[1-9]\d{3}-(0[1-9]|1[0-2])(?:-\d{2})?$/D', $date, $month_parts)
+            ) {
+                $month = (int) $month_parts[1];
+            }
+            
             $dates[$record['id']] = [
                 'year' => $year === '' ? null : (int) $year,
-                'month' => ($parts[1] ?? '') === $year
-                    ? (int) ($parts[2] ?? 0)
-                    : 0,
+                'month' => $month,
             ];
         }
     
