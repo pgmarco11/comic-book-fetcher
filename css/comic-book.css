@@ -36,8 +36,8 @@
     font-size: var(--wp--preset--font-size--medium);
     padding: 0.5rem 1rem;
     border-radius: 12px;
-    border: 2px solid var(--wp--preset--color--royal-blue);
-    background: var(--wp--preset--color--cream);
+    border: 2px solid var(--wp--preset--color--primary);
+    background: var(--wp--preset--color--background-light);
     color: var(--wp--preset--color--black);
     margin-bottom: 1.5rem;
     max-width: 30rem;
@@ -117,9 +117,9 @@
     font-family: var(--wp--preset--font-family--bangers);
     font-size: var(--wp--preset--font-size--medium);
     text-transform: uppercase;
-    background: var(--wp--preset--color--cream);
+    background: var(--wp--preset--color--background-light);
     color: var(--wp--preset--color--black);
-    border: 2px solid var(--wp--preset--color--royal-blue);
+    border: 2px solid var(--wp--preset--color--primary);
     border-radius: 12px;
     padding: 1rem;
     cursor: pointer;
@@ -150,7 +150,7 @@
   
   .comic-title > a:focus-visible,
   .issue-item > a.issue-link:focus-visible {
-    outline: 3px solid var(--wp--preset--color--royal-blue);
+    outline: 3px solid var(--wp--preset--color--primary);
     outline-offset: 3px;
   }
 
@@ -191,7 +191,7 @@
   button,
   input[type="submit"] {
     font-family: var(--wp--preset--font-family--bangers);
-    background-color: var(--wp--preset--color--royal-blue);
+    background-color: var(--wp--preset--color--primary);
     color: var(--wp--preset--color--white);
     border: none;
     border-radius: 12px;
@@ -232,9 +232,9 @@
   
 .pagination-wrapper a.page-btn.active {
   background-color: var(--wp--preset--color--deep-red);
-    box-shadow: 2px 2px 0 var(--wp--preset--color--royal-blue);
-    border-right: 1px solid var(--wp--preset--color--royal-blue);
-    border-bottom: 1px solid var(--wp--preset--color--royal-blue);
+    box-shadow: 2px 2px 0 var(--wp--preset--color--primary);
+    border-right: 1px solid var(--wp--preset--color--primary);
+    border-bottom: 1px solid var(--wp--preset--color--primary);
 }
 
 #pagination-wrapper {
