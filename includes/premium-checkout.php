@@ -11,7 +11,7 @@ final class TCS_Premium_Checkout {
         add_action('admin_init', [self::class, 'register_settings']);
         add_action('admin_menu', [self::class, 'register_menu']);
         add_shortcode('tcs_stripe_checkout', [self::class, 'render_shortcode']);
-        add_action('admin_post_' . self::ACTION, [self::class, 'start_checkout']);
+        add_action('wp_ajax_' . self::ACTION, [self::class, 'start_checkout']);
     }
 
     private static function secret(): string {
@@ -30,6 +30,14 @@ final class TCS_Premium_Checkout {
         $price_id = get_option(self::PRICE_OPTION, '');
 
         return is_string($price_id) && self::valid_price_id($price_id) ? $price_id : '';
+    }
+
+    private static function publishable_key(): string {
+        $key = getenv('TCS_STRIPE_PUBLISHABLE_KEY');
+
+        return is_string($key) && preg_match('/\Apk_test_[A-Za-z0-9]+\z/', $key)
+            ? $key
+            : '';
     }
 
     private static function valid_price_id(string $price_id): bool {
@@ -82,6 +90,9 @@ final class TCS_Premium_Checkout {
                     ? __('Stripe sandbox key detected.', 'comic-books-fetcher')
                     : __('Stripe sandbox key unavailable. Check the local WordPress environment and Apache configuration.', 'comic-books-fetcher')); ?>
             </p>
+            <p><?php echo esc_html(self::publishable_key() !== ''
+                ? __('Stripe sandbox publishable key detected.', 'comic-books-fetcher')
+                : __('Set TCS_STRIPE_PUBLISHABLE_KEY to your sandbox publishable key.', 'comic-books-fetcher')); ?></p>
             <form method="post" action="<?php echo esc_url(admin_url('options.php')); ?>">
                 <?php settings_fields(self::SETTINGS_GROUP); ?>
                 <p>
@@ -122,21 +133,48 @@ final class TCS_Premium_Checkout {
             return '<p>' . esc_html__('Verify your email address before starting checkout.', 'comic-books-fetcher') . '</p>';
         }
 
-        if (self::secret() === '' || self::price_id() === '') {
+        $publishable_key = self::publishable_key();
+
+        if (self::secret() === '' || self::price_id() === '' || $publishable_key === '') {
             return '<p>' . esc_html__('Premium checkout is currently unavailable.', 'comic-books-fetcher') . '</p>';
         }
 
         $attempt = wp_generate_uuid4();
+        $script_path = 'js/premium-checkout.js';
+        wp_enqueue_script('tcs-stripe-js', 'https://js.stripe.com/endive/stripe.js', [], null, true);
+        wp_enqueue_script(
+            'tcs-premium-checkout',
+            COMICBOOKS_PLUGIN_URL . $script_path,
+            ['tcs-stripe-js'],
+            (string) filemtime(COMICBOOKS_PLUGIN_DIR . $script_path),
+            true
+        );
 
         ob_start();
         ?>
-        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+        <form
+            class="tcs-premium-payment"
+            method="post"
+            action="<?php echo esc_url(admin_url('admin-ajax.php')); ?>"
+            data-publishable-key="<?php echo esc_attr($publishable_key); ?>"
+            data-return-url="<?php echo esc_url(home_url('/my-collection/')); ?>"
+        >
             <input type="hidden" name="action" value="<?php echo esc_attr(self::ACTION); ?>">
             <input type="hidden" name="checkout_attempt" value="<?php echo esc_attr($attempt); ?>">
-            <?php wp_nonce_field(self::ACTION . ':' . $attempt); ?>
-            <button type="submit" class="btn btn-primary">
-                <?php esc_html_e('Continue to Stripe Checkout', 'comic-books-fetcher'); ?>
+            <?php wp_nonce_field(self::ACTION . ':' . $attempt, '_ajax_nonce', false); ?>
+            <p class="tcs-premium-payment__status" role="status">
+                <?php esc_html_e('Loading payment details…', 'comic-books-fetcher'); ?>
+            </p>
+            <div class="tcs-premium-payment__fields"></div>
+            <p class="tcs-premium-payment__error mt-2 text-danger" role="alert"></p>
+            <p class="tcs-premium-payment__total fw-bold" hidden>
+                <?php esc_html_e('Due today', 'comic-books-fetcher'); ?>
+                <span></span>
+            </p>
+            <button type="submit" class="btn btn-primary w-100" disabled>
+                <?php esc_html_e('Subscribe to Premium', 'comic-books-fetcher'); ?>
             </button>
+            <noscript><?php esc_html_e('Enable JavaScript to pay securely with Stripe.', 'comic-books-fetcher'); ?></noscript>
         </form>
         <?php
         return (string) ob_get_clean();
@@ -144,28 +182,30 @@ final class TCS_Premium_Checkout {
 
     public static function start_checkout(): void {
         if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-            wp_die(esc_html__('Use the checkout button to start a session.', 'comic-books-fetcher'), '', ['response' => 405]);
+            wp_send_json_error(['message' => __('Open the checkout page and try again.', 'comic-books-fetcher')], 405);
         }
 
         $attempt = $_POST['checkout_attempt'] ?? '';
 
         if (!is_string($attempt) || !wp_is_uuid($attempt, 4)) {
-            wp_die(esc_html__('Open the checkout page and try again.', 'comic-books-fetcher'), '', ['response' => 400]);
+            wp_send_json_error(['message' => __('Open the checkout page and try again.', 'comic-books-fetcher')], 400);
         }
 
-        check_admin_referer(self::ACTION . ':' . $attempt);
+        if (!check_ajax_referer(self::ACTION . ':' . $attempt, '_ajax_nonce', false)) {
+            wp_send_json_error(['message' => __('Refresh the checkout page and try again.', 'comic-books-fetcher')], 403);
+        }
 
         $user_id = get_current_user_id();
 
         if (!self::can_checkout($user_id)) {
-            wp_die(esc_html__('Sign in with a verified account to continue.', 'comic-books-fetcher'), '', ['response' => 403]);
+            wp_send_json_error(['message' => __('Sign in with a verified account to continue.', 'comic-books-fetcher')], 403);
         }
 
         $secret = self::secret();
         $price_id = self::price_id();
 
-        if ($secret === '' || $price_id === '') {
-            wp_die(esc_html__('Premium checkout is currently unavailable.', 'comic-books-fetcher'), '', ['response' => 503]);
+        if ($secret === '' || $price_id === '' || self::publishable_key() === '') {
+            wp_send_json_error(['message' => __('Premium checkout is currently unavailable.', 'comic-books-fetcher')], 503);
         }
 
         $response = wp_remote_post('https://api.stripe.com/v1/checkout/sessions', [
@@ -174,40 +214,38 @@ final class TCS_Premium_Checkout {
             'headers' => [
                 'Authorization' => 'Bearer ' . $secret,
                 'Stripe-Version' => '2026-10-28.endive',
-                'Idempotency-Key' => 'tcs-checkout-' . $user_id . '-' . $attempt,
+                'Idempotency-Key' => 'tcs-elements-' . $user_id . '-' . $attempt,
             ],
             'body' => [
                 'mode' => 'subscription',
+                'ui_mode' => 'elements',
                 'line_items[0][price]' => $price_id,
                 'line_items[0][quantity]' => '1',
                 'client_reference_id' => (string) $user_id,
+                'customer_email' => wp_get_current_user()->user_email,
                 'subscription_data[metadata][wp_user_id]' => (string) $user_id,
-                'success_url' => home_url('/my-collection/'),
-                'cancel_url' => home_url('/premium-checkout/'),
+                'return_url' => home_url('/my-collection/'),
             ],
         ]);
 
         if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
-            wp_die(esc_html__('Stripe checkout could not be started. Please try again.', 'comic-books-fetcher'), '', ['response' => 502]);
+            wp_send_json_error(['message' => __('Stripe checkout could not be started. Please try again.', 'comic-books-fetcher')], 502);
         }
 
         $session = json_decode(wp_remote_retrieve_body($response), true);
-        $url = $session['url'] ?? '';
-        $parts = is_string($url) ? wp_parse_url($url) : false;
+        $client_secret = $session['client_secret'] ?? '';
 
         if (
             ($session['livemode'] ?? null) !== false
-            || ($parts['scheme'] ?? '') !== 'https'
-            || ($parts['host'] ?? '') !== 'checkout.stripe.com'
-            || isset($parts['user'])
-            || isset($parts['pass'])
-            || ($parts['port'] ?? 443) !== 443
+            || ($session['ui_mode'] ?? null) !== 'elements'
+            || !is_string($client_secret)
+            || $client_secret === ''
         ) {
-            wp_die(esc_html__('Stripe returned an invalid checkout URL.', 'comic-books-fetcher'), '', ['response' => 502]);
+            wp_send_json_error(['message' => __('Stripe returned an invalid checkout session.', 'comic-books-fetcher')], 502);
         }
 
-        wp_redirect($url, 303);
-        exit;
+        nocache_headers();
+        wp_send_json_success(['clientSecret' => $client_secret]);
     }
 }
 
