@@ -63,7 +63,7 @@
                 throw new Error('The payment form could not load. Refresh the page to try again.');
             }
 
-            const response = await fetch(form.action, {
+            const response = await fetch(form.getAttribute('action'), {
                 method: 'POST',
                 credentials: 'same-origin',
                 cache: 'no-store',
