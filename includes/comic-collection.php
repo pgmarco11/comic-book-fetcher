@@ -785,7 +785,7 @@ function handle_add_comic_to_collection() {
                        AND p.post_author = %d
                        AND pm.meta_key = 'issue_id'
                        AND CAST(pm.meta_value AS SIGNED) = %d
-                     ORDER BY p.post_date DESC, p.ID DESC
+                     ORDER BY (p.post_status = 'publish') DESC, p.post_date DESC, p.ID DESC
                      LIMIT 1",
                     $user_id,
                     $issue_id
@@ -832,6 +832,21 @@ function handle_add_comic_to_collection() {
                         }
 
                         $needs_publish = true;
+                    }
+                }
+
+                if ($needs_publish && !tcs_user_has_premium($user_id)) {
+                    $issue_count = tcs_count_collection_issues($user_id);
+                
+                    if (is_wp_error($issue_count)) {
+                        return $issue_count;
+                    }
+                
+                    if ($issue_count >= 50) {
+                        return new WP_Error(
+                            'tcs_collection_limit_reached',
+                            __('Your Free plan allows up to 50 issues. Remove an issue or upgrade to Premium to add more.', 'comic-books-fetcher')
+                        );
                     }
                 }
 
@@ -949,7 +964,7 @@ function handle_add_comic_to_collection() {
     if (is_wp_error($result)) {
         $status = in_array(
             $result->get_error_code(),
-            ['tcs_collection_changed', 'tcs_collection_import_draft'],
+            ['tcs_collection_changed', 'tcs_collection_import_draft', 'tcs_collection_limit_reached'],
             true
         ) ? 409 : 500;
     
