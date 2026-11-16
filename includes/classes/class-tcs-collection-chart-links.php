@@ -35,6 +35,12 @@ class TCS_Collection_Chart_Links {
         return $links;
     }
 
+    public static function requires_premium(array $input): bool {
+        $type = tcs_inventory_text($input['collection_chart_type'] ?? '');
+    
+        return $type !== 'era' && in_array($type, self::TYPES, true);
+    }
+
     public static function matching_ids(array $input): ?array {
         global $wpdb;
 

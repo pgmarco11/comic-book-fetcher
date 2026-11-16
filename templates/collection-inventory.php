@@ -17,6 +17,7 @@ $view = in_array(
     : 'inventory';
 
 $inventory_url = tcs_inventory_url();
+$has_premium = tcs_user_has_premium(get_current_user_id()); 
 
 $chart_type = $value('collection_chart_type');
 $chart_label = $value('collection_chart_label');
@@ -330,7 +331,7 @@ $search_placeholder = $is_chart
             id="tci-issue-view"
             <?php if ($view === 'series') echo 'hidden'; ?>
         >
-            <div class="tci-selection-toolbar">
+            <div class="tci-selection-toolbar<?php echo $has_premium ? '' : ' d-none'; ?>">
                 <label class="tci-check">
                     <input
                         id="tci-select-all"

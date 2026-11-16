@@ -14,14 +14,21 @@ class TCS_Collection_Inventory_View {
         if (!$records) {
             echo '<div class="tci-empty"><span aria-hidden="true">✦</span><h3>No issues here yet</h3><p>Try another filter, or add a comic from the catalog.</p><a class="tci-button tci-button-primary" href="' . esc_url(home_url('/comic-database/')) . '">Explore the comic catalog</a></div>';
         } else {
-            echo '<ul class="tci-items" aria-label="Collection issues">';
+            echo '<ul class="tci-items" aria-label="Collection issues">';         
+
             foreach ($records as $record) {
                 $id = $record['id'];
                 $name = $record['title'] . ($record['issue'] !== '' ? ' #' . $record['issue'] : '');
                 ?>
             <li class="tci-item" data-record="<?php echo esc_attr(wp_json_encode($record)); ?>">
                 <article aria-labelledby="tci-title-<?php echo (int) $id; ?>">
-                    <label class="tci-select"><input type="checkbox" name="inventory_selected[]" value="<?php echo (int) $id; ?>"><span class="tci-sr-only">Select <?php echo esc_html($name); ?></span></label>
+                
+
+                    <label class="tci-select">
+                        <input type="checkbox" name="inventory_selected[]" value="<?php echo (int) $id; ?>">
+                        <span class="tci-sr-only">Select <?php echo esc_html($name); ?></span>
+                    </label>
+
                     <a class="tci-cover" href="<?php echo esc_url($record['catalog_url']); ?>" aria-label="View <?php echo esc_attr($name); ?> in the catalog">
                         <?php if ($record['cover']) : ?><img src="<?php echo esc_url($record['cover']); ?>" alt="" loading="lazy" decoding="async" width="260" height="400"><?php else : ?><span class="tci-cover-placeholder"><span><?php echo esc_html($record['publisher'] ?: 'COLLECTION'); ?></span><strong><?php echo esc_html($record['title']); ?></strong><b>#<?php echo esc_html($record['issue'] ?: '—'); ?></b></span><?php endif; ?>
                         <?php if ($record['qty'] > 1) : ?><span class="tci-copy-badge"><?php echo (int) $record['qty']; ?> copies</span><?php endif; ?>
@@ -482,84 +489,101 @@ class TCS_Collection_Inventory_View {
             echo '<div class="tci-empty"><h1>My collection</h1><p>Sign in to view and manage your comics.</p><a class="tci-button tci-button-primary" href="' . esc_url(wp_login_url($inventory_url)) . '">Sign in</a></div>';
             return;
         }
+        $user_id = get_current_user_id();
+        $has_premium = tcs_user_has_premium($user_id);
         $input = wp_unslash($_GET);
         $show_charts = ($input['collection_view'] ?? '') === 'charts';
         $charts_url = add_query_arg('collection_view', 'charts', $inventory_url);
-
+        $plans_url = home_url('/membership/');
         ?>
-            <nav class="tci-section-nav" aria-label="My Collection sections">
-                <a href="<?php echo esc_url($inventory_url); ?>"<?php if (!$show_charts) echo ' aria-current="page"'; ?>>Collection</a>
-                <a href="<?php echo esc_url($charts_url); ?>"<?php if ($show_charts) echo ' aria-current="page"'; ?>>Charts</a>
-            </nav>
 
+        <nav class="tci-section-nav" aria-label="My Collection sections">
+            <a href="<?php echo esc_url($inventory_url); ?>"<?php if (!$show_charts) echo ' aria-current="page"'; ?>>Collection</a>
+            <a href="<?php echo esc_url($charts_url); ?>"<?php if ($show_charts) echo ' aria-current="page"'; ?>>Charts</a>
+        </nav>
 
-            <?php
-            if ($show_charts) { ?>
-                <div class="tci-charts"> 
-                        <?php $value_html = $this->collection_value_html(get_current_user_id()); ?>
-
-                        <?php if ($value_html !== '') : ?>
-                            <section class="tci-era-breakdown tci-chart-wide tci-chart-value" aria-labelledby="tci-value-heading">
-                                <h2 id="tci-value-heading">Collection value</h2>
-                                <?php echo $value_html; ?>
-                            </section>
-                        <?php endif; ?>
-
-                        <section class="tci-era-breakdown" aria-labelledby="tci-era-heading">
-                            <h2 id="tci-era-heading">Collection by era</h2>
-                            <p>Based on publication years across your entire collection. Each entry counts once.</p>
-                            <?php echo $this->era_breakdown_html(get_current_user_id()); ?>
+        <?php if ($show_charts) : ?>
+            <div class="tci-charts">
+                <?php if ($has_premium) : ?>
+                    <?php $value_html = $this->collection_value_html($user_id); ?>
+                    <?php if ($value_html !== '') : ?>
+                        <section class="tci-era-breakdown tci-chart-wide tci-chart-value" aria-labelledby="tci-value-heading">
+                            <h2 id="tci-value-heading">Collection value</h2>
+                            <?php echo $value_html; ?>
                         </section>
+                    <?php endif; ?>
+                <?php endif; ?>
 
+                <section class="tci-era-breakdown" aria-labelledby="tci-era-heading">
+                    <h2 id="tci-era-heading">Collection by era</h2>
+                    <p>Based on publication years across your entire collection. Each entry counts once.</p>
+                    <?php echo $this->era_breakdown_html($user_id); ?>
+                </section>
+
+                <?php if ($has_premium) : ?>
                     <?php foreach ([
-                            'publisher'    => 'Collection by publisher',
-                            'comic_series' => 'Most collected series',
-                            'comic_genre' => 'Most collected genres',                      
-                        ] as $taxonomy => $heading) : ?>
-                            <section class="tci-era-breakdown<?php echo $taxonomy === 'creators' ? ' tci-chart-wide' : ''; ?>"
-                                aria-labelledby="tci-chart-<?php echo esc_attr($taxonomy); ?>">
-                                <h2 id="tci-chart-<?php echo esc_attr($taxonomy); ?>">
-                                    <?php echo esc_html($heading); ?>
-                                </h2>                                                       
-                                <?php if ($taxonomy === 'comic_genre') : ?>
-                                    <p>Percentages show the share of all genre assignments.
-                                    A comic can contribute to more than one genre.</p>
-                                    <?php elseif ($taxonomy === 'creators') : ?>
-                                        <p>Percentages show the share of all creator credits.
-                                            Each creator counts once per collection entry.</p>
-                                    <?php else : ?>
-                                        <p>Each collection entry counts once.</p>
-                                <?php endif; ?>
-                                <?php echo $this->taxonomy_breakdown_html(get_current_user_id(), $taxonomy); ?>
-                            </section>
+                        'publisher'    => 'Collection by publisher',
+                        'comic_series' => 'Most collected series',
+                        'comic_genre'  => 'Most collected genres',
+                    ] as $taxonomy => $heading) : ?>
+                        <section class="tci-era-breakdown" aria-labelledby="tci-chart-<?php echo esc_attr($taxonomy); ?>">
+                            <h2 id="tci-chart-<?php echo esc_attr($taxonomy); ?>">
+                                <?php echo esc_html($heading); ?>
+                            </h2>
+
+                            <?php if ($taxonomy === 'comic_genre') : ?>
+                                <p>Percentages show the share of all genre assignments. A comic can contribute to more than one genre.</p>
+                            <?php else : ?>
+                                <p>Each collection entry counts once.</p>
+                            <?php endif; ?>
+
+                            <?php echo $this->taxonomy_breakdown_html($user_id, $taxonomy); ?>
+                        </section>
                     <?php endforeach; ?>
+
                     <?php
-                        $creator_roles = $this->repository->creator_role_counts(get_current_user_id());
-                        $role_headings = [
-                            'writer' => 'Most collected writers',
-                            'penciler' => 'Most collected pencilers',
-                            'inker' => 'Most collected inkers',
-                            'colorist' => 'Most collected colorists',
-                            'letterer' => 'Most collected letterers',
-                            'editor' => 'Most collected editors',
-                        ];
+                    $creator_roles = $this->repository->creator_role_counts($user_id);
+                    $role_headings = [
+                        'writer'   => 'Most collected writers',
+                        'penciler' => 'Most collected pencilers',
+                        'inker'    => 'Most collected inkers',
+                        'colorist' => 'Most collected colorists',
+                        'letterer' => 'Most collected letterers',
+                        'editor'   => 'Most collected editors',
+                    ];
+                    $chart_index = 0;
 
-                        $chart_index = 0;
+                    foreach ($creator_roles as $role => $counts) :
+                        $heading_id = 'tci-creator-role-' . ++$chart_index;
+                        $heading = $role_headings[$role] ?? 'Creator credits: ' . ucwords($role);
+                        ?>
+                        <section class="tci-era-breakdown" aria-labelledby="<?php echo esc_attr($heading_id); ?>">
+                            <h2 id="<?php echo esc_attr($heading_id); ?>"><?php echo esc_html($heading); ?></h2>
+                            <p>Each creator counts once per comic for this role.</p>
+                            <?php echo $this->creator_role_breakdown_html($role, $counts); ?>
+                        </section>
+                    <?php endforeach; ?>
+                <?php else : ?>
+                    <section class="tci-era-breakdown" aria-labelledby="tci-premium-charts-heading">
+                        <h2 id="tci-premium-charts-heading">Advanced charts</h2>
+                        <p>Premium includes charts for collection value, publishers, series, genres, and creators.</p>
+                        <a class="tci-button tci-button-primary" href="<?php echo esc_url($plans_url); ?>">View plans</a>
+                    </section>
+                <?php endif; ?>
+            </div>
+            <?php
+            return;
+        endif;
 
-                        foreach ($creator_roles as $role => $counts) :
-                            $heading_id = 'tci-creator-role-' . ++$chart_index;
-                            $heading = $role_headings[$role] ?? 'Creator credits: ' . ucwords($role);
-                            ?>
-                            <section class="tci-era-breakdown" aria-labelledby="<?php echo esc_attr($heading_id); ?>">
-                                <h2 id="<?php echo esc_attr($heading_id); ?>"><?php echo esc_html($heading); ?></h2>
-                                <p>Each creator counts once per comic for this role.</p>
-                                <?php echo $this->creator_role_breakdown_html($role, $counts); ?>
-                            </section>
-                        <?php endforeach; ?>
-                </div>
-                <?php
-                return;
-            }
+        if (!$has_premium && TCS_Collection_Chart_Links::requires_premium($input)) {
+            ?>
+            <div class="tci-empty">
+                <h2>This chart requires Premium</h2>
+                <a class="tci-button" href="<?php echo esc_url($charts_url); ?>">Back to Charts</a>
+            </div>
+            <?php
+            return;
+        }
 
         $results = $this->repository->results($input);
         $publisher_id = absint(

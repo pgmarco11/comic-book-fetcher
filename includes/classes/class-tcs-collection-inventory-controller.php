@@ -104,6 +104,7 @@ class TCS_Collection_Inventory_Controller {
 
         $input = wp_unslash($_POST);
         $user_id = get_current_user_id();
+        
 
         $results = $this->repository->results($input);
         unset($results['records']);
@@ -209,6 +210,14 @@ class TCS_Collection_Inventory_Controller {
             $operation = tcs_inventory_text(
                 $input['operation'] ?? ''
             );
+
+            $is_bulk_change = $operation === 'location' || count($ids) > 1;
+
+            if ($is_bulk_change && !tcs_user_has_premium(get_current_user_id())) {
+                wp_send_json_error([
+                    'message' => __('Bulk collection editing requires Premium.', 'comic-books-fetcher'),
+                ], 403);
+            }
 
             if (
                 !$ids ||

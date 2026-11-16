@@ -24,6 +24,41 @@ function tcs_user_has_premium(int $user_id): bool {
     return tcs_get_membership_plan($user_id) === 'premium';
 }
 
+function tcs_count_collection_issues(int $user_id): int|WP_Error {
+    global $wpdb;
+
+    $count = $wpdb->get_var($wpdb->prepare(
+        "SELECT COUNT(DISTINCT CASE
+            WHEN issue.meta_id IS NOT NULL
+                THEN CONCAT('issue:', CAST(issue.meta_value AS UNSIGNED))
+            ELSE CONCAT('post:', p.ID)
+        END)
+        FROM {$wpdb->posts} p
+        LEFT JOIN {$wpdb->postmeta} issue
+            ON issue.meta_id = (
+                SELECT MIN(pm.meta_id)
+                FROM {$wpdb->postmeta} pm
+                WHERE pm.post_id = p.ID
+                  AND pm.meta_key = 'issue_id'
+                  AND pm.meta_value REGEXP '^[0-9]+$'
+                  AND CAST(pm.meta_value AS UNSIGNED) > 0
+            )
+        WHERE p.post_type = 'collection'
+          AND p.post_status = 'publish'
+          AND p.post_author = %d",
+        $user_id
+    ));
+
+    if ($wpdb->last_error !== '' || $count === null) {
+        return new WP_Error(
+            'tcs_collection_count_failed',
+            __('Your collection count could not be checked. Please try again.', 'comic-books-fetcher')
+        );
+    }
+
+    return (int) $count;
+}
+
 function tcs_can_edit_local_test_plan(int $user_id): bool {
     return wp_get_environment_type() === 'local'
         && current_user_can('manage_options')
