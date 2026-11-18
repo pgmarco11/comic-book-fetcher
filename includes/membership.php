@@ -2,6 +2,8 @@
 
 defined('ABSPATH') || exit;
 
+const TCS_FREE_COLLECTION_LIMIT = 50;
+
 function tcs_get_membership_plan(int $user_id): string {
     if ($user_id <= 0) {
         return 'free';

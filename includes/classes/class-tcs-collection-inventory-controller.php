@@ -152,6 +152,8 @@ class TCS_Collection_Inventory_Controller {
                 $overview,
                 [
                     'taxonomy_html' => $taxonomy_html,
+                    'taxonomy_html' => $taxonomy_html,
+                    'collection_usage_html' => tcs_inventory_view()->collection_usage_html($user_id),
                 ]
             )
         );

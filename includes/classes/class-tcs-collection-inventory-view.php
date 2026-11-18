@@ -482,6 +482,56 @@ class TCS_Collection_Inventory_View {
             . '<tbody>' . $rows . '</tbody></table></details>';
     }
 
+    public function collection_usage_html(int $user_id): string {
+        if ($user_id <= 0 || tcs_user_has_premium($user_id)) {
+            return '';
+        }
+    
+        $issue_count = tcs_count_collection_issues($user_id);
+    
+        if (is_wp_error($issue_count)) {
+            return '<p class="tci-usage-panel">'
+                . esc_html__('Collection usage is temporarily unavailable.', 'comic-books-fetcher')
+                . '</p>';
+        }
+    
+        $limit = TCS_FREE_COLLECTION_LIMIT;
+        $at_limit = $issue_count >= $limit;
+    
+        ob_start();
+        ?>
+        <div class="tci-usage-panel<?php echo $at_limit ? ' tci-usage-panel--limit' : ''; ?>">
+            <div>
+                <p>
+                    <strong><?php esc_html_e('Free plan', 'comic-books-fetcher'); ?></strong>
+                    <span aria-hidden="true"> · </span>
+                    <?php
+                    echo esc_html(sprintf(
+                        /* translators: 1: saved issue count, 2: Free collection limit. */
+                        __('%1$s of %2$s issues saved', 'comic-books-fetcher'),
+                        number_format_i18n($issue_count),
+                        number_format_i18n($limit)
+                    ));
+                    ?>
+                </p>
+    
+                <?php if ($at_limit) : ?>
+                    <p><?php esc_html_e('Your Free collection is full. You can still edit or remove saved issues. To add more, make room or upgrade to Premium.', 'comic-books-fetcher'); ?></p>
+                <?php endif; ?>
+            </div>
+    
+            <?php if ($at_limit) : ?>
+                <a class="tci-button tci-button-primary"
+                   href="<?php echo esc_url(home_url('/membership/')); ?>">
+                    <?php esc_html_e('View Premium plans', 'comic-books-fetcher'); ?>
+                </a>
+            <?php endif; ?>
+        </div>
+        <?php
+    
+        return (string) ob_get_clean();
+    }
+
     public function render_app(): void {
         $inventory_url = tcs_inventory_url();
 

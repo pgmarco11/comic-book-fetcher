@@ -208,6 +208,16 @@
             const data = await request('tcs_inventory_list', new FormData(filters), readController.signal);
             if (version !== readVersion) return;
             results.innerHTML = data.html;
+            const usage = $('#tci-collection-usage');
+
+            if (usage && typeof data.collection_usage_html === 'string') {
+                const usageHtml = data.collection_usage_html.trim();
+
+                if (usage.innerHTML.trim() !== usageHtml) {
+                    usage.innerHTML = usageHtml;
+                }
+            }
+            
             if (
                 typeof data.taxonomy_html === 'string'
             ) {

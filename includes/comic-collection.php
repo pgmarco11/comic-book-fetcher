@@ -842,10 +842,13 @@ function handle_add_comic_to_collection() {
                         return $issue_count;
                     }
                 
-                    if ($issue_count >= 50) {
+                    if ($issue_count >= TCS_FREE_COLLECTION_LIMIT) {
                         return new WP_Error(
                             'tcs_collection_limit_reached',
-                            __('Your Free plan allows up to 50 issues. Remove an issue or upgrade to Premium to add more.', 'comic-books-fetcher')
+                            sprintf(
+                                __('Your Free plan allows up to %s issues. Remove an issue or upgrade to Premium to add more.', 'comic-books-fetcher'),
+                                number_format_i18n(TCS_FREE_COLLECTION_LIMIT)
+                            )
                         );
                     }
                 }
