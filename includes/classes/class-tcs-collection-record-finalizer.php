@@ -24,8 +24,10 @@ class TCS_Collection_Record_Finalizer {
         array $job,
         int $source_post_id,
         array $term_map,
+        TCS_Collection_Import_Lock $lock,
         array $post_map = []
     ): array {
+        $lock->assert_owned();
 
         if (
             array_key_exists('token', $job) &&
@@ -77,6 +79,17 @@ class TCS_Collection_Record_Finalizer {
                 'status' => 'skipped',
                 'post_id' => $item['existing_post_id'],
             ];
+        }
+
+        $owner_id = $item['destination_owner_id'];
+
+        if (
+            $record['post']['post_status'] === 'future'
+            && !tcs_user_has_premium($owner_id)
+        ) {
+            throw new RuntimeException(
+                'A scheduled comic cannot be restored to a Free collection.'
+            );
         }
 
         $assignments = $this->map_terms(
@@ -342,6 +355,26 @@ class TCS_Collection_Record_Finalizer {
             );
 
             try {
+                $lock->assert_owned();
+
+                if (
+                    $source['post_status'] === 'publish'
+                    && $post->post_status !== 'publish'
+                    && !tcs_user_has_premium($owner_id)
+                ) {
+                    $count = tcs_count_collection_issues($owner_id);
+
+                    if (is_wp_error($count)) {
+                        throw new RuntimeException($count->get_error_message());
+                    }
+
+                    if ($count >= TCS_FREE_COLLECTION_LIMIT) {
+                        throw new RuntimeException(
+                            'This Free collection is full. Remove a saved issue or upgrade to Premium, then resume the import.'
+                        );
+                    }
+                }
+
                 $result = wp_update_post(
                     wp_slash([
                         'ID' => $post_id,

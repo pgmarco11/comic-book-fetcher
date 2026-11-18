@@ -241,6 +241,7 @@ class TCS_Collection_Import_Runner {
                     $job,
                     $source_id,
                     $progress['term_map'],
+                    $lock,
                     $progress['post_map']
                 );
             } catch (Throwable $error) {

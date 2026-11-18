@@ -155,6 +155,72 @@ class TCS_Collection_Import_Planner {
         return $result;
     }
 
+    private function backup_issue_id(array $record): int {
+        foreach ($record['meta'] as $row) {
+            if (base64_decode($row['key_b64'], true) !== 'issue_id') {
+                continue;
+            }
+    
+            $value = base64_decode($row['value_b64'], true);
+    
+            if (is_string($value) && ctype_digit($value) && (int) $value > 0) {
+                return (int) $value;
+            }
+        }
+    
+        return 0;
+    }
+    
+    private function published_issue_matches(array $owner_map): array {
+        global $wpdb;
+    
+        $owner_ids = array_values(array_unique($owner_map));
+    
+        if (!$owner_ids) {
+            return [];
+        }
+    
+        $slots = implode(', ', array_fill(0, count($owner_ids), '%d'));
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT p.ID, p.post_author,
+                    CAST(issue.meta_value AS UNSIGNED) AS issue_id,
+                    pending.meta_value AS pending_origin
+             FROM {$wpdb->posts} p
+             INNER JOIN {$wpdb->postmeta} issue ON issue.meta_id = (
+                 SELECT MIN(pm.meta_id)
+                 FROM {$wpdb->postmeta} pm
+                 WHERE pm.post_id = p.ID
+                   AND pm.meta_key = 'issue_id'
+                   AND pm.meta_value REGEXP '^[0-9]+$'
+                   AND CAST(pm.meta_value AS UNSIGNED) > 0
+             )
+             LEFT JOIN {$wpdb->postmeta} pending
+                 ON pending.post_id = p.ID
+                 AND pending.meta_key = '_tcs_collection_transfer_pending'
+             WHERE p.post_type = 'collection'
+               AND p.post_status = 'publish'
+               AND p.post_author IN ($slots)
+             ORDER BY p.ID",
+            $owner_ids
+        ), ARRAY_A);
+    
+        if ($wpdb->last_error !== '' || !is_array($rows)) {
+            throw new RuntimeException('Saved collection issues could not be checked.');
+        }
+    
+        $matches = [];
+    
+        foreach ($rows as $row) {
+            $owner_id = (int) $row['post_author'];
+            $issue_id = (int) $row['issue_id'];
+            $post_id = (int) $row['ID'];
+    
+            $matches[$owner_id][$issue_id][$post_id] = $row['pending_origin'];
+        }
+    
+        return $matches;
+    }
+
     public function build_import_plan(
         array $job
     ): array {
@@ -184,6 +250,8 @@ class TCS_Collection_Import_Planner {
             $backup,
             $owner_map
         );
+
+        $published_issues = $this->published_issue_matches($owner_map);
 
         $plan = [
             'owner_map' => $owner_map,
@@ -223,6 +291,17 @@ class TCS_Collection_Import_Planner {
                 );
             }
 
+            $issue_id = $this->backup_issue_id($record);
+
+            if (!$matches && $issue_id > 0) {
+                $published = $published_issues[$destination_id][$issue_id] ?? [];
+
+                // Let a retry finish its own published record after an interrupted write.
+                if ($published && !in_array($origin, $published, true)) {
+                    $matches[(int) array_key_first($published)] = true;
+                }
+            }
+
             $skip = count($matches) === 1;
 
             $plan[$skip ? 'skip_count' : 'create_count']++;
@@ -231,6 +310,8 @@ class TCS_Collection_Import_Planner {
                 'source_post_id' => $source_id,
                 'destination_owner_id' => $destination_id,
                 'origin' => $origin,
+                'issue_id' => $issue_id,
+                'post_status' => $record['post']['post_status'],
                 'action' => $skip ? 'skip' : 'create',
                 'existing_post_id' => $skip
                     ? (int) array_key_first($matches)

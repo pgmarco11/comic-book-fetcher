@@ -471,6 +471,54 @@ class TCS_Collection_Transfer {
         );
     }
 
+    private function render_free_restore_capacity(array $plan): void {
+        $incoming = [];
+    
+        foreach ($plan['records'] as $item) {
+            if (
+                $item['action'] !== 'create'
+                || $item['post_status'] !== 'publish'
+            ) {
+                continue;
+            }
+    
+            $key = $item['issue_id'] > 0
+                ? 'issue:' . $item['issue_id']
+                : 'record:' . $item['source_post_id'];
+    
+            $incoming[$item['destination_owner_id']][$key] = true;
+        }
+    
+        foreach (array_unique($plan['owner_map']) as $owner_id) {
+            if (tcs_user_has_premium($owner_id)) {
+                continue;
+            }
+    
+            $saved = tcs_count_collection_issues($owner_id);
+    
+            if (is_wp_error($saved)) {
+                echo '<p>' . esc_html($saved->get_error_message()) . '</p>';
+                continue;
+            }
+    
+            $needed = count($incoming[$owner_id] ?? []);
+            $remaining = max(0, TCS_FREE_COLLECTION_LIMIT - $saved);
+            $fits = min($needed, $remaining);
+            $owner = get_userdata($owner_id);
+    
+            echo '<p><strong>' . esc_html($owner->display_name) . '</strong> ';
+            echo esc_html(sprintf(
+                '%1$d of %2$d new issues fit on the Free plan.',
+                $fits,
+                $needed
+            )) . '</p>';
+    
+            if ($needed > $fits) {
+                echo '<p>The import will pause if this collection reaches the Free limit.</p>';
+            }
+        }
+    }
+
     public function render_owner_mapping(): void {
 
             $pending = get_option(
@@ -505,11 +553,21 @@ class TCS_Collection_Transfer {
                 return;
             }
 
+            $plan = null;
+
+            if (isset($job['import_plan'])) {
+                try {
+                    $plan = $this->service->build_import_plan($job);
+                } catch (Throwable $error) {
+                    echo '<p>' . esc_html($error->getMessage()) . '</p>';
+                    return;
+                }
+            }
+
             $is_admin = current_user_can('manage_options');
 
             if (!$is_admin) {
-                $plan = $job['import_plan'] ?? null;
-            
+                       
                 if (!is_array($plan)) {
                     echo '<p>Upload your backup again to prepare the import preview.</p>';
                     return;
@@ -524,20 +582,14 @@ class TCS_Collection_Transfer {
                     </p>
             
                     <p>
-                        Would create:
-                        <strong><?php
-                            echo esc_html(
-                                (string) $plan['create_count']
-                            );
-                        ?></strong>
+                        Unmatched backup records:
+                        <strong><?php echo esc_html((string) $plan['create_count']); ?></strong>
                         <br>
                         Would skip:
-                        <strong><?php
-                            echo esc_html(
-                                (string) $plan['skip_count']
-                            );
-                        ?></strong>
+                        <strong><?php echo esc_html((string) $plan['skip_count']); ?></strong>
                     </p>
+
+                    <?php $this->render_free_restore_capacity($plan); ?>
             
                     <p>
                         Nothing has been imported.
@@ -563,30 +615,18 @@ class TCS_Collection_Transfer {
                 <p><strong>Destination mapping saved.</strong></p>
             <?php endif; ?>
 
-            <?php if (isset($job['import_plan'])) : ?>
+            <?php if ($plan !== null) : ?>
                 <h3>Import preview</h3>
 
                 <p>
-                    Would create:
-                    <strong>
-                        <?php
-                        echo esc_html(
-                                (string) $job['import_plan']['create_count']
-                            );
-                            ?>
-                    </strong>
-
+                    Unmatched backup records:
+                    <strong><?php echo esc_html((string) $plan['create_count']); ?></strong>
                     <br>
-
                     Would skip:
-                    <strong>
-                        <?php
-                        echo esc_html(
-                                (string) $job['import_plan']['skip_count']
-                            );
-                            ?>
-                    </strong>
+                    <strong><?php echo esc_html((string) $plan['skip_count']); ?></strong>
                 </p>
+
+                <?php $this->render_free_restore_capacity($plan); ?>
 
                 <p>No collection entries have been changed.</p>
             <?php endif; ?>

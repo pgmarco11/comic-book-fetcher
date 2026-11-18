@@ -235,11 +235,14 @@ class TCS_Collection_Transfer_Service {
         array $term_map,
         array $post_map = []
     ): array {
-        return $this->record_finalizer->restore(
-            $job,
-            $source_post_id,
-            $term_map,
-            $post_map
+        return $this->with_import_lock(
+            fn (TCS_Collection_Import_Lock $lock) => $this->record_finalizer->restore(
+                $job,
+                $source_post_id,
+                $term_map,
+                $lock,
+                $post_map
+            )
         );
     }
     public function with_import_lock(callable $work) {
