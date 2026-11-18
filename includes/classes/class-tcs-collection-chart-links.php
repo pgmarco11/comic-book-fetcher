@@ -66,6 +66,10 @@ class TCS_Collection_Chart_Links {
             return [];
         }
 
+        if (self::requires_premium($input) && !tcs_user_has_premium($user_id)) {
+            return [];
+        }
+
         if (
             in_array(
                 $type,

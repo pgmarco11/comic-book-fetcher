@@ -105,6 +105,14 @@ class TCS_Collection_Inventory_Controller {
         $input = wp_unslash($_POST);
         $user_id = get_current_user_id();
         
+        if (
+            TCS_Collection_Chart_Links::requires_premium($input)
+            && !tcs_user_has_premium($user_id)
+        ) {
+            wp_send_json_error([
+                'message' => __('This chart requires Premium.', 'comic-books-fetcher'),
+            ], 403);
+        }
 
         $results = $this->repository->results($input);
         unset($results['records']);
