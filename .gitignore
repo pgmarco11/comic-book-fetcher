@@ -1,0 +1,11 @@
+# Composer dependencies
+/vendor/
+/composer.phar
+
+# Local agent configuration
+/.agents/
+
+# Local environment files
+/.env
+/.env.*
+!/.env.example

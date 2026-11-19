@@ -224,6 +224,7 @@ final class TCS_Premium_Checkout {
                 'client_reference_id' => (string) $user_id,
                 'customer_email' => wp_get_current_user()->user_email,
                 'subscription_data[metadata][wp_user_id]' => (string) $user_id,
+                'subscription_data[metadata][tcs_site_id]' => TCS_Stripe_Membership::site_id(),
                 'return_url' => home_url('/my-collection/'),
             ],
         ]);
