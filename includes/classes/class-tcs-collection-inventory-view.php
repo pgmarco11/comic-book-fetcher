@@ -550,7 +550,10 @@ class TCS_Collection_Inventory_View {
         <nav class="tci-section-nav" aria-label="My Collection sections">
             <a href="<?php echo esc_url($inventory_url); ?>"<?php if (!$show_charts) echo ' aria-current="page"'; ?>>Collection</a>
             <a href="<?php echo esc_url($charts_url); ?>"<?php if ($show_charts) echo ' aria-current="page"'; ?>>Charts</a>
-        </nav>
+            <a href="<?php echo esc_url(home_url('/manage-membership/')); ?>">
+                Manage Membership
+            </a>
+        </nav>  
 
         <?php if ($show_charts) : ?>
             <div class="tci-charts">

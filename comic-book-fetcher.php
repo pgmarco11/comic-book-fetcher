@@ -19,6 +19,7 @@ require_once __DIR__ . '/includes/classes/class-tcs-catalog-background-worker.ph
 require_once __DIR__ . '/includes/membership.php';
 require_once __DIR__ . '/includes/premium-checkout.php';
 require_once __DIR__ . '/includes/stripe-membership.php';
+require_once __DIR__ . '/includes/subscription-management.php';
 require_once __DIR__ . '/includes/series-header.php';
 require_once __DIR__ . '/includes/issue-pagination.php';
 

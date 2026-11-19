@@ -208,6 +208,30 @@ final class TCS_Premium_Checkout {
             wp_send_json_error(['message' => __('Premium checkout is currently unavailable.', 'comic-books-fetcher')], 503);
         }
 
+        try {
+            $has_subscription = TCS_Subscription_Management::has_subscription(
+                $user_id
+            );
+        } catch (\Throwable $error) {
+            wp_send_json_error([
+                'message' => __(
+                    'Your subscription could not be checked. Refresh and try again.',
+                    'comic-books-fetcher'
+                ),
+            ], 503);
+            return;
+        }
+        
+        if ($has_subscription) {
+            wp_send_json_error([
+                'message' => __(
+                    'You already have a subscription. Open Manage Membership to manage billing or cancellation.',
+                    'comic-books-fetcher'
+                ),
+            ], 409);
+            return;
+        }
+
         $response = wp_remote_post('https://api.stripe.com/v1/checkout/sessions', [
             'timeout' => 15,
             'redirection' => 0,
