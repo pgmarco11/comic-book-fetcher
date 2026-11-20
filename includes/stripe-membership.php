@@ -90,6 +90,12 @@ final class TCS_Stripe_Membership {
             );
         }
 
+        if ($event->type === 'setup_intent.succeeded') {
+            return TCS_Embedded_Billing::setup_webhook(
+                $event->data->object
+            );
+        }
+
         if (!in_array($event->type, self::EVENTS, true)) {
             return new WP_REST_Response(['received' => true], 200);
         }

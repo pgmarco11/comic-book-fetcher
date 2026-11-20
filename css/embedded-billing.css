@@ -1,0 +1,231 @@
+.tcs-billing {
+    --billing-ink: var(--wp--preset--color--navy-blue, #002147);
+    --billing-line: var(--wp--preset--color--blue-gray, #cbd7e2);
+    max-width: 56rem;
+    margin-inline: auto;
+    padding: clamp(1rem, 3vw, 2rem);
+    color: var(--billing-ink);
+    background: #fff;
+    border: 1px solid var(--billing-line);
+    border-top: 5px solid var(--billing-ink);
+    border-radius: 12px;
+}
+.tcs-billing [hidden] {
+    display: none !important;
+}
+.tcs-billing :is(h2, h3, h4, p) {
+    margin-block: 0 0.75rem;
+}
+.tcs-billing :is(h3, h4) {
+    font-family: inherit;
+    font-weight: 700;
+}
+.tcs-billing h3 {
+    font-size: 1.25rem;
+}
+.tcs-billing h4 {
+    font-size: 1.1rem;
+}
+.tcs-billing a,
+.tcs-billing-link {
+    color: #0054a6;
+    text-underline-offset: 0.2em;
+}
+.tcs-billing-summary {
+    margin-block: 1.25rem;
+    padding: 1.25rem;
+    background: var(--wp--preset--color--background-light, #fef8f0);
+    border: 1px solid var(--billing-line);
+    border-radius: 8px;
+}
+.tcs-billing-price {
+    font-weight: 700;
+    font-size: 1.15rem;
+}
+.tcs-billing-section {
+    padding-block: 1.25rem;
+}
+.tcs-billing-section + .tcs-billing-section {
+    border-top: 1px solid var(--billing-line);
+}
+.tcs-billing-method,
+.tcs-billing-actions,
+.tcs-billing-contact {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+.tcs-billing-method {
+    border: 1px solid var(--billing-line);
+    border-radius: 7px;
+    padding: 1rem;
+}
+.tcs-billing-method p {
+    margin: 0.25rem 0 0;
+}
+.tcs-billing-contact {
+    align-items: start;
+    justify-content: flex-start;
+    column-gap: 3rem;
+}
+.tcs-billing-contact dt {
+    font-weight: 400;
+}
+.tcs-billing-contact dd {
+    margin: 0;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+.tcs-billing-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 0.65rem 1.25rem;
+    border: 1px solid #ff851b;
+    border-radius: 6px;
+    background: #ff851b;
+    color: #002147;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+.tcs-billing-button:hover {
+    background: #ff9c45;
+    border-color: #ff9c45;
+}
+.tcs-billing-button:disabled {
+    cursor: wait;
+    opacity: 0.65;
+}
+.tcs-billing-card-form,
+.tcs-billing-details-form {
+    margin-block-start: 1rem;
+    padding: 1.25rem;
+    border: 1px solid var(--billing-line);
+    border-radius: 7px;
+}
+.tcs-billing-consent {
+    display: flex;
+    align-items: start;
+    gap: 0.6rem;
+    margin-block: 1rem;
+}
+.tcs-billing-consent input {
+    flex-shrink: 0;
+    margin-block-start: 0.3rem;
+}
+.tcs-billing-link {
+    border: 0;
+    background: none;
+    font: inherit;
+    cursor: pointer;
+    min-height: 44px;
+}
+.tcs-billing-actions {
+    justify-content: flex-start;
+}
+.tcs-billing-details-form label {
+    display: block;
+    margin-block-end: 1rem;
+    font-weight: 600;
+}
+.tcs-billing-details-form input {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    margin-block-start: 0.35rem;
+    padding: 0.6rem;
+    border: 1px solid #9ab0c8;
+    border-radius: 6px;
+    font: inherit;
+    color: var(--billing-ink);
+    background: #fff;
+}
+.tcs-billing-edit summary {
+    cursor: pointer;
+    color: #0054a6;
+    min-height: 44px;
+}
+.tcs-billing-secure {
+    font-size: 0.85rem;
+    margin-block: 0.875rem 0 !important;
+    color: #435a73;
+}
+.tcs-billing-error {
+    color: #a91c27;
+}
+.tcs-billing-error:empty,
+.tcs-billing-message:empty {
+    display: none;
+}
+.tcs-billing-invoices {
+    width: 100%;
+    border-collapse: collapse;
+}
+.tcs-billing-invoices th {
+    text-align: left;
+    background: #edf3f8;
+}
+.tcs-billing-invoices :is(th, td) {
+    padding: 0.7rem;
+    border-bottom: 1px solid var(--billing-line);
+}
+.tcs-billing-switch,
+.tcs-billing-pagination {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-block: 1rem;
+}
+.tcs-billing-switch [aria-current] {
+    font-weight: 700;
+}
+.tcs-billing :is(a, button, input, summary):focus-visible {
+    outline: 3px solid #0054a6;
+    outline-offset: 3px;
+}
+.tcs-billing-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+@media (max-width: 575px) {
+    .tcs-billing-button,
+    .tcs-billing-method > div {
+        width: 100%;
+    }
+    .tcs-billing-invoices thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+    }
+    .tcs-billing-invoices :is(tbody, tr, td) {
+        display: block;
+    }
+    .tcs-billing-invoices tr {
+        margin-block-end: 1rem;
+        padding: 0.65rem;
+        border: 1px solid var(--billing-line);
+        border-radius: 6px;
+    }
+    .tcs-billing-invoices td {
+        padding: 0.25rem;
+        border: 0;
+    }
+    .tcs-billing-invoices td::before {
+        content: attr(data-label) ' ';
+        font-weight: 600;
+        margin-inline-end: 0.5rem;
+    }
+}

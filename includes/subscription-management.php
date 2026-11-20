@@ -44,7 +44,7 @@ final class TCS_Subscription_Management {
         }
     }
 
-    private static function client(): \Stripe\StripeClient {
+    public static function client(): \Stripe\StripeClient {
         $key = getenv('TCS_STRIPE_SECRET_KEY');
 
         if (
@@ -65,7 +65,7 @@ final class TCS_Subscription_Management {
         ]);
     }
 
-    private static function subscriptions(int $user_id): array {
+    public static function subscriptions(int $user_id): array {
         $saved = get_user_meta(
             $user_id,
             '_tcs_stripe_test_subscriptions',
@@ -255,37 +255,20 @@ final class TCS_Subscription_Management {
                         <h3>Billing</h3>
                         <p>Update your payment method or view invoices.</p>
     
-                        <form
-                            method="post"
-                            action="<?php echo esc_url(admin_url('admin-post.php')); ?>"
-                        >
-                            <input
-                                type="hidden"
-                                name="action"
-                                value="tcs_manage_billing"
-                            >
-    
-                            <input
-                                type="hidden"
-                                name="subscription_id"
-                                value="<?php echo esc_attr($id); ?>"
-                            >
-    
-                            <?php
-                            wp_nonce_field(
-                                'tcs_manage_billing',
-                                '_wpnonce',
-                                false
+                        <a
+                            class="btn tcs-membership-billing"
+                            href="<?php
+                            echo esc_url(
+                                add_query_arg(
+                                    'subscription_id',
+                                    $id,
+                                    home_url('/manage-membership/billing/')
+                                )
                             );
-                            ?>
-    
-                            <button
-                                type="submit"
-                                class="btn tcs-membership-billing"
-                            >
-                                Manage billing
-                            </button>
-                        </form>
+                            ?>"
+                        >
+                            Manage billing
+                        </a>
                     </section>
     
                     <?php if ($pending || self::can_cancel($subscription)) : ?>
