@@ -94,7 +94,7 @@ final class TCS_Embedded_Billing
             if ($operation === 'setup') {
                 $intent = $stripe->setupIntents->create([
                     'customer' => $customer,
-                    'payment_method_types' => ['card'],
+                    'allowed_payment_method_types' => ['card'],
                     'usage' => 'off_session',
                     'metadata' => [
                         'wp_user_id' => (string) $user_id,
@@ -205,7 +205,26 @@ final class TCS_Embedded_Billing
             wp_send_json_error(['message' => $error->getMessage()], 400);
             return;
         } catch (Throwable $error) {
-            error_log('TCS billing update failed. Type: ' . get_class($error));
+            $details = [
+                'operation' => $operation,
+                'type'      => get_class($error),
+            ];
+            
+            if ($error instanceof \Stripe\Exception\ApiErrorException) {
+                $stripe_error = $error->getError();
+            
+                $details['http_status'] = $error->getHttpStatus();
+                $details['stripe_code'] = $error->getStripeCode();
+                $details['parameter']   = $stripe_error->param ?? '';
+                $details['request_id']  = $error->getRequestId();
+            } else {
+                $details['message'] = $error->getMessage();
+            }
+            
+            error_log(
+                'TCS billing update failed: ' . wp_json_encode($details)
+            );
+
             wp_send_json_error(
                 ['message' => 'The billing update could not complete. Please try again.'],
                 503,
