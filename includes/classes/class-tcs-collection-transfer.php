@@ -125,6 +125,10 @@ class TCS_Collection_Transfer {
            <?php submit_button('Download collection backup (.json)'); ?>
         </form>
 
+        <h2>Spreadsheet export (Premium)</h2>
+
+        <?php echo TCS_Collection_CSV_Export::render_action(true); ?>
+
         <?php $this->render_owner_mapping(); ?>
 
         <?php tcs_collection_import_controls()->render(); ?>

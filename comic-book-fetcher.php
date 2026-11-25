@@ -58,6 +58,7 @@ require_once COMICBOOKS_PLUGIN_DIR . 'includes/comic-collection.php';
 require_once COMICBOOKS_PLUGIN_DIR . 'includes/creator-role-credits.php';
 require_once COMICBOOKS_PLUGIN_DIR . 'includes/collection-inventory.php';
 require_once COMICBOOKS_PLUGIN_DIR . 'includes/collection-transfer.php';
+require_once COMICBOOKS_PLUGIN_DIR . 'includes/collection-csv-export.php';
 require_once COMICBOOKS_PLUGIN_DIR . 'includes/reprint-links.php';
 
 add_action(

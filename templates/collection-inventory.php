@@ -62,6 +62,9 @@ $search_placeholder = $is_chart
         <a class="tci-button tci-button-primary" href="<?php echo esc_url(home_url('/comic-database/')); ?>"><span
                 aria-hidden="true">＋</span> Add comics</a>
     </header>
+    <div class="tci-export-tools">
+        <?php echo TCS_Collection_CSV_Export::render_action(); ?>
+    </div>
     <div id="tci-collection-usage">
         <?php echo $this->collection_usage_html(get_current_user_id()); ?>
     </div>
