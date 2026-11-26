@@ -4,6 +4,7 @@ defined('ABSPATH') || exit;
 
 final class TCS_Premium_Checkout {
     private const PRICE_OPTION = 'tcs_stripe_test_price_id';
+    private const ANNUAL_PRICE_OPTION = 'tcs_stripe_test_annual_price_id';
     private const SETTINGS_GROUP = 'tcs_stripe_checkout';
     private const ACTION = 'tcs_start_stripe_checkout';
 
@@ -26,10 +27,25 @@ final class TCS_Premium_Checkout {
             : '';
     }
 
-    private static function price_id(): string {
-        $price_id = get_option(self::PRICE_OPTION, '');
-
-        return is_string($price_id) && self::valid_price_id($price_id) ? $price_id : '';
+    public static function price_ids(): array {
+        $prices = [];
+    
+        foreach ([
+            'monthly' => self::PRICE_OPTION,
+            'annual'  => self::ANNUAL_PRICE_OPTION,
+        ] as $interval => $option) {
+            $price_id = get_option($option, '');
+    
+            if (is_string($price_id) && self::valid_price_id($price_id)) {
+                $prices[$interval] = $price_id;
+            }
+        }
+    
+        return $prices;
+    }
+    
+    private static function price_id(string $interval = 'monthly'): string {
+        return self::price_ids()[$interval] ?? '';
     }
 
     private static function publishable_key(): string {
@@ -50,6 +66,31 @@ final class TCS_Premium_Checkout {
             'default' => '',
             'sanitize_callback' => [self::class, 'sanitize_price_id'],
         ]);
+    
+        register_setting(self::SETTINGS_GROUP, self::ANNUAL_PRICE_OPTION, [
+            'type' => 'string',
+            'default' => '',
+            'sanitize_callback' => [self::class, 'sanitize_annual_price_id'],
+        ]);
+    }
+
+    public static function sanitize_annual_price_id($value): string {
+        $price_id = is_string($value) ? trim($value) : null;
+    
+        if (
+            $price_id !== null
+            && ($price_id === '' || self::valid_price_id($price_id))
+        ) {
+            return $price_id;
+        }
+    
+        add_settings_error(
+            self::ANNUAL_PRICE_OPTION,
+            'tcs_stripe_invalid_annual_price',
+            __('Enter an annual Stripe Price ID that begins with price_.', 'comic-books-fetcher')
+        );
+    
+        return self::price_id('annual');
     }
 
     public static function sanitize_price_id($value): string {
@@ -97,7 +138,7 @@ final class TCS_Premium_Checkout {
                 <?php settings_fields(self::SETTINGS_GROUP); ?>
                 <p>
                     <label for="tcs-stripe-price-id">
-                        <?php esc_html_e('Sandbox recurring Price ID', 'comic-books-fetcher'); ?>
+                        <?php esc_html_e('Sandbox monthly Price ID', 'comic-books-fetcher'); ?>
                     </label>
                     <input
                         id="tcs-stripe-price-id"
@@ -105,6 +146,20 @@ final class TCS_Premium_Checkout {
                         name="<?php echo esc_attr(self::PRICE_OPTION); ?>"
                         type="text"
                         value="<?php echo esc_attr(self::price_id()); ?>"
+                        placeholder="price_..."
+                    >
+                </p>
+                <p>
+                    <label for="tcs-stripe-annual-price-id">
+                        <?php esc_html_e('Sandbox annual Price ID', 'comic-books-fetcher'); ?>
+                    </label>
+
+                    <input
+                        id="tcs-stripe-annual-price-id"
+                        class="regular-text"
+                        name="<?php echo esc_attr(self::ANNUAL_PRICE_OPTION); ?>"
+                        type="text"
+                        value="<?php echo esc_attr(self::price_id('annual')); ?>"
                         placeholder="price_..."
                     >
                 </p>
@@ -135,7 +190,16 @@ final class TCS_Premium_Checkout {
 
         $publishable_key = self::publishable_key();
 
-        if (self::secret() === '' || self::price_id() === '' || $publishable_key === '') {
+        $interval = $_GET['billing_interval'] ?? 'monthly';
+
+        if (
+            !is_string($interval)
+            || !in_array($interval, ['monthly', 'annual'], true)
+        ) {
+            return '<p>Choose Monthly or Annually on the checkout page.</p>';
+        }
+
+        if (self::secret() === '' || self::price_id($interval) === '' || $publishable_key === '') {
             return '<p>' . esc_html__('Premium checkout is currently unavailable.', 'comic-books-fetcher') . '</p>';
         }
 
@@ -152,6 +216,34 @@ final class TCS_Premium_Checkout {
 
         ob_start();
         ?>
+        <nav class="mb-3" aria-label="Premium billing period">
+            <p class="fw-semibold mb-2">Billing period</p>
+
+            <div class="btn-group" role="group" aria-label="Choose billing period">
+                <?php foreach (self::price_ids() as $option => $price) : ?>
+                    <a
+                        class="btn <?php echo $option === $interval
+                            ? 'btn-primary'
+                            : 'btn-outline-primary'; ?>"
+                        href="<?php echo esc_url(add_query_arg(
+                            'billing_interval',
+                            $option,
+                            home_url('/premium-checkout/')
+                        )); ?>"
+                        <?php if ($option === $interval) echo 'aria-current="page"'; ?>
+                    >
+                        <?php echo esc_html(
+                            $option === 'annual' ? 'Annually' : 'Monthly'
+                        ); ?>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+
+            <p class="small mt-2">
+                Choose your billing period before entering payment details.
+                Changing it reloads checkout.
+            </p>
+        </nav>
         <form
             class="tcs-premium-payment"
             method="post"
@@ -161,6 +253,11 @@ final class TCS_Premium_Checkout {
         >
             <input type="hidden" name="action" value="<?php echo esc_attr(self::ACTION); ?>">
             <input type="hidden" name="checkout_attempt" value="<?php echo esc_attr($attempt); ?>">
+            <input
+                type="hidden"
+                name="billing_interval"
+                value="<?php echo esc_attr($interval); ?>"
+            >
             <?php wp_nonce_field(self::ACTION . ':' . $attempt, '_ajax_nonce', false); ?>
             <p class="tcs-premium-payment__status" role="status">
                 <?php esc_html_e('Loading payment details…', 'comic-books-fetcher'); ?>
@@ -201,8 +298,21 @@ final class TCS_Premium_Checkout {
             wp_send_json_error(['message' => __('Sign in with a verified account to continue.', 'comic-books-fetcher')], 403);
         }
 
+        $interval = $_POST['billing_interval'] ?? 'monthly';
+
+        if (
+            !is_string($interval)
+            || !in_array($interval, ['monthly', 'annual'], true)
+        ) {
+            wp_send_json_error([
+                'message' => __('Choose Monthly or Annually.', 'comic-books-fetcher'),
+            ], 400);
+        
+            return;
+        }
+        
         $secret = self::secret();
-        $price_id = self::price_id();
+        $price_id = self::price_id($interval);
 
         if ($secret === '' || $price_id === '' || self::publishable_key() === '') {
             wp_send_json_error(['message' => __('Premium checkout is currently unavailable.', 'comic-books-fetcher')], 503);
@@ -238,7 +348,7 @@ final class TCS_Premium_Checkout {
             'headers' => [
                 'Authorization' => 'Bearer ' . $secret,
                 'Stripe-Version' => '2026-10-28.endive',
-                'Idempotency-Key' => 'tcs-elements-' . $user_id . '-' . $attempt,
+                'Idempotency-Key' => 'tcs-elements-' . $user_id . '-' . $attempt . '-' . $interval,
             ],
             'body' => [
                 'mode' => 'subscription',

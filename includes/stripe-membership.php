@@ -46,7 +46,7 @@ final class TCS_Stripe_Membership {
     public static function webhook(WP_REST_Request $request) {
         $secret = getenv('TCS_STRIPE_SECRET_KEY');
         $signing_secret = getenv('TCS_STRIPE_WEBHOOK_SECRET');
-        $price = get_option('tcs_stripe_test_price_id', '');
+        $prices = array_values(TCS_Premium_Checkout::price_ids());
 
         if (
             wp_get_environment_type() !== 'local'
@@ -55,8 +55,7 @@ final class TCS_Stripe_Membership {
             || !preg_match('/\A(?:sk|rk)_test_[A-Za-z0-9]+\z/', $secret)
             || !is_string($signing_secret)
             || !str_starts_with($signing_secret, 'whsec_')
-            || !is_string($price)
-            || !preg_match('/\Aprice_[A-Za-z0-9]+\z/', $price)
+            || !$prices
         ) {
             return new WP_Error(
                 'tcs_stripe_config',
@@ -146,7 +145,7 @@ final class TCS_Stripe_Membership {
                     $stripe,
                     $subscription,
                     $user_id,
-                    $price
+                    $prices
                 ): void {
                     wp_cache_delete($user_id, 'user_meta');
 
@@ -189,7 +188,7 @@ final class TCS_Stripe_Membership {
                         foreach ($current->items->data as $item) {
                             if (
                                 $current->status === 'active'
-                                && $item->price->id === $price
+                                && in_array($item->price->id, $prices, true)
                             ) {
                                 $premium = true;
                             }
