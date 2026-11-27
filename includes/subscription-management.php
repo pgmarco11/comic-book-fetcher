@@ -121,6 +121,49 @@ final class TCS_Subscription_Management {
         return false;
     }
 
+    public static function current_subscription(
+        array $subscriptions
+    ): ?\Stripe\Subscription {
+        $rank = [
+            'active' => 0,
+            'trialing' => 1,
+            'past_due' => 2,
+            'unpaid' => 3,
+            'paused' => 4,
+            'incomplete' => 5,
+            'canceled' => 6,
+            'incomplete_expired' => 7,
+        ];
+    
+        $ordered = array_values($subscriptions);
+    
+        usort($ordered, static function ($a, $b) use ($rank): int {
+            return (($rank[$a->status] ?? 8) <=> ($rank[$b->status] ?? 8))
+                ?: ((int) ($b->created ?? 0) <=> (int) ($a->created ?? 0))
+                ?: strcmp((string) $a->id, (string) $b->id);
+        });
+    
+        return $ordered[0] ?? null;
+    }
+    
+    public static function billing_label(
+        \Stripe\Subscription $subscription
+    ): string {
+        $prices = TCS_Premium_Checkout::price_ids();
+    
+        foreach ($subscription->items->data as $item) {
+            if (($prices['annual'] ?? '') === $item->price->id) {
+                return 'Premium — Annually';
+            }
+    
+            if (($prices['monthly'] ?? '') === $item->price->id) {
+                return 'Premium — Monthly';
+            }
+        }
+    
+        return 'Premium subscription';
+    }
+
     public static function render(): string {
         if (!is_user_logged_in()) {
             return '<p>Please sign in to manage your membership.</p>';
@@ -148,7 +191,19 @@ final class TCS_Subscription_Management {
                 $can_upgrade = false;
             }
         }
-    
+
+        $current = self::current_subscription($subscriptions);
+
+        $display_subscriptions = $current
+            ? [$current->id => $current]
+            : [];
+
+        $active_count = count(array_filter(
+            $subscriptions,
+            static fn($subscription): bool =>
+                $subscription->status === 'active'
+        ));
+            
         ob_start();
         ?>
         <div class="tcs-manage-membership">
@@ -177,7 +232,15 @@ final class TCS_Subscription_Management {
                 </p>
             <?php endif; ?>
     
-            <?php foreach ($subscriptions as $id => $subscription) : ?>
+            <?php if ($active_count > 1) : ?>
+                    <p role="alert">
+                        More than one active Stripe subscription is linked to your account.
+                        Only the most recent active subscription is shown below.
+                        Review the additional subscription in Stripe before making changes.
+                    </p>
+            <?php endif; ?>
+
+            <?php foreach ($display_subscriptions as $id => $subscription) : ?>
                 <?php
                 $pending = self::cancellation_pending($subscription);
     
@@ -209,8 +272,10 @@ final class TCS_Subscription_Management {
                         class="tcs-membership-summary"
                         aria-label="Subscription summary"
                     >
-                        <h2>Premium subscription</h2>
-    
+                    <h2>
+                        <?php echo esc_html(self::billing_label($subscription)); ?>
+                    </h2>
+                        
                         <p class="tcs-membership-status">
                             <?php
                             echo esc_html(

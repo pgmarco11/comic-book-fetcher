@@ -282,7 +282,11 @@ final class TCS_Embedded_Billing
                 throw new DomainException('Invalid subscription selection.');
             }
             if ($id === '' && $subscriptions) {
-                $id = (string) array_key_first($subscriptions);
+                $current = TCS_Subscription_Management::current_subscription(
+                    $subscriptions
+                );
+            
+                $id = $current ? (string) $current->id : '';
             }
             if (!$subscriptions) {
                 return '<p>No billing history is linked to this account. <a href="' .
