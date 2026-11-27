@@ -75,7 +75,7 @@
     justify-content: space-between;
     gap: 24px;
     color: white;
-    margin-bottom: 28px;
+    margin-bottom: 1rem;
 }
 
 .tci .tci-kicker {
@@ -110,6 +110,7 @@
     gap: 8px;
     border: 1px solid var(--ink);
     border-radius: 5px;
+    margin: 1rem 0;
     padding: 10px 16px;
     min-height: 44px;
     color: var(--ink);

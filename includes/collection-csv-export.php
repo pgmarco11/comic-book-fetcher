@@ -18,8 +18,7 @@ final class TCS_Collection_CSV_Export {
         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
             <input type="hidden" name="action" value="tcs_collection_csv_export">
             <?php wp_nonce_field('tcs_collection_csv_export'); ?>
-            <button type="submit" class="<?php echo esc_attr($class); ?>">Download my collection (.csv)</button>
-            <p>Exports your own collection records with a separate column for each creator role. Use JSON backup to restore a collection.</p>
+            <button type="submit" class="<?php echo esc_attr($class); ?>">Download my collection (.csv)</button>         
         </form>
         <?php
         return (string) ob_get_clean();

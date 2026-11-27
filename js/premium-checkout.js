@@ -12,8 +12,15 @@
         let actions;
         let submitting = false;
         let fieldsReady = false;
+        let confirmed = false;
 
         function updateSession(session) {
+
+            if (confirmed) {
+                submit.disabled = true;
+                return;
+            }
+
             submit.disabled = !fieldsReady || submitting || !session.canConfirm;
 
             const dueToday = session.total?.total?.amount;
@@ -32,7 +39,8 @@
 
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
-            if (!actions || submit.disabled || submitting) {
+
+            if (!actions || submit.disabled || submitting || confirmed) {
                 return;
             }
 
@@ -42,15 +50,58 @@
             status.textContent = 'Processing your payment…';
 
             try {
-                const result = await actions.confirm();
+                const result = await actions.confirm({
+                    redirect: 'if_required',
+                });
+
                 if (result.type === 'error') {
-                    error.textContent = result.error.message || 'Check your payment details and try again.';
+                    error.textContent =
+                        result.error.message ||
+                        'Check your payment details and try again.';
                 } else {
-                    window.location.assign(form.dataset.returnUrl);
+                    confirmed = true;
+
+                    fields.hidden = true;
+                    submit.hidden = true;
+                    total.hidden = true;
+                    status.textContent = '';
+
+                    const options = form.previousElementSibling;
+
+                    if (
+                        options?.matches(
+                            'nav[aria-label="Premium billing period"]'
+                        )
+                    ) {
+                        options.hidden = true;
+                    }
+
+                    // A refresh should resume activation checking.
+                    try {
+                        window.history.replaceState(
+                            null,
+                            '',
+                            form.dataset.activationUrl
+                        );
+                    } catch {}
+
+                    const panel = form.querySelector(
+                        '.tcs-premium-activation'
+                    );
+
+                    if (
+                        typeof window.tcsStartPremiumActivation === 'function'
+                    ) {
+                        window.tcsStartPremiumActivation(panel);
+                    } else {
+                        window.location.assign(form.dataset.activationUrl);
+                    }
+
                     return;
                 }
             } catch {
-                error.textContent = 'Payment could not be confirmed. Please try again.';
+                error.textContent =
+                    'Payment could not be confirmed. Please try again.';
             }
 
             submitting = false;

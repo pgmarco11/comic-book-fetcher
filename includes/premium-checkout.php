@@ -188,6 +188,10 @@ final class TCS_Premium_Checkout {
             return '<p>' . esc_html__('Verify your email address before starting checkout.', 'comic-books-fetcher') . '</p>';
         }
 
+        if (($_GET['checkout_return'] ?? '') === '1') {
+            return TCS_Premium_Activation::render();
+        }
+
         $publishable_key = self::publishable_key();
 
         $interval = $_GET['billing_interval'] ?? 'monthly';
@@ -209,7 +213,7 @@ final class TCS_Premium_Checkout {
         wp_enqueue_script(
             'tcs-premium-checkout',
             COMICBOOKS_PLUGIN_URL . $script_path,
-            ['tcs-stripe-js'],
+            ['tcs-stripe-js', 'tcs-premium-activation'],
             (string) filemtime(COMICBOOKS_PLUGIN_DIR . $script_path),
             true
         );
@@ -250,6 +254,13 @@ final class TCS_Premium_Checkout {
             action="<?php echo esc_url(admin_url('admin-ajax.php')); ?>"
             data-publishable-key="<?php echo esc_attr($publishable_key); ?>"
             data-return-url="<?php echo esc_url(home_url('/my-collection/')); ?>"
+            data-activation-url="<?php echo esc_url(
+                add_query_arg(
+                    'checkout_return',
+                    '1',
+                    home_url('/premium-checkout/')
+                )
+            ); ?>"
         >
             <input type="hidden" name="action" value="<?php echo esc_attr(self::ACTION); ?>">
             <input type="hidden" name="checkout_attempt" value="<?php echo esc_attr($attempt); ?>">
@@ -264,6 +275,7 @@ final class TCS_Premium_Checkout {
             </p>
             <div class="tcs-premium-payment__fields"></div>
             <p class="tcs-premium-payment__error mt-2 text-danger" role="alert"></p>
+                <?php echo TCS_Premium_Activation::render(true); ?>
             <p class="tcs-premium-payment__total fw-bold" hidden>
                 <?php esc_html_e('Due today', 'comic-books-fetcher'); ?>
                 <span></span>
@@ -359,8 +371,12 @@ final class TCS_Premium_Checkout {
                 'customer_email' => wp_get_current_user()->user_email,
                 'subscription_data[metadata][wp_user_id]' => (string) $user_id,
                 'subscription_data[metadata][tcs_site_id]' => TCS_Stripe_Membership::site_id(),
-                'return_url' => home_url('/my-collection/'),
-            ],
+                'return_url' => add_query_arg(
+                    'checkout_return',
+                    '1',
+                    home_url('/premium-checkout/')
+                ),
+                            ],
         ]);
 
         if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
