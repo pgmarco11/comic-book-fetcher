@@ -331,72 +331,32 @@ final class TCS_Premium_Checkout {
         }
 
         try {
-            $has_subscription = TCS_Subscription_Management::has_subscription(
-                $user_id
+            $result = TCS_Premium_Checkout_Sessions::start(
+                $user_id,
+                $interval,
+                $price_id
             );
         } catch (\Throwable $error) {
+            error_log(
+                'TCS checkout failed. Type: ' . get_class($error)
+            );
+        
+            $status = (
+                $error instanceof \RuntimeException
+                && $error->getCode() === 409
+            ) ? 409 : 503;
+        
             wp_send_json_error([
-                'message' => __(
-                    'Your subscription could not be checked. Refresh and try again.',
-                    'comic-books-fetcher'
-                ),
-            ], 503);
+                'message' => $error instanceof \RuntimeException
+                    ? $error->getMessage()
+                    : 'Checkout could not be confirmed. Please retry. Your saved attempt will be reused.',
+            ], $status);
+        
             return;
         }
         
-        if ($has_subscription) {
-            wp_send_json_error([
-                'message' => __(
-                    'You already have a subscription. Open Manage Membership to manage billing or cancellation.',
-                    'comic-books-fetcher'
-                ),
-            ], 409);
-            return;
-        }
-
-        $response = wp_remote_post('https://api.stripe.com/v1/checkout/sessions', [
-            'timeout' => 15,
-            'redirection' => 0,
-            'headers' => [
-                'Authorization' => 'Bearer ' . $secret,
-                'Stripe-Version' => '2026-10-28.endive',
-                'Idempotency-Key' => 'tcs-elements-' . $user_id . '-' . $attempt . '-' . $interval,
-            ],
-            'body' => [
-                'mode' => 'subscription',
-                'ui_mode' => 'elements',
-                'line_items[0][price]' => $price_id,
-                'line_items[0][quantity]' => '1',
-                'client_reference_id' => (string) $user_id,
-                'customer_email' => wp_get_current_user()->user_email,
-                'subscription_data[metadata][wp_user_id]' => (string) $user_id,
-                'subscription_data[metadata][tcs_site_id]' => TCS_Stripe_Membership::site_id(),
-                'return_url' => add_query_arg(
-                    'checkout_return',
-                    '1',
-                    home_url('/premium-checkout/')
-                ),
-                            ],
-        ]);
-
-        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) {
-            wp_send_json_error(['message' => __('Stripe checkout could not be started. Please try again.', 'comic-books-fetcher')], 502);
-        }
-
-        $session = json_decode(wp_remote_retrieve_body($response), true);
-        $client_secret = $session['client_secret'] ?? '';
-
-        if (
-            ($session['livemode'] ?? null) !== false
-            || ($session['ui_mode'] ?? null) !== 'elements'
-            || !is_string($client_secret)
-            || $client_secret === ''
-        ) {
-            wp_send_json_error(['message' => __('Stripe returned an invalid checkout session.', 'comic-books-fetcher')], 502);
-        }
-
         nocache_headers();
-        wp_send_json_success(['clientSecret' => $client_secret]);
+        wp_send_json_success($result);
     }
 }
 

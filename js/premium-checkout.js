@@ -37,6 +37,46 @@
             }
         }
 
+        function beginActivation() {
+            confirmed = true;
+            submit.disabled = true;
+        
+            fields.hidden = true;
+            submit.hidden = true;
+            total.hidden = true;
+            status.textContent = '';
+        
+            const options = form.previousElementSibling;
+        
+            if (
+                options?.matches(
+                    'nav[aria-label="Premium billing period"]'
+                )
+            ) {
+                options.hidden = true;
+            }
+        
+            try {
+                window.history.replaceState(
+                    null,
+                    '',
+                    form.dataset.activationUrl
+                );
+            } catch {}
+        
+            const panel = form.querySelector(
+                '.tcs-premium-activation'
+            );
+        
+            if (
+                typeof window.tcsStartPremiumActivation === 'function'
+            ) {
+                window.tcsStartPremiumActivation(panel);
+            } else {
+                window.location.assign(form.dataset.activationUrl);
+            }
+        }
+
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
 
@@ -59,44 +99,7 @@
                         result.error.message ||
                         'Check your payment details and try again.';
                 } else {
-                    confirmed = true;
-
-                    fields.hidden = true;
-                    submit.hidden = true;
-                    total.hidden = true;
-                    status.textContent = '';
-
-                    const options = form.previousElementSibling;
-
-                    if (
-                        options?.matches(
-                            'nav[aria-label="Premium billing period"]'
-                        )
-                    ) {
-                        options.hidden = true;
-                    }
-
-                    // A refresh should resume activation checking.
-                    try {
-                        window.history.replaceState(
-                            null,
-                            '',
-                            form.dataset.activationUrl
-                        );
-                    } catch {}
-
-                    const panel = form.querySelector(
-                        '.tcs-premium-activation'
-                    );
-
-                    if (
-                        typeof window.tcsStartPremiumActivation === 'function'
-                    ) {
-                        window.tcsStartPremiumActivation(panel);
-                    } else {
-                        window.location.assign(form.dataset.activationUrl);
-                    }
-
+                    beginActivation();
                     return;
                 }
             } catch {
@@ -121,6 +124,15 @@
                 body: new FormData(form),
             });
             const payload = await response.json();
+
+            if (
+                response.ok
+                && payload.success === true
+                && payload.data?.activating === true
+            ) {
+                beginActivation();
+                return;
+            }
 
             if (!response.ok || !payload.success || !payload.data?.clientSecret) {
                 throw new Error(payload.data?.message || 'Checkout could not start. Refresh the page to try again.');
